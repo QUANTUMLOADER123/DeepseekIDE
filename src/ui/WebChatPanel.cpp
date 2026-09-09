@@ -1,6 +1,7 @@
 #include "ui/WebChatPanel.h"
 
 #include <chrono>
+#include <cstdio>
 #include <nlohmann/json.hpp>
 
 #if defined(DEEPSEEKIDE_WEBVIEW)
@@ -9,6 +10,7 @@
 #      define WIN32_LEAN_AND_MEAN
 #    endif
 #    include <windows.h>
+#    include <objbase.h>  // CoInitializeEx для COM-апартамента потока чата
 #  endif
 #  include <webview/webview.h>
 #  define DSIDE_HAS_WV 1
@@ -210,6 +212,23 @@ void WebChatPanel::Detach() {
 #endif
 }
 
+#if DSIDE_HAS_WV && defined(_WIN32)
+// WebView при EMBED-режиме (parent window) не инициализирует COM сам —
+// конструктор Win32-бэкенда инициализирует COM только в ветке owns_window.
+// Без CoInitializeEx(APARTMENTTHREADED) создание среды WebView2 молча фейлит
+// (m_controller == nullptr → error_info{INVALID_STATE} с пустым сообщением).
+struct ComApartment {
+  HRESULT hr;
+  bool mine = false;
+  ComApartment() {
+    hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    mine = SUCCEEDED(hr);  // S_OK или S_FALSE (повторно) — наш, надо CoUninitialize
+  }
+  ~ComApartment() { if (mine) CoUninitialize(); }
+  bool usable() const { return mine || hr == RPC_E_CHANGED_MODE; }
+};
+#endif
+
 void WebChatPanel::ThreadMain() {
   auto fail = [this](std::string msg) {
     std::lock_guard<std::mutex> lk(mMtx);
@@ -225,6 +244,13 @@ void WebChatPanel::ThreadMain() {
 #if DSIDE_HAS_WV
     void* parentArg = nullptr;
 #  if defined(_WIN32)
+    ComApartment com;
+    if (!com.usable()) {
+      char hbuf[24];
+      std::snprintf(hbuf, sizeof(hbuf), "%08X", static_cast<unsigned>(com.hr));
+      fail("COM-окружение недоступно (CoInitializeEx = 0x" + std::string(hbuf) + ")");
+      return;
+    }
     EnsureChildClass();
     // Дочернее окно-контейнер; браузер подчиняется его размерам.
     // Изначально НЕ показываем — ShowWindow делает первый успешный SetRect
@@ -289,6 +315,18 @@ void WebChatPanel::ThreadMain() {
     }
 #else
     fail("webview не собран (DEEPSEEKIDE_WEBVIEW=OFF)");
+#endif
+#if DSIDE_HAS_WV
+  } catch (const webview::exception& e) {
+    std::string msg = "Не удалось запустить встроенный браузер (webview код " +
+                      std::to_string(static_cast<int>(e.error().code())) + ")";
+    if (!e.error().message().empty()) msg += ": " + e.error().message();
+#  if defined(_WIN32)
+    msg += ". Если Microsoft Edge у вас обычно работает, а ошибка остаётся — "
+           "WebView2 может блокироваться групповой политикой или антивирусом; "
+           "попробуйте запуск от имени обычного пользователя без «песочницы».";
+#  endif
+    fail(msg);
 #endif
   } catch (const std::exception& e) {
 #if DSIDE_HAS_WV && defined(_WIN32)

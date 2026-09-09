@@ -287,6 +287,15 @@ void Application::Frame() {
     sFirstFrame = false;
     BootStep("first frame");
   }
+
+  // Разово: если чат не поднялся — заносим в boot.log и в Журнал.
+  static bool sWebChatErrLogged = false;
+  if (!sWebChatErrLogged && !mWebChat.LastError().empty()) {
+    sWebChatErrLogged = true;
+    Log("warn", "Веб-чат недоступен: " + mWebChat.LastError());
+    std::string s = "webchat error: " + mWebChat.LastError();
+    BootStep(s.c_str());
+  }
   ImGui_ImplOpenGL3_NewFrame();
   ImGui_ImplGlfw_NewFrame();
   ImGui::NewFrame();

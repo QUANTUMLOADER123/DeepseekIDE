@@ -42,6 +42,12 @@
 - **Windows + `DEEPSEEKIDE_WEBVIEW`**: создаём дочернее `WS_CHILD`-окно поверх GLFW
   (`glfwGetWin32Window`), webview 0.12 получает его как родителя → WebView2 занимает
   ровно этот прямоугольник; `SetRect` каждый кадр двигает его под сплиттер.
+  **COM**: в embed-режиме (parent window) win32-бэкенд НЕ инициализирует COM сам
+  (только ветка owns_window делает) — поток чата обязан сделать
+  `CoInitializeEx(COINIT_APARTMENTTHREADED)` до конструктора (у нас — RAII
+  `ComApartment`); иначе создание среды молча падает с INVALID_STATE без сообщения.
+  Весь ThreadMain в try/catch (`webview::exception` и std::exception): ошибка идёт
+  в `mError`/Журнал, процесс не роняется.
 - **Linux/macOS**: отдельное окно webview с тем же мостом (SetRect — no-op).
 - **Без webview**: полностью выключенная заглушка, `Supported()==false`,
   Application рисует `DrawChatFallback`.
