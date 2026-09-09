@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 rem ============================================================
 rem  DeepSeekIDE - сборка в 1 клик для Windows (Visual Studio)
 rem
@@ -6,8 +7,10 @@ rem  Что делает:
 rem   1. Создаёт build\DeepSeekIDE.sln (проект Visual Studio)
 rem   2. Собирает build\Release\deepseekide.exe
 rem
+rem  GIT НЕ НУЖЕН - зависимости качаются zip-архивами.
+rem
 rem  Нужно установленным:
-rem   - Visual Studio 2022 с компонентом "Разработка классических
+rem   - Visual Studio 2022+ с компонентом "Разработка классических
 rem     приложений на C++" (Desktop development with C++)
 rem   - CMake 3.24+  ->  https://cmake.org/download/
 rem     (при установке отметить "Add CMake to system PATH")
@@ -27,7 +30,7 @@ if errorlevel 1 (
 )
 
 echo [1/2] Генерация проекта Visual Studio (build\DeepSeekIDE.sln)...
-echo      (при первом запуске CMake скачает зависимости с GitHub - это нормально, 1-3 минуты)
+echo      (при первом запуске CMake скачает зависимости - это нормально, 1-3 минуты)
 cmake -B build -DCMAKE_BUILD_TYPE=Release %*
 if errorlevel 1 goto fail
 
@@ -49,6 +52,7 @@ exit /b 0
 :fail
 echo.
 echo [ОШИБКА] Сборка не удалась - читайте сообщения выше.
-echo Совет: попробуйте  build-windows.bat -DDEEPSEEKIDE_ENABLE_WEBVIEW=OFF
+echo Совет 1: удалите папку build (rmdir /s /q build) и запустите снова.
+echo Совет 2: попробуйте  build-windows.bat -DDEEPSEEKIDE_ENABLE_WEBVIEW=OFF
 pause
 exit /b 1

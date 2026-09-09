@@ -29,11 +29,9 @@ endif()
 # ---------------------------------------------------------------------------
 find_package(nlohmann_json 3.11.3 QUIET)
 if(NOT nlohmann_json_FOUND)
-  message(STATUS "[deps] fetching nlohmann_json v3.11.3")
+  message(STATUS "[deps] fetching nlohmann_json v3.11.3 (zip-архив, git не нужен)")
   FetchContent_Declare(nlohmann_json
-    GIT_REPOSITORY https://github.com/nlohmann/json.git
-    GIT_TAG        v3.11.3
-    GIT_SHALLOW    TRUE)
+    URL https://github.com/nlohmann/json/archive/refs/tags/v3.11.3.tar.gz)
   FetchContent_MakeAvailable(nlohmann_json)
 endif()
 
@@ -57,9 +55,7 @@ if(NOT CURL_FOUND)
     set(CURL_USE_SECTRANSP ON CACHE BOOL "" FORCE)
   endif()
   FetchContent_Declare(curl
-    GIT_REPOSITORY https://github.com/curl/curl.git
-    GIT_TAG        curl-8_10_1
-    GIT_SHALLOW    TRUE)
+    URL https://github.com/curl/curl/archive/refs/tags/curl-8_10_1.tar.gz)
   FetchContent_MakeAvailable(curl)
 endif()
 
@@ -110,18 +106,14 @@ if(DEEPSEEKIDE_BUILD_GUI)
     set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
     set(GLFW_INSTALL        OFF CACHE BOOL "" FORCE)
     FetchContent_Declare(glfw
-      GIT_REPOSITORY https://github.com/glfw/glfw.git
-      GIT_TAG        3.4
-      GIT_SHALLOW    TRUE)
+      URL https://github.com/glfw/glfw/archive/refs/tags/3.4.tar.gz)
     FetchContent_MakeAvailable(glfw)
   endif()
 
   # --- Dear ImGui (docking branch; CMake у проекта нет — собираем сами) ---
   message(STATUS "[deps] fetching Dear ImGui v1.91.5-docking")
   FetchContent_Declare(imgui
-    GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG        v1.91.5-docking
-    GIT_SHALLOW    TRUE
+    URL https://github.com/ocornut/imgui/archive/refs/tags/v1.91.5-docking.tar.gz
     SOURCE_SUBDIR  "__no_cmakelists__")   # пропускаем add_subdirectory
   FetchContent_MakeAvailable(imgui)
 
@@ -144,9 +136,7 @@ if(DEEPSEEKIDE_BUILD_GUI)
   # --- ImGuiColorTextEdit (santaclose fork, MIT; совместим с ImGui 1.91) ---
   message(STATUS "[deps] fetching ImGuiColorTextEdit (santaclose)")
   FetchContent_Declare(textedit
-    GIT_REPOSITORY https://github.com/santaclose/ImGuiColorTextEdit.git
-    GIT_TAG        264bee49ddc3c789b05d928d09c628649458da47
-    GIT_SHALLOW    FALSE
+    URL https://github.com/santaclose/ImGuiColorTextEdit/archive/264bee49ddc3c789b05d928d09c628649458da47.tar.gz
     SOURCE_SUBDIR  "__no_cmakelists__")
   FetchContent_MakeAvailable(textedit)
 
@@ -195,9 +185,7 @@ if(DEEPSEEKIDE_BUILD_GUI)
     if(_webview_ok)
       message(STATUS "[deps] fetching webview 0.12.0 (chat.deepseek.com)")
       FetchContent_Declare(webview
-        GIT_REPOSITORY https://github.com/webview/webview.git
-        GIT_TAG        0.12.0
-        GIT_SHALLOW    TRUE)
+        URL https://github.com/webview/webview/archive/refs/tags/0.12.0.tar.gz)
       FetchContent_MakeAvailable(webview)
       set(DEEPSEEKIDE_WEBVIEW ON)
     else()
