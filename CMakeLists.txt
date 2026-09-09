@@ -79,6 +79,7 @@ add_library(deepseekide_core STATIC
   src/net/HttpClient.cpp
   src/ai/DeepSeekClient.cpp
   src/ai/ToolRegistry.cpp
+  src/ai/OpsParser.cpp
   src/ai/Agent.cpp)
 target_include_directories(deepseekide_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(deepseekide_core PUBLIC
@@ -207,17 +208,17 @@ if(DEEPSEEKIDE_BUILD_GUI)
     src/main.cpp
     src/app/Application.cpp
     src/core/EditorManager.cpp
+    src/ai/AgentBridge.cpp
     src/ui/Theme.cpp
     src/ui/Fonts.cpp
     src/ui/Widgets.cpp
     src/ui/Dialogs.cpp
     src/ui/FileExplorerPanel.cpp
     src/ui/EditorPanel.cpp
-    src/ui/ChatPanel.cpp
     src/ui/SnapshotsPanel.cpp
     src/ui/LogPanel.cpp
     src/ui/StatusBar.cpp
-    src/ui/WebChatWindow.cpp)
+    src/ui/WebChatPanel.cpp)
 
   if(WIN32)
     add_executable(deepseekide WIN32 ${GUI_SOURCES})

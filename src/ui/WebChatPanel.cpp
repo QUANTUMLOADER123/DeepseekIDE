@@ -1,0 +1,366 @@
+#include "ui/WebChatPanel.h"
+
+#include <chrono>
+#include <nlohmann/json.hpp>
+
+#if defined(DEEPSEEKIDE_WEBVIEW)
+#  if defined(_WIN32)
+#    ifndef WIN32_LEAN_AND_MEAN
+#      define WIN32_LEAN_AND_MEAN
+#    endif
+#    include <windows.h>
+#  endif
+#  include <webview/webview.h>
+#  define DSIDE_HAS_WV 1
+#else
+#  define DSIDE_HAS_WV 0
+#endif
+
+// ---------------------------------------------------------------------------
+// JS-мост: селекторы chat.deepseek.com (стабильные классы ds-markdown /
+// ds-button--primary / textarea; хеш-классы _xxxx не используем).
+// ---------------------------------------------------------------------------
+
+static const char* kInstallScript = R"JS(
+(function(){
+  if (window.__dsideInstalled) return 'installed';
+  window.__dsideInstalled = 1;
+  window.__dsideActivity = 0;
+  window.__dsideSentAt = 0;
+  function q(s){ return document.querySelector(s); }
+
+  window.__dsideSendNow = function(text){
+    var ta = q('textarea');
+    if(!ta) return 'no_textarea';
+    ta.focus(); ta.click();
+    var proto = window.HTMLTextAreaElement && window.HTMLTextAreaElement.prototype;
+    var desc = proto && Object.getOwnPropertyDescriptor(proto, 'value');
+    if (desc && desc.set) desc.set.call(ta, text); else ta.value = text;
+    ta.dispatchEvent(new Event('input', {bubbles:true}));
+    ta.dispatchEvent(new Event('change', {bubbles:true}));
+    window.__dsideSentAt = Date.now();
+    window.__dsideActivity = Date.now();
+    var tries = 0;
+    var iv = setInterval(function(){
+      var nodes = document.querySelectorAll('div[role=button]');
+      for (var i = 0; i < nodes.length; i++){
+        var c = nodes[i].className || '';
+        if (typeof c === 'string' && c.indexOf('ds-button--primary') >= 0 &&
+            c.indexOf('ds-button--disabled') < 0){
+          nodes[i].click();
+          clearInterval(iv);
+          return;
+        }
+      }
+      if (++tries > 40) clearInterval(iv);
+    }, 100);
+    return 'ok';
+  };
+
+  window.__dsideFocus = function(){
+    var ta = q('textarea');
+    if (ta){ ta.focus(); return 'ok'; }
+    return 'no_textarea';
+  };
+
+  window.__dsideNewChat = function(){
+    var nodes = document.querySelectorAll('a,button,div[role=button]');
+    for (var i = 0; i < nodes.length; i++){
+      var t = (nodes[i].innerText || '').replace(/\s+/g, ' ').trim();
+      if (t === 'New chat' || t === 'Новый чат'){
+        nodes[i].click();
+        window.__dsideActivity = Date.now();
+        return 'ok';
+      }
+    }
+    return 'not_found';
+  };
+
+  var act = function(){ window.__dsideActivity = Date.now(); };
+  var lastPush = 0;
+  setInterval(function(){
+    var root = document.body;
+    if (!root) return;
+    if (!window.__dsideObs){
+      var mo = new MutationObserver(act);
+      mo.observe(root, {childList:true, subtree:true, characterData:true});
+      window.__dsideObs = 1;
+    }
+    var blocks = document.querySelectorAll('div.ds-markdown');
+    var n = blocks.length;
+    var last = n ? (blocks[n-1].innerText || '') : '';
+    if (last.length > 60000) last = last.substring(last.length - 60000);
+    var now = Date.now();
+    var busy = (now - window.__dsideActivity) < 1300 || (now - window.__dsideSentAt) < 2500;
+    var p = !!q('textarea');
+    if (now - lastPush > 500){
+      lastPush = now;
+      var st = JSON.stringify({n:n, t:last, b:busy ? 1 : 0, p:p ? 1 : 0});
+      if (window.dsideState){ try { window.dsideState(st); } catch(e){} }
+    }
+  }, 400);
+  return 'installed_new';
+})();
+)JS";
+
+// ---------------------------------------------------------------------------
+
+namespace {
+
+std::string JsVar(const std::string& s) { return nlohmann::json(s).dump(); }
+
+std::string SendJs(const std::string& text) {
+  return "window.__dsideSendNow ? String(window.__dsideSendNow(" + JsVar(text) +
+         ")) : 'no_bridge';";
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------------------
+// Платформенная часть
+// ---------------------------------------------------------------------------
+
+struct WebChatPanel::Impl {
+#if DSIDE_HAS_WV
+  webview::webview* wv = nullptr;      // живёт в потоке панели
+#endif
+#if DSIDE_HAS_WV && defined(_WIN32)
+  HWND child = nullptr;                // дочернее окно-контейнер браузера
+  HWND parent = nullptr;
+#endif
+  bool threadDone = false;             // поток завершился (ставится из потока)
+};
+
+WebChatPanel::WebChatPanel() = default;
+
+WebChatPanel::~WebChatPanel() { Detach(); }
+
+bool WebChatPanel::Supported() const { return DSIDE_HAS_WV != 0; }
+
+bool WebChatPanel::Running() const {
+  std::lock_guard<std::mutex> lk(mMtx);
+  return mLaunched && mImpl && !mImpl->threadDone;
+}
+
+std::string WebChatPanel::LastError() const {
+  std::lock_guard<std::mutex> lk(mMtx);
+  return mError;
+}
+
+#if DSIDE_HAS_WV && defined(_WIN32)
+static const wchar_t* kChildClass = L"DeepSeekIDEWebChatChild";
+static LRESULT CALLBACK ChildProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
+  return DefWindowProcW(h, msg, w, l);
+}
+static void EnsureChildClass() {
+  static bool done = false;
+  if (done) return;
+  done = true;
+  WNDCLASSW wc{};
+  wc.lpfnWndProc = ChildProc;
+  wc.hInstance = GetModuleHandleW(nullptr);
+  wc.lpszClassName = kChildClass;
+  wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+  RegisterClassW(&wc);
+}
+#endif
+
+bool WebChatPanel::Attach(void* parentHwnd, const std::string& url) {
+  std::lock_guard<std::mutex> lk(mMtx);
+  if (mLaunched) return true;
+  if (!Supported()) {
+    mError = "webview не собран (DEEPSEEKIDE_WEBVIEW=OFF)";
+    return false;
+  }
+  mUrl = url;
+  mImpl = std::make_unique<Impl>();
+#if DSIDE_HAS_WV && defined(_WIN32)
+  mImpl->parent = reinterpret_cast<HWND>(parentHwnd);
+#endif
+  mLaunched = true;
+  mThread = std::thread([this] { ThreadMain(); });
+  return true;
+}
+
+void WebChatPanel::Detach() {
+  {
+    std::lock_guard<std::mutex> lk(mMtx);
+    if (!mLaunched) return;
+    mLaunched = false;  // больше никаких Eval из GUI
+  }
+#if DSIDE_HAS_WV
+  webview::webview* w = nullptr;
+  {
+    std::lock_guard<std::mutex> lk(mMtx);
+    if (mImpl) w = mImpl->wv;
+  }
+  if (w) w->dispatch([w] { w->terminate(); });
+#endif
+  if (mThread.joinable()) mThread.join();
+#if DSIDE_HAS_WV && defined(_WIN32)
+  if (mImpl && mImpl->child) {
+    DestroyWindow(mImpl->child);
+    mImpl->child = nullptr;
+  }
+#endif
+#if DSIDE_HAS_WV
+  std::lock_guard<std::mutex> lk(mMtx);
+  if (mImpl) mImpl->wv = nullptr;
+#endif
+}
+
+void WebChatPanel::ThreadMain() {
+#if DSIDE_HAS_WV
+  void* parentArg = nullptr;
+#  if defined(_WIN32)
+  EnsureChildClass();
+  // Дочернее окно-контейнер; браузер подчиняется его размерам.
+  HWND child = CreateWindowExW(0, kChildClass, L"", WS_CHILD | WS_CLIPCHILDREN, 0, 0, 400, 400,
+                               mImpl->parent, nullptr, GetModuleHandleW(nullptr), nullptr);
+  mImpl->child = child;
+  if (child) ShowWindow(child, SW_SHOW);
+  parentArg = child;
+#  endif
+
+  webview::webview w(false, parentArg);
+  {
+    std::lock_guard<std::mutex> lk(mMtx);
+    mImpl->wv = &w;
+  }
+  w.bind("dsideState", [this](const std::string& req) {
+    OnStateJson(req.c_str());
+    return std::string("ok");
+  });
+#  if !defined(_WIN32)
+  w.set_title("DeepSeekIDE — chat.deepseek.com");
+  w.set_size(760, 900, WEBVIEW_HINT_NONE);
+#  endif
+
+  // Тёмная заставка, пока грузится сайт.
+  w.navigate(
+      "data:text/html;charset=utf-8,<html><body style='background:%230b0e17;color:%238a93ac;"
+      "font:14px sans-serif;display:flex;height:100vh;align-items:center;justify-content:center'"
+      ">DeepSeekIDE загружает chat.deepseek.com&#8230;</body></html>");
+  w.navigate(mUrl);
+
+  // Инжектор: потоковый ms-цикл — idempotent install каждые 1.5 с.
+  std::thread injector([this] {
+    for (;;) {
+      {
+        std::lock_guard<std::mutex> lk(mMtx);
+        if (!mLaunched) break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+      {
+        std::lock_guard<std::mutex> lk(mMtx);
+        if (!mLaunched) break;
+      }
+      InstallerTick();
+    }
+  });
+
+  w.run();  // блокирует до terminate()
+
+  if (injector.joinable()) injector.join();
+  {
+    std::lock_guard<std::mutex> lk(mMtx);
+    if (mImpl) {
+      mImpl->wv = nullptr;
+      mImpl->threadDone = true;
+    }
+  }
+#else
+  (void)this;
+#endif
+}
+
+void WebChatPanel::InstallerTick() {
+#if DSIDE_HAS_WV
+  webview::webview* w = nullptr;
+  {
+    std::lock_guard<std::mutex> lk(mMtx);
+    if (mImpl) w = mImpl->wv;
+  }
+  if (w) w->dispatch([w] { w->eval(kInstallScript); });
+#else
+  (void)this;
+#endif
+}
+
+void WebChatPanel::OnStateJson(const char* json) {
+  try {
+    auto j = nlohmann::json::parse(json, nullptr, false);
+    if (j.is_discarded()) return;
+    State st;
+    st.ok = true;
+    st.messages = j.value("n", 0);
+    st.busy = j.value("b", 0) != 0;
+    st.chatPresent = j.value("p", 0) != 0;
+    st.last = j.value("t", std::string{});
+    std::lock_guard<std::mutex> lk(mMtx);
+    mState = std::move(st);
+  } catch (...) {
+    // не роняем поток из-за битого JSON
+  }
+}
+
+WebChatPanel::State WebChatPanel::GetState() const {
+  std::lock_guard<std::mutex> lk(mMtx);
+  return mState;
+}
+
+void WebChatPanel::SetRect(int x, int y, int w, int h) {
+#if DSIDE_HAS_WV && defined(_WIN32)
+  HWND child = nullptr;
+  {
+    std::lock_guard<std::mutex> lk(mMtx);
+    if (mImpl) child = mImpl->child;
+  }
+  if (child) ::MoveWindow(child, x, y, w > 0 ? w : 1, h > 0 ? h : 1, TRUE);
+#else
+  (void)x; (void)y; (void)w; (void)h;
+#endif
+}
+
+void WebChatPanel::SetVisible(bool visible) {
+  mVisible = visible;
+#if DSIDE_HAS_WV && defined(_WIN32)
+  HWND child = nullptr;
+  {
+    std::lock_guard<std::mutex> lk(mMtx);
+    if (mImpl) child = mImpl->child;
+  }
+  if (child) ShowWindow(child, visible ? SW_SHOW : SW_HIDE);
+#else
+  (void)visible;
+#endif
+}
+
+void WebChatPanel::EvalLocked(const std::string& js) {
+#if DSIDE_HAS_WV
+  if (mImpl && mImpl->wv) {
+    auto* w = mImpl->wv;
+    w->dispatch([w, js] { w->eval(js); });
+  }
+#else
+  (void)js;
+#endif
+}
+
+void WebChatPanel::SendPrompt(const std::string& text) {
+  std::lock_guard<std::mutex> lk(mMtx);
+  if (!mLaunched || !mImpl) return;
+  EvalLocked(SendJs(text));
+}
+
+void WebChatPanel::FocusInput() {
+  std::lock_guard<std::mutex> lk(mMtx);
+  if (!mLaunched || !mImpl) return;
+  EvalLocked("window.__dsideFocus && window.__dsideFocus();");
+}
+
+void WebChatPanel::NewChat() {
+  std::lock_guard<std::mutex> lk(mMtx);
+  if (!mLaunched || !mImpl) return;
+  EvalLocked("window.__dsideNewChat && window.__dsideNewChat();");
+}

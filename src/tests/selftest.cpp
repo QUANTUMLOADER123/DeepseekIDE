@@ -9,9 +9,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <set>
 #include <string>
 
 #include "ai/DeepSeekClient.h"
+#include "ai/OpsParser.h"
 #include "ai/ToolRegistry.h"
 #include "app/Platform.h"
 #include "core/ProjectManager.h"
@@ -173,7 +175,7 @@ static void TestToolSchemas() {
   ToolContext ctx;  // без проекта — schema всё равно строится
   ToolRegistry reg(std::move(ctx));
   const auto& s = reg.Schemas();
-  CHECK(s.is_array() && s.size() == 8, "восемь инструментов");
+  CHECK(s.is_array() && s.size() == 13, "тринадцать инструментов");
   bool hasWrite = false, hasRun = false;
   for (const auto& t : s) {
     std::string n = t["function"]["name"];
@@ -228,6 +230,97 @@ static void TestToolsLive(const fs::path& root) {
   CHECK(!snaps.List().empty(), "действия записались в снимок");
 }
 
+// 5b) Новые операции агента: append/insert/replace/copy/move
+static void TestNewToolOps(const fs::path& root) {
+  std::printf("[5b] Новые операции инструментов\n");
+  ProjectManager pm;
+  pm.SetRoot(root);
+  SnapshotManager snaps;
+  snaps.SetRoot(pm.Root());
+  ToolContext ctx;
+  ctx.project = &pm;
+  ctx.snapshots = &snaps;
+  ToolRegistry reg(std::move(ctx));
+
+  std::string file = "ops/lines.txt";
+  auto w = reg.Execute("write_file", {{"path", file}, {"content", "one\ntwo\nthree\n"}});
+  CHECK(w.ok, "write_file для построчных правок");
+
+  auto ins = reg.Execute("insert_lines", {{"path", file}, {"line", 2}, {"content", "BEFORE-two"}});
+  CHECK(ins.ok, "insert_lines вставляет перед строкой");
+  auto rf = reg.Execute("read_file", {{"path", file}});
+  CHECK(rf.output.find("BEFORE-two") != std::string::npos, "вставка на месте");
+  CHECK(rf.output.find("one") < rf.output.find("BEFORE-two"), "порядок строк верный");
+
+  auto bad = reg.Execute("insert_lines", {{"path", file}, {"line", 99}, {"content", "x"}});
+  CHECK(!bad.ok, "insert_lines вне диапазона = отказ");
+
+  auto rpl = reg.Execute("replace_lines",
+                         {{"path", file}, {"start_line", 1}, {"end_line", 1}, {"content", "ONE"}});
+  CHECK(rpl.ok, "replace_lines заменяет диапазон");
+  auto rf2 = reg.Execute("read_file", {{"path", file}});
+  CHECK(rf2.output.find("ONE") != std::string::npos && rf2.output.find("BEFORE-two") != std::string::npos,
+        "замена одних строк не трогает соседние");
+
+  auto app = reg.Execute("append_file", {{"path", file}, {"content", "tail"}});
+  CHECK(app.ok, "append_file дописывает");
+  auto rf3 = reg.Execute("read_file", {{"path", file}});
+  CHECK(rf3.output.find("tail") != std::string::npos, "хвост записан");
+
+  auto appNew = reg.Execute("append_file", {{"path", "ops/newfile.txt"}, {"content", "fresh\n"}});
+  CHECK(appNew.ok && fs::exists(pm.Root() / "ops" / "newfile.txt"), "append_file создаёт новый файл");
+
+  auto cp = reg.Execute("copy_file", {{"from", file}, {"to", "ops/copy.txt"}});
+  CHECK(cp.ok && fs::exists(pm.Root() / "ops" / "copy.txt"), "copy_file копирует");
+  auto cpBad = reg.Execute("copy_file", {{"from", file}, {"to", "ops/copy.txt"}});
+  CHECK(!cpBad.ok, "copy_file не затирает существующую цель");
+
+  auto mv = reg.Execute("move_file", {{"from", "ops/copy.txt"}, {"to", "ops/moved.txt"}});
+  CHECK(mv.ok && fs::exists(pm.Root() / "ops" / "moved.txt") &&
+            !fs::exists(pm.Root() / "ops" / "copy.txt"),
+        "move_file перемещает");
+}
+
+// 7) Парсер ответов веб-чата (deepseekide-ops)
+static void TestOpsParser() {
+  std::printf("[7] Парсер deepseekide-ops\n");
+  ParsedOps po;
+
+  std::string answer =
+      "Сделал! Пояснение до блока.\n"
+      "```deepseekide-ops\n"
+      "[{\"name\":\"write_file\",\"args\":{\"path\":\"a.txt\",\"content\":\"x\"}},"
+      " {\"name\":\"make_dir\",\"args\":{\"path\":\"docs\"}}]\n"
+      "```\n"
+      "А это обычный код:\n```cpp\nint main(){}\n```\n"
+      "И ещё одна операция:\n```deepseekide-ops\n"
+      "{\"name\":\"append_file\",\"args\":{\"path\":\"a.txt\",\"content\":\"y\"}}\n```";
+  bool any = dside::ExtractOps(answer, dside::MutationOps(), po);
+  CHECK(any, "найдены операции");
+  CHECK(po.ops.size() == 3, "ровно три операции (две в массиве + один объект)");
+  CHECK(po.ops[0]["name"] == "write_file" && po.ops[2]["name"] == "append_file", "разбор корректный");
+  CHECK(po.text.find("int main()") != std::string::npos, "обычный блок кода не вырезается");
+  CHECK(po.text.find("write_file") == std::string::npos, "ops-блоки вырезаны из текста");
+  CHECK(po.errors.empty(), "ошибок разбора нет");
+
+  // Повреждённый JSON — ошибка, но не падение:
+  ParsedOps p2;
+  dside::ExtractOps("x\n```deepseekide-ops\n{ не json }\n```", dside::MutationOps(), p2);
+  CHECK(p2.ops.empty() && p2.errors.size() == 1, "битый JSON → одна ошибка, без краха");
+
+  // Незнакомая операция — в errors, не в ops:
+  ParsedOps p3;
+  dside::ExtractOps("```deepseekide-ops\n{\"name\":\"hack_all\",\"args\":{}}\n```",
+                    dside::MutationOps(), p3);
+  CHECK(p3.ops.empty() && !p3.errors.empty(), "незнакомая операция отклонена");
+
+  // Блоки только чтения тоже не должны проходить как мутации:
+  ParsedOps p4;
+  dside::ExtractOps("```deepseekide-ops\n{\"name\":\"read_file\",\"args\":{\"path\":\"a\"}}\n```",
+                    dside::MutationOps(), p4);
+  CHECK(p4.ops.empty(), "read_file не входит в мутации");
+}
+
 // 6) Сеть (не падаем без сети или при rate-limit — просто SKIP)
 static void TestNetwork() {
   std::printf("[6] HTTPS через наш HttpClient\n");
@@ -256,6 +349,8 @@ int main() {
   TestSse();
   TestToolSchemas();
   TestToolsLive(root);
+  TestNewToolOps(root);
+  TestOpsParser();
   TestNetwork();
 
   std::error_code ec;

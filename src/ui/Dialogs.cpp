@@ -171,44 +171,20 @@ bool SettingsDialog::Render() {
   ImGui::SetNextWindowSize(ImVec2(680, 640), ImGuiCond_Appearing);
   if (ImGui::BeginPopupModal("Настройки DeepSeekIDE", nullptr, ImGuiWindowFlags_NoCollapse)) {
     if (ImGui::BeginTabBar("##settings_tabs")) {
-      if (ImGui::BeginTabItem("DeepSeek API")) {
+      if (ImGui::BeginTabItem("Ассистент")) {
         ImGui::Dummy(ImVec2(0, 6));
-        widgets::DimText(
-            "Ключ можно получить бесплатно на platform.deepseek.com (раздел API Keys). "
-            "Он хранится локально в settings.json и никуда не отправляется, кроме api.deepseek.com.");
-        ImGui::Dummy(ImVec2(0, 4));
-
-        ImGui::TextUnformatted("API-ключ");
-        ImGui::PushItemWidth(-90);
-        ImGui::InputTextWithHint("##apikey", "sk-...", mApiKey, sizeof(mApiKey),
-                                 mKeyVisible ? 0 : ImGuiInputTextFlags_Password);
-        ImGui::PopItemWidth();
-        ImGui::SameLine();
-        if (ImGui::Button(mKeyVisible ? "Скрыть" : "Показать")) mKeyVisible = !mKeyVisible;
-
-        ImGui::TextUnformatted("Base URL");
-        ImGui::InputText("##baseurl", mBaseUrl, sizeof(mBaseUrl));
-
-        ImGui::TextUnformatted("Модель");
-        const char* models[] = {"deepseek-chat", "deepseek-reasoner"};
-        int current = 0;
-        for (int i = 0; i < 2; ++i)
-          if (mModel == models[i]) current = i;
-        ImGui::PushItemWidth(260);
-        if (ImGui::BeginCombo("##model", models[current])) {
-          for (int i = 0; i < 2; ++i)
-            if (ImGui::Selectable(models[i], current == i))
-              std::snprintf(mModel, sizeof(mModel), "%s", models[i]);
-          ImGui::EndCombo();
-        }
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(260);
-        ImGui::InputTextWithHint("##modelcustom", "или своя модель…", mModel, sizeof(mModel));
-        ImGui::PopItemWidth();
-
-        ImGui::SliderFloat("Температура", &mTemp, 0.0f, 2.0f, "%.2f");
-        widgets::DimText("0.0 — строгий код, 1.0+ — больше креатива. Для правок файлов лучше 0.1–0.4.");
-        ImGui::SliderInt("Макс. шагов агента", &mMaxSteps, 4, 64);
+        widgets::DimText("AI-ассистент работает через встроенный chat.deepseek.com — "
+                         "никаких API-ключей не нужно, достаточно бесплатного аккаунта DeepSeek.");
+        ImGui::Dummy(ImVec2(0, 6));
+        ImGui::BulletText("Левая половина окна — полноценный чат DeepSeek (вход через Google/аккаунт).");
+        ImGui::BulletText("Пишите задачу в строке над редактором справа и жмите «Отправить» — "
+                          "IDE сама передаст задачу в чат вместе со структурой проекта.");
+        ImGui::BulletText("Ответ с блоками deepseekide-ops появится в окне «Применить?» — "
+                          "вы подтверждаете правки, они попадают в снимок (откат в один клик).");
+        ImGui::BulletText("Кнопка «Файл» рядом с полем задачи отправляет содержимое активного файла в чат.");
+        ImGui::Dummy(ImVec2(0, 6));
+        widgets::DimText("Если сайт попросит войти или решить капчу — сделайте это прямо в "
+                         "окне чата слева, дальше всё работает автоматически.");
         ImGui::EndTabItem();
       }
 

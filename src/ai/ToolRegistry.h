@@ -51,10 +51,19 @@ private:
   ToolRunResult ReadFile(const nlohmann::json& args);
   ToolRunResult WriteFile(const nlohmann::json& args);
   ToolRunResult EditFile(const nlohmann::json& args);
+  ToolRunResult AppendFile(const nlohmann::json& args);
+  ToolRunResult InsertLines(const nlohmann::json& args);
+  ToolRunResult ReplaceLines(const nlohmann::json& args);
   ToolRunResult MakeDir(const nlohmann::json& args);
   ToolRunResult DeletePath(const nlohmann::json& args);
+  ToolRunResult CopyFile(const nlohmann::json& args);
+  ToolRunResult MoveFile(const nlohmann::json& args);
   ToolRunResult SearchFiles(const nlohmann::json& args);
   ToolRunResult RunCommand(const nlohmann::json& args);
+
+  // Общие помощники для построчных правок.
+  static bool SplitLines(const std::string& text, std::vector<std::string>& lines);
+  static std::string JoinLines(const std::vector<std::string>& lines);
 
   std::string Arg(const nlohmann::json& args, const char* key, const std::string& def = "") const;
   // Проверка пути: внутри проекта + не защищённый.

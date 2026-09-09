@@ -27,6 +27,7 @@ Settings Settings::Load() {
     s.codeFontSize = j.value("code_font_size", s.codeFontSize);
     s.editorTabSize = j.value("editor_tab_size", s.editorTabSize);
     s.showWhitespace = j.value("show_whitespace", s.showWhitespace);
+    s.chatSplit    = j.value("chat_split", s.chatSplit);
     s.lastProject  = j.value("last_project", s.lastProject);
   } catch (...) {
     // битый конфиг — работаем с дефолтами
@@ -49,6 +50,7 @@ bool Settings::Save() const {
   j["code_font_size"] = codeFontSize;
   j["editor_tab_size"] = editorTabSize;
   j["show_whitespace"] = showWhitespace;
+  j["chat_split"]       = chatSplit;
   j["last_project"]   = lastProject;
   return platform::WriteTextFile(SettingsPath(), j.dump(2));
 }

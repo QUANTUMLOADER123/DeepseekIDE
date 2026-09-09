@@ -6,6 +6,8 @@
 #include <cstring>
 #include <set>
 #include <sstream>
+#include <tuple>
+#include <vector>
 #include <system_error>
 
 #include "app/Platform.h"
@@ -138,6 +140,39 @@ void ToolRegistry::BuildSchemas() {
        {"case_sensitive", Prop("boolean", "Учитывать регистр (по умолчанию false)")}},
       {"query"}));
   mSchemas.push_back(Tool(
+      "append_file",
+      "Дописать текст В КОНЕЦ файла (файл создаётся, если отсутствует). Не перезаписывает существующее.",
+      {{"path", Prop("string", "Относительный путь к файлу")},
+       {"content", Prop("string", "Текст для записи в конец файла")}},
+      {"path", "content"}));
+  mSchemas.push_back(Tool(
+      "insert_lines",
+      "Вставить текст ПЕРЕД указанной строкой (нумерация с 1). line=1 — в начало файла; "
+      "линия больше числа строк — в конец. Удобно для вставки функций, импортов, конфигов.",
+      {{"path", Prop("string", "Относительный путь к файлу")},
+       {"line", Prop("integer", "Перед какой строкой вставить (с 1)")},
+       {"content", Prop("string", "Вставляемый текст (произвольное число строк)")}},
+      {"path", "line", "content"}));
+  mSchemas.push_back(Tool(
+      "replace_lines",
+      "Заменить строки файла с start_line по end_line (включительно, нумерация с 1) на новый текст. "
+      "Перед использованием прочитай диапазон read_file, чтобы указать точные границы.",
+      {{"path", Prop("string", "Относительный путь к файлу")},
+       {"start_line", Prop("integer", "Первая заменяемая строка (с 1)")},
+       {"end_line", Prop("integer", "Последняя заменяемая строка (включительно)")},
+       {"content", Prop("string", "Новый текст вместо диапазона (может быть пустым — удаление строк)")}},
+      {"path", "start_line", "end_line", "content"}));
+  mSchemas.push_back(Tool(
+      "copy_file", "Скопировать файл в новое место проекта.",
+      {{"from", Prop("string", "Что копируем (относительный путь)")},
+       {"to", Prop("string", "Куда (относительный путь)")}},
+      {"from", "to"}));
+  mSchemas.push_back(Tool(
+      "move_file", "Переместить или переименовать файл/папку.",
+      {{"from", Prop("string", "Откуда (относительный путь)")},
+       {"to", Prop("string", "Куда (относительный путь)")}},
+      {"from", "to"}));
+  mSchemas.push_back(Tool(
       "run_command",
       "Выполнить консольную команду в корне проекта (сборка, тесты, git status и т.п.). "
       "Работает только если пользователь разрешил shell в настройках.",
@@ -156,6 +191,8 @@ std::string ToolRegistry::Describe(const std::string& name, const nlohmann::json
   };
   if (name == "run_command") return name + " · " + a("command");
   if (name == "search_files") return name + " · «" + a("query") + "»";
+  if (name == "copy_file" || name == "move_file")
+    return name + " · " + a("from") + " → " + a("to");
   return name + " · " + a("path");
 }
 
@@ -164,8 +201,13 @@ ToolRunResult ToolRegistry::Execute(const std::string& name, const nlohmann::jso
   if (name == "read_file") return ReadFile(args);
   if (name == "write_file") return WriteFile(args);
   if (name == "edit_file") return EditFile(args);
+  if (name == "append_file") return AppendFile(args);
+  if (name == "insert_lines") return InsertLines(args);
+  if (name == "replace_lines") return ReplaceLines(args);
   if (name == "make_dir") return MakeDir(args);
   if (name == "delete_path") return DeletePath(args);
+  if (name == "copy_file") return CopyFile(args);
+  if (name == "move_file") return MoveFile(args);
   if (name == "search_files") return SearchFiles(args);
   if (name == "run_command") return RunCommand(args);
   ToolRunResult r;
@@ -363,6 +405,226 @@ ToolRunResult ToolRegistry::EditFile(const nlohmann::json& args) {
   r.output = "Файл " + rel + ": выполнено замен: " + std::to_string(replaced);
   if (mCtx.project) mCtx.project->MarkDirty();
   if (mCtx.fileChanged) mCtx.fileChanged(rel);
+  if (mCtx.log) mCtx.log("tool", r.output);
+  return r;
+}
+
+bool ToolRegistry::SplitLines(const std::string& text, std::vector<std::string>& lines) {
+  lines.clear();
+  std::string cur;
+  cur.reserve(256);
+  for (char c : text) {
+    if (c == '\n') {
+      if (!cur.empty() && cur.back() == '\r') cur.pop_back();
+      lines.push_back(cur);
+      cur.clear();
+    } else {
+      cur.push_back(c);
+    }
+  }
+  if (!cur.empty()) lines.push_back(cur);  // хвост без \n
+  return !text.empty() && text.back() == '\n';
+}
+
+std::string ToolRegistry::JoinLines(const std::vector<std::string>& lines) {
+  std::string out;
+  for (const auto& l : lines) {
+    out.append(l);
+    out.push_back('\n');
+  }
+  return out;
+}
+
+ToolRunResult ToolRegistry::AppendFile(const nlohmann::json& args) {
+  ToolRunResult r;
+  const std::string rel = Arg(args, "path");
+  std::string content = Arg(args, "content");
+  fs::path abs;
+  if (!Resolve(rel, abs, r, true)) return r;
+
+  std::error_code ec;
+  std::string old;
+  const bool existed = fs::exists(abs, ec);
+  if (existed) std::ignore = platform::ReadTextFile(abs, old);
+  if (mCtx.snapshots) mCtx.snapshots->RecordFileChange(abs);
+  // Сохраняем перевод строки между старым и новым куском.
+  if (existed && !old.empty() && old.back() != '\n') content = "\n" + content;
+
+  std::string werr;
+  std::error_code cre_ec;
+  if (fs::path parent = abs.parent_path(); !parent.empty())
+    fs::create_directories(parent, cre_ec);
+  if (!platform::WriteTextFile(abs, old + content, &werr)) {
+    r.output = "Ошибка записи: " + werr;
+    return r;
+  }
+  r.ok = true;
+  r.output = (existed ? "Файл " + rel + ": дописано " : "Создан файл " + rel + " (") +
+             std::to_string(std::count(content.begin(), content.end(), '\n') + 1) + " строк" +
+             (existed ? ")" : ")");
+  if (mCtx.project) mCtx.project->MarkDirty();
+  if (mCtx.fileChanged) mCtx.fileChanged(rel);
+  if (mCtx.log) mCtx.log("tool", r.output);
+  return r;
+}
+
+ToolRunResult ToolRegistry::InsertLines(const nlohmann::json& args) {
+  ToolRunResult r;
+  const std::string rel = Arg(args, "path");
+  const int line = args.value("line", 1);
+  const std::string content = Arg(args, "content");
+  fs::path abs;
+  if (!Resolve(rel, abs, r, true)) return r;
+
+  std::string text;
+  if (!platform::ReadTextFile(abs, text)) {
+    r.output = "Файл не найден или не читается: " + rel + ". Для нового файла используйте write_file.";
+    return r;
+  }
+  std::vector<std::string> lines;
+  SplitLines(text, lines);
+  if (line < 1 || line > static_cast<int>(lines.size()) + 1) {
+    r.output = "line вне диапазона: у файла " + std::to_string(lines.size()) +
+               " строк(и). допустимо 1.." + std::to_string(lines.size() + 1);
+    return r;
+  }
+  std::string contentNorm = content;
+  if (!contentNorm.empty() && contentNorm.back() != '\n') contentNorm.push_back('\n');
+
+  std::string before = JoinLines(std::vector<std::string>(lines.begin(), lines.begin() + (line - 1)));
+  std::string after = JoinLines(std::vector<std::string>(lines.begin() + (line - 1), lines.end()));
+
+  if (mCtx.snapshots) mCtx.snapshots->RecordFileChange(abs);
+  std::string werr;
+  if (!platform::WriteTextFile(abs, before + contentNorm + after, &werr)) {
+    r.output = "Ошибка записи: " + werr;
+    return r;
+  }
+  r.ok = true;
+  r.output = "Файл " + rel + ": вставлено " +
+             std::to_string(std::count(contentNorm.begin(), contentNorm.end(), '\n')) +
+             " строк перед строкой " + std::to_string(line);
+  if (mCtx.project) mCtx.project->MarkDirty();
+  if (mCtx.fileChanged) mCtx.fileChanged(rel);
+  if (mCtx.log) mCtx.log("tool", r.output);
+  return r;
+}
+
+ToolRunResult ToolRegistry::ReplaceLines(const nlohmann::json& args) {
+  ToolRunResult r;
+  const std::string rel = Arg(args, "path");
+  const int startLine = args.value("start_line", 1);
+  const int endLine = args.value("end_line", startLine);
+  const std::string content = Arg(args, "content");
+  fs::path abs;
+  if (!Resolve(rel, abs, r, true)) return r;
+
+  std::string text;
+  if (!platform::ReadTextFile(abs, text)) {
+    r.output = "Файл не найден или не читается: " + rel;
+    return r;
+  }
+  std::vector<std::string> lines;
+  SplitLines(text, lines);
+  if (startLine < 1 || endLine < startLine || endLine > static_cast<int>(lines.size())) {
+    r.output = "Диапазон " + std::to_string(startLine) + ".." + std::to_string(endLine) +
+               " некорректен: у файла " + std::to_string(lines.size()) + " строк(и). " +
+               "Прочитайте файл read_file и укажите точные границы.";
+    return r;
+  }
+  std::string contentNorm = content;
+  if (!contentNorm.empty() && contentNorm.back() != '\n') contentNorm.push_back('\n');
+
+  std::string before = JoinLines(std::vector<std::string>(lines.begin(), lines.begin() + (startLine - 1)));
+  std::string after = JoinLines(std::vector<std::string>(lines.begin() + endLine, lines.end()));
+
+  if (mCtx.snapshots) mCtx.snapshots->RecordFileChange(abs);
+  std::string werr;
+  if (!platform::WriteTextFile(abs, before + contentNorm + after, &werr)) {
+    r.output = "Ошибка записи: " + werr;
+    return r;
+  }
+  r.ok = true;
+  const int removed = endLine - startLine + 1;
+  r.output = "Файл " + rel + ": строки " + std::to_string(startLine) + ".." +
+             std::to_string(endLine) + " (" + std::to_string(removed) + " шт.) заменены на " +
+             std::to_string(std::count(contentNorm.begin(), contentNorm.end(), '\n')) + " строк(и)";
+  if (mCtx.project) mCtx.project->MarkDirty();
+  if (mCtx.fileChanged) mCtx.fileChanged(rel);
+  if (mCtx.log) mCtx.log("tool", r.output);
+  return r;
+}
+
+ToolRunResult ToolRegistry::CopyFile(const nlohmann::json& args) {
+  ToolRunResult r;
+  const std::string relFrom = Arg(args, "from");
+  const std::string relTo = Arg(args, "to");
+  fs::path from, to;
+  if (!Resolve(relFrom, from, r, true)) return r;
+  if (!Resolve(relTo, to, r, true)) return r;
+  std::error_code ec;
+  if (!fs::is_regular_file(from, ec)) {
+    r.output = "Источник — не файл (или не существует): " + relFrom;
+    return r;
+  }
+  if (fs::exists(to, ec)) {
+    r.output = "Цель уже существует: " + relTo + " (сначала удалите её или выберите другое имя)";
+    return r;
+  }
+  fs::create_directories(to.parent_path(), ec);
+  fs::copy_file(from, to, ec);
+  if (ec) {
+    r.output = "Копирование не удалось: " + ec.message();
+    return r;
+  }
+  if (mCtx.snapshots) mCtx.snapshots->RecordFileChange(to);
+  r.ok = true;
+  r.output = "Скопировано: " + relFrom + " → " + relTo;
+  if (mCtx.project) mCtx.project->MarkDirty();
+  if (mCtx.fileChanged) mCtx.fileChanged(relTo);
+  if (mCtx.log) mCtx.log("tool", r.output);
+  return r;
+}
+
+ToolRunResult ToolRegistry::MoveFile(const nlohmann::json& args) {
+  ToolRunResult r;
+  const std::string relFrom = Arg(args, "from");
+  const std::string relTo = Arg(args, "to");
+  fs::path from, to;
+  if (!Resolve(relFrom, from, r, true)) return r;
+  if (!Resolve(relTo, to, r, true)) return r;
+  std::error_code ec;
+  if (!fs::exists(from, ec)) {
+    r.output = "Источник не существует: " + relFrom;
+    return r;
+  }
+  if (fs::exists(to, ec)) {
+    r.output = "Цель уже существует: " + relTo;
+    return r;
+  }
+  // В снимок — исходный файл(ы), чтобы откат вернул их на место.
+  if (mCtx.snapshots) {
+    if (fs::is_directory(from, ec)) {
+      for (auto it = fs::recursive_directory_iterator(
+               from, fs::directory_options::skip_permission_denied, ec);
+           !ec && it != fs::recursive_directory_iterator(); it.increment(ec))
+        if (it->is_regular_file(ec)) mCtx.snapshots->RecordFileChange(it->path());
+    } else {
+      mCtx.snapshots->RecordFileChange(from);
+      mCtx.snapshots->RecordFileChange(to);
+    }
+  }
+  fs::create_directories(to.parent_path(), ec);
+  fs::rename(from, to, ec);
+  if (ec) {
+    r.output = "Перемещение не удалось: " + ec.message();
+    return r;
+  }
+  r.ok = true;
+  r.output = "Перемещено: " + relFrom + " → " + relTo;
+  if (mCtx.project) mCtx.project->MarkDirty();
+  if (mCtx.fileChanged) mCtx.fileChanged(relFrom);
+  if (mCtx.fileChanged) mCtx.fileChanged(relTo);
   if (mCtx.log) mCtx.log("tool", r.output);
   return r;
 }

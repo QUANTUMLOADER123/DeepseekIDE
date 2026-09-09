@@ -25,6 +25,7 @@ struct Settings {
   int  codeFontSize   = 16;
   int  editorTabSize  = 4;
   bool showWhitespace = false;
+  float chatSplit    = 0.5f;  // доля ширины окна под веб-чат (0.25..0.75)
 
   // --- Последний проект ---
   std::string lastProject;
