@@ -1,52 +1,48 @@
 @echo off
-chcp 65001 >nul
 rem ============================================================
-rem  DeepSeekIDE — сборка в 1 клик для Windows (Visual Studio)
+rem  DeepSeekIDE - build for Windows (Visual Studio 2022)
 rem
-rem  НИКАКИХ внешних зависимостей: ни vcpkg, ни curl, ни WebView2.
-rem  Всё нужное уже внутри репозитория (cpp-httplib + nlohmann_json
-rem  докачивается с github один раз при настройке cmake).
+rem  Cyrillic REMOVED on purpose: cmd.exe parses .bat in OEM cp
+rem  and UTF-8 Russian text breaks parsing (that is the crash
+rem  you just saw). All messages here are ASCII-only.
 rem
-rem  Нужно установленным:
-rem   - Visual Studio 2022+ с компонентом "Desktop development with C++"
-rem   - CMake 3.24+  ->  https://cmake.org/download/
-rem     (при установке отметить "Add CMake to system PATH")
-rem
-rem  Результат: deepseekide.exe в КОРНЕ папки (рядом с assets\).
-rem  Просто запустите его — откроется IDE в вашем браузере.
+rem  Result: deepseekide.exe in this folder (next to assets\).
+rem  Just run it - the IDE opens in your browser.
 rem ============================================================
 setlocal
 cd /d "%~dp0"
 
 where cmake >nul 2>nul
 if errorlevel 1 (
-  echo [ОШИБКА] cmake не найден в PATH. Установите CMake с https://cmake.org/download/
+  echo [ERROR] cmake not found in PATH.
+  echo Install CMake 3.24+ from https://cmake.org/download/ and tick
+  echo "Add CMake to system PATH".
   pause
   exit /b 1
 )
 
-echo [1/3] Настройка CMake...
+echo [1/3] CMake configure...
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 if errorlevel 1 goto fail
 
-echo [2/3] Сборка Release...
+echo [2/3] Build Release...
 cmake --build build --config Release
 if errorlevel 1 goto fail
 
-echo [3/3] Самотесты ядра...
-build\Release\deepseekide_tests.exe
+echo [3/3] Core selftests...
+"build\Release\deepseekide_tests.exe"
 if errorlevel 1 goto fail
 
 echo.
 echo ============================================================
-echo  Готово! Запускайте deepseekide.exe в корне этой папки.
-echo  IDE откроется в вашем браузере, а chat.deepseek.com -
-echo  в отдельном окне Chrome/Edge (кнопка "Подключить чат").
+echo  OK! Run deepseekide.exe in this folder.
+echo  IDE opens in your browser; the agent chat opens in a
+echo  separate Chrome/Edge window (button "Connect chat").
 echo ============================================================
 exit /b 0
 
 :fail
 echo.
-echo [ОШИБКА] Сборка не прошла. Пришлите текст выше разработчику.
+echo [ERROR] Build failed. Send the text above to the developer.
 pause
 exit /b 1
