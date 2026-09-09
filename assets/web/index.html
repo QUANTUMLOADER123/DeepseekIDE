@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>DeepSeekIDE</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="/favicon.ico" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+<div id="app">
+  <!-- ======================= ВЕРХНИЙ БАР ======================= -->
+  <header id="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" width="26" height="26" class="logo">
+        <path d="M16 2 L30 16 L16 30 L2 16 Z" fill="url(#lg)"/>
+        <path d="M16 9 L23 16 L16 23 L9 16 Z" fill="#0b0e17"/>
+        <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#4D6BFE"/><stop offset="1" stop-color="#7A4DFE"/>
+        </linearGradient></defs>
+      </svg>
+      <span class="name">DeepSeek<em>IDE</em></span>
+      <span id="projName" class="proj-name dim">проект не открыт</span>
+    </div>
+    <div class="top-actions">
+      <div id="chatStatus" class="chat-status off">
+        <span class="dot"></span>
+        <span id="chatStatusText">чат не подключен</span>
+      </div>
+      <button id="btnConnect" class="btn primary small" title="Запустить браузер с chat.deepseek.com">
+        ▶ Подключить чат
+      </button>
+      <button id="btnShutdown" class="btn ghost small" title="Выключить IDE-сервер">
+        ⏻
+      </button>
+    </div>
+  </header>
+
+  <div id="main">
+    <!-- ======================= ЛЕВАЯ ПАНЕЛЬ ======================= -->
+    <aside id="sidebar">
+      <div class="side-section">
+        <div class="side-head">
+          <span>Проект</span>
+          <button id="btnOpenFolder" class="btn tiny">Открыть…</button>
+        </div>
+        <div id="tree" class="tree"><div class="hint">Откройте папку проекта</div></div>
+      </div>
+      <div class="side-section snaps">
+        <div class="side-head">
+          <span>Снапшоты</span>
+          <button id="btnSnapsRefresh" class="btn tiny" title="Обновить">⟳</button>
+        </div>
+        <div id="snaps" class="snaps-list"><div class="hint">Снимков пока нет</div></div>
+      </div>
+    </aside>
+
+    <!-- ======================= РЕДАКТОР ======================= -->
+    <section id="editor-wrap">
+      <div id="editorTabs" class="editor-tabs"><div class="hint">Откройте файл слева</div></div>
+      <div id="editor"></div>
+      <div id="editorStatus">
+        <span id="esPath"></span>
+        <span id="esMeta" class="dim"></span>
+        <span id="esSaved" class="save-hint"></span>
+      </div>
+    </section>
+
+    <!-- ======================= ПАНЕЛЬ АГЕНТА ======================= -->
+    <aside id="agent">
+      <div class="agent-head">
+        <span>Агент DeepSeek</span>
+        <button id="btnNewChat" class="btn tiny" title="Новый чат в браузере">Новый чат</button>
+      </div>
+
+      <div id="agentFeed" class="agent-feed"></div>
+
+      <div id="agentInput">
+        <textarea id="taskText" rows="4" placeholder="Задача для агента… например: «добавь сортировку по дате в список файлов» (Enter — перенос, Ctrl+Enter / кнопка — отправить)"></textarea>
+        <div class="agent-actions">
+          <button id="btnSendTask" class="btn primary">Отправить задачу</button>
+          <button id="btnSendNote" class="btn ghost" title="Быстрое сообщение без обёртки-промпта">Заметка</button>
+          <button id="btnStop" class="btn danger hidden">Стоп</button>
+        </div>
+      </div>
+
+      <div id="pendingReply" class="pending-reply hidden">
+        <div class="pr-head">
+          <span>Ответ агента</span>
+          <span id="prOpsCount" class="badge">0 операций</span>
+        </div>
+        <div id="prText" class="pr-text"></div>
+        <div id="prOps" class="pr-ops"></div>
+        <div class="agent-actions">
+          <button id="btnApply" class="btn primary">Применить выбранные</button>
+          <button id="btnDiscard" class="btn ghost">Отклонить</button>
+        </div>
+        <pre id="applyReport" class="apply-report hidden"></pre>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ======================= ЛОГ ======================= -->
+  <footer id="logbar">
+    <div class="log-head" id="logHead">
+      <span>Журнал</span>
+      <label class="clear-link" id="btnLogClear">очистить</label>
+    </div>
+    <div id="log" class="log"></div>
+  </footer>
+</div>
+
+<script src="/assets/app.js"></script>
+</body>
+</html>

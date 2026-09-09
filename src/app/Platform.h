@@ -45,4 +45,11 @@ CommandResult RunCommandCapture(const std::string& command,
                                 int timeoutSec,
                                 std::uintmax_t maxOutputBytes = 256 * 1024);
 
+
+// --- Браузер для CDP-автоматизации ---
+bool FindChromiumBrowser(std::string& exeOut, std::string& errOut);   // chrome → edge → chromium
+bool LaunchDetached(const std::string& exe, const std::string& argsUtf8, std::string& errOut);
+int FindFreeTcpPort(int from, int to);                                 // 0 = не нашли
+bool OpenInBrowser(const std::string& url);                            // системный браузер
+
 }  // namespace platform

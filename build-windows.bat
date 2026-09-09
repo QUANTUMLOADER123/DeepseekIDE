@@ -1,58 +1,52 @@
 @echo off
 chcp 65001 >nul
 rem ============================================================
-rem  DeepSeekIDE - сборка в 1 клик для Windows (Visual Studio)
+rem  DeepSeekIDE — сборка в 1 клик для Windows (Visual Studio)
 rem
-rem  Что делает:
-rem   1. Создаёт build\DeepSeekIDE.sln (проект Visual Studio)
-rem   2. Собирает build\Release\deepseekide.exe
-rem
-rem  GIT НЕ НУЖЕН - зависимости качаются zip-архивами.
+rem  НИКАКИХ внешних зависимостей: ни vcpkg, ни curl, ни WebView2.
+rem  Всё нужное уже внутри репозитория (cpp-httplib + nlohmann_json
+rem  докачивается с github один раз при настройке cmake).
 rem
 rem  Нужно установленным:
-rem   - Visual Studio 2022+ с компонентом "Разработка классических
-rem     приложений на C++" (Desktop development with C++)
+rem   - Visual Studio 2022+ с компонентом "Desktop development with C++"
 rem   - CMake 3.24+  ->  https://cmake.org/download/
 rem     (при установке отметить "Add CMake to system PATH")
 rem
-rem  Если сборка падает на окне chat.deepseek.com (WebView2) -
-rem  соберите без него:   build-windows.bat -DDEEPSEEKIDE_ENABLE_WEBVIEW=OFF
+rem  Результат: deepseekide.exe в КОРНЕ папки (рядом с assets\).
+rem  Просто запустите его — откроется IDE в вашем браузере.
 rem ============================================================
 setlocal
 cd /d "%~dp0"
 
 where cmake >nul 2>nul
 if errorlevel 1 (
-  echo [ОШИБКА] CMake не найден в PATH.
-  echo Скачайте: https://cmake.org/download/ и при установке отметьте "Add CMake to system PATH".
+  echo [ОШИБКА] cmake не найден в PATH. Установите CMake с https://cmake.org/download/
   pause
   exit /b 1
 )
 
-echo [1/2] Генерация проекта Visual Studio (build\DeepSeekIDE.sln)...
-echo      (при первом запуске CMake скачает зависимости - это нормально, 1-3 минуты)
-cmake -B build -DCMAKE_BUILD_TYPE=Release %*
+echo [1/3] Настройка CMake...
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 if errorlevel 1 goto fail
 
-echo.
-echo [2/2] Сборка Release...
-cmake --build build --config Release --parallel
+echo [2/3] Сборка Release...
+cmake --build build --config Release
+if errorlevel 1 goto fail
+
+echo [3/3] Самотесты ядра...
+build\Release\deepseekide_tests.exe
 if errorlevel 1 goto fail
 
 echo.
 echo ============================================================
-echo   ГОТОВО!
-echo   Запуск:     build\Release\deepseekide.exe
-echo   Для Visual Studio: откройте build\DeepSeekIDE.sln
-echo   (внутри VS можно кодить и собирать как обычный проект)
+echo  Готово! Запускайте deepseekide.exe в корне этой папки.
+echo  IDE откроется в вашем браузере, а chat.deepseek.com -
+echo  в отдельном окне Chrome/Edge (кнопка "Подключить чат").
 echo ============================================================
-pause
 exit /b 0
 
 :fail
 echo.
-echo [ОШИБКА] Сборка не удалась - читайте сообщения выше.
-echo Совет 1: удалите папку build (rmdir /s /q build) и запустите снова.
-echo Совет 2: попробуйте  build-windows.bat -DDEEPSEEKIDE_ENABLE_WEBVIEW=OFF
+echo [ОШИБКА] Сборка не прошла. Пришлите текст выше разработчику.
 pause
 exit /b 1

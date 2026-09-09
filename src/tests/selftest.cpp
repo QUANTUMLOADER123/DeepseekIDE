@@ -1,10 +1,8 @@
 // Консольные самотесты DeepSeekIDE (ядро, без GUI):
 //   1) SafeJoin — защита от выхода за пределы проекта
 //   2) SnapshotManager — запись снимка и откат (включая удаление созданных файлов)
-//   3) SSE-парсер DeepSeekClient (чанки, tool_calls-фрагменты)
-//   4) Агрегация стриминга
-//   5) JSON-схемы инструментов
-//   6) (если есть сеть) реальный HTTPS-запрос через наш HttpClient
+//   3) JSON-схемы инструментов
+//   4) (если есть сеть) реальный HTTP-запрос через наш HttpClient
 
 #include <cstdio>
 #include <cstdlib>
@@ -12,7 +10,6 @@
 #include <set>
 #include <string>
 
-#include "ai/DeepSeekClient.h"
 #include "ai/OpsParser.h"
 #include "ai/ToolRegistry.h"
 #include "app/Platform.h"
@@ -110,65 +107,6 @@ static void TestSnapshots(const fs::path& root) {
 }
 
 // 3) SSE-парсер
-static void TestSse() {
-  std::printf("[3] SSE parser\n");
-  bool done = false;
-  nlohmann::json chunk;
-
-  CHECK(!DeepSeekClient::ParseSseLine("data: [DONE]", chunk, done) && done, "[DONE] распознан");
-  done = false;
-  CHECK(DeepSeekClient::ParseSseLine(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"Привет\"}}]}", chunk, done) &&
-            !done,
-        "JSON-чанк распознан");
-  CHECK(chunk["choices"][0]["delta"]["content"] == "Привет", "UTF-8 контент цел");
-  CHECK(!DeepSeekClient::ParseSseLine(": ping", chunk, done), "служебные строки игнорятся");
-
-  // Буфер с несколькими событиями + частичным хвостом. Чанки собираем через
-  // nlohmann::json — гарантированно валидный SSE, как у настоящего API.
-  auto chunkContent = [](const std::string& c) {
-    return nlohmann::json{{"choices", {{{"delta", {{"content", c}}}}}}}.dump();
-  };
-  auto chunkTool = [](int index, const std::string& id, const std::string& name,
-                      const std::string& argsPiece) {
-    nlohmann::json fn;
-    if (!name.empty()) fn["name"] = name;
-    if (!argsPiece.empty()) fn["arguments"] = argsPiece;
-    nlohmann::json tc = {{"index", index}, {"type", "function"}, {"function", fn}};
-    if (!id.empty()) tc["id"] = id;
-    return nlohmann::json{{"choices", {{{"delta", {{"tool_calls", {tc}}}}}}}}.dump();
-  };
-
-  // tool_call приходит фрагментами: имя+начало аргументов, затем конец аргументов
-  std::string buf = "data: " + chunkContent("A") + "\n\n";
-  buf += "data: " + chunkTool(0, "call_1", "write_file", "{\"pa") + "\n";
-  buf += "data: " + chunkTool(0, "", "", "th\":\"a.txt\"}") + "\n";
-  buf += "data: [DONE]";
-  buf += "\ndata: " + chunkContent("B");  // хвост без \n
-
-  DeepSeekClient client("https://api.deepseek.com", "test-key");
-  ChatResult acc;
-  int chunks = 0;
-  DeepSeekClient::ConsumeSseBuffer(buf, [&](const nlohmann::json& c) {
-    ++chunks;
-    client.Aggregate(c, acc);
-  });
-  CHECK(chunks == 3, "три целых события");
-  CHECK(acc.content.empty(), "content не дублируется агрегатом");
-  // добиваем хвост
-  nlohmann::json tail;
-  bool tailDone = false;
-  CHECK(DeepSeekClient::ParseSseLine(buf, tail, tailDone), "хвост добран");
-
-  // Агрегированный tool_call собрался в валидный JSON аргументов
-  CHECK(acc.rawToolCalls.size() == 1, "один tool_call");
-  CHECK(acc.rawToolCalls[0]["id"] == "call_1", "id сохранён");
-  CHECK(acc.rawToolCalls[0]["function"]["name"] == "write_file", "имя дошло без обрыва");
-  std::string args = acc.rawToolCalls[0]["function"]["arguments"];
-  auto parsed = nlohmann::json::parse(args, nullptr, false);
-  CHECK(!parsed.is_discarded() && parsed["path"] == "a.txt", "аргументы склеились в JSON");
-}
-
 // 4) Схемы инструментов
 static void TestToolSchemas() {
   std::printf("[4] Tool schemas\n");
@@ -346,7 +284,6 @@ int main() {
 
   TestSafeJoin(root);
   TestSnapshots(root);
-  TestSse();
   TestToolSchemas();
   TestToolsLive(root);
   TestNewToolOps(root);

@@ -1,130 +1,114 @@
 #include "net/HttpClient.h"
 
-#include <curl/curl.h>
+// HTTP-клиент на cpp-httplib (vendored header). Никаких внешних зависимостей:
+// libcurl больше не нужен. https:// работает, если httplib собран с
+// OpenSSL (-DCPPHTTPLIB_OPENSSL_SUPPORT и линковка ssl+crypto). Для наших
+// нужд (CDP /json/* по 127.0.0.1) и http достаточно.
 
-#include <mutex>
+#include "cpp-httplib/httplib.h"
 
 namespace net {
 
 namespace {
-std::once_flag gInitOnce;
 
-size_t WriteToString(char* ptr, size_t size, size_t nmemb, void* userdata) {
-  auto* s = static_cast<std::string*>(userdata);
-  size_t len = size * nmemb;
-  s->append(ptr, len);
-  return len;
-}
-
-struct StreamCtx {
-  const std::function<bool(const char*, size_t)>* onData;
-  std::atomic<bool>* cancel;
+struct Url {
+  std::string host;
+  int port = 0;
+  std::string path;
+  bool https = false;
 };
 
-size_t WriteStream(char* ptr, size_t size, size_t nmemb, void* userdata) {
-  auto* ctx = static_cast<StreamCtx*>(userdata);
-  if (ctx->cancel && ctx->cancel->load()) return 0;  // обрыв по запросу
-  size_t len = size * nmemb;
-  bool keepGoing = (*ctx->onData)(ptr, len);
-  return keepGoing ? len : 0;
+bool SplitUrl(const std::string& url, Url& out) {
+  const std::string::size_type p = url.find("://");
+  if (p == std::string::npos) return false;
+  const std::string scheme = url.substr(0, p);
+  out.https = (scheme == "https");
+  if (scheme != "http" && !out.https) return false;
+  std::string rest = url.substr(p + 3);
+  const auto slash = rest.find('/');
+  const std::string hostport = slash == std::string::npos ? rest : rest.substr(0, slash);
+  out.path = slash == std::string::npos ? "/" : rest.substr(slash);
+  const auto colon = hostport.rfind(':');
+  if (colon != std::string::npos && hostport.find(']') == std::string::npos) {
+    out.host = hostport.substr(0, colon);
+    out.port = atoi(hostport.c_str() + colon + 1);
+  } else {
+    out.host = hostport;
+    out.port = out.https ? 443 : 80;
+  }
+  return !out.host.empty();
 }
 
-void SetupCommon(CURL* curl, const std::string& url, const std::vector<std::string>& headers,
-                 curl_slist** slist, long timeoutSec) {
-  curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-  curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-  curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-  curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeoutSec > 0 ? timeoutSec : 180L);
-  curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
-  curl_easy_setopt(curl, CURLOPT_USERAGENT, "DeepSeekIDE/0.1");
-  for (const auto& h : headers) *slist = curl_slist_append(*slist, h.c_str());
-  if (*slist) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, *slist);
+httplib::Headers ToHeaders(const std::vector<std::string>& headers) {
+  httplib::Headers hs;
+  for (const auto& h : headers) {
+    const auto colon = h.find(':');
+    if (colon == std::string::npos) continue;
+    std::string name = h.substr(0, colon);
+    std::string value = h.substr(colon + 1);
+    while (!value.empty() && (value[0] == ' ' || value[0] == '\t')) value.erase(value.begin());
+    hs.emplace(std::move(name), std::move(value));
+  }
+  return hs;
 }
+
 }  // namespace
 
-void HttpClient::GlobalInit() {
-  std::call_once(gInitOnce, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
+void HttpClient::GlobalInit() {}  // совместимость: ничего не нужно
+
+HttpResponse HttpClient::Get(const std::string& url, const std::vector<std::string>& headers,
+                             long timeoutSec) {
+  HttpResponse out;
+  Url u;
+  if (!SplitUrl(url, u)) {
+    out.error = "битый URL: " + url;
+    return out;
+  }
+#ifndef CPPHTTPLIB_OPENSSL_SUPPORT
+  if (u.https) {
+    out.error = "https требует сборку с OpenSSL: " + url;
+    return out;
+  }
+#endif
+  httplib::Client cli(u.host, u.port);
+  cli.set_connection_timeout(timeoutSec > 30 ? 30 : timeoutSec, 0);
+  cli.set_read_timeout(timeoutSec, 0);
+  auto res = cli.Get(u.path.c_str(), ToHeaders(headers));
+  if (!res) {
+    out.error = httplib::to_string(res.error());
+    return out;
+  }
+  out.status = res->status;
+  out.body = std::move(res->body);
+  return out;
 }
 
 HttpResponse HttpClient::Post(const std::string& url, const std::vector<std::string>& headers,
                               const std::string& body, long timeoutSec) {
-  GlobalInit();
-  HttpResponse res;
-  CURL* curl = curl_easy_init();
-  if (!curl) {
-    res.error = "curl_easy_init() failed";
-    return res;
+  HttpResponse out;
+  Url u;
+  if (!SplitUrl(url, u)) {
+    out.error = "битый URL: " + url;
+    return out;
   }
-  curl_slist* slist = nullptr;
-  SetupCommon(curl, url, headers, &slist, timeoutSec);
-  curl_easy_setopt(curl, CURLOPT_POST, 1L);
-  curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.data());
-  curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
-  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteToString);
-  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &res.body);
-
-  CURLcode rc = curl_easy_perform(curl);
-  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &res.status);
-  if (rc != CURLE_OK) res.error = curl_easy_strerror(rc);
-  if (slist) curl_slist_free_all(slist);
-  curl_easy_cleanup(curl);
-  return res;
-}
-
-bool HttpClient::PostStream(const std::string& url, const std::vector<std::string>& headers,
-                            const std::string& body,
-                            const std::function<bool(const char*, size_t)>& onData,
-                            std::atomic<bool>* cancel, HttpResponse* outMeta, long timeoutSec) {
-  GlobalInit();
-  HttpResponse meta;
-  CURL* curl = curl_easy_init();
-  if (!curl) {
-    if (outMeta) outMeta->error = "curl_easy_init() failed";
-    return false;
+#ifndef CPPHTTPLIB_OPENSSL_SUPPORT
+  if (u.https) {
+    out.error = "https требует сборку с OpenSSL: " + url;
+    return out;
   }
-  curl_slist* slist = nullptr;
-  SetupCommon(curl, url, headers, &slist, timeoutSec);
-  curl_easy_setopt(curl, CURLOPT_POST, 1L);
-  curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.data());
-  curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
-
-  StreamCtx ctx{&onData, cancel};
-  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteStream);
-  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
-
-  CURLcode rc = curl_easy_perform(curl);
-  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &meta.status);
-  if (rc != CURLE_OK) meta.error = curl_easy_strerror(rc);
-  if (slist) curl_slist_free_all(slist);
-  curl_easy_cleanup(curl);
-
-  if (outMeta) *outMeta = meta;
-  bool cancelled = cancel && cancel->load();
-  return rc == CURLE_OK && !cancelled;
-}
-
-HttpResponse HttpClient::Get(const std::string& url, const std::vector<std::string>& headers,
-                             long timeoutSec) {
-  GlobalInit();
-  HttpResponse res;
-  CURL* curl = curl_easy_init();
-  if (!curl) {
-    res.error = "curl_easy_init() failed";
-    return res;
+#endif
+  httplib::Client cli(u.host, u.port);
+  cli.set_connection_timeout(30, 0);
+  cli.set_read_timeout(timeoutSec, 0);
+  cli.set_write_timeout(60, 0);
+  auto res = cli.Post(u.path.c_str(), ToHeaders(headers), body, "application/json");
+  if (!res) {
+    out.error = httplib::to_string(res.error());
+    return out;
   }
-  curl_slist* slist = nullptr;
-  SetupCommon(curl, url, headers, &slist, timeoutSec);
-  curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
-  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteToString);
-  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &res.body);
-
-  CURLcode rc = curl_easy_perform(curl);
-  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &res.status);
-  if (rc != CURLE_OK) res.error = curl_easy_strerror(rc);
-  if (slist) curl_slist_free_all(slist);
-  curl_easy_cleanup(curl);
-  return res;
+  out.status = res->status;
+  out.body = std::move(res->body);
+  return out;
 }
 
 }  // namespace net

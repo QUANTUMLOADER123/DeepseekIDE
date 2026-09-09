@@ -5,6 +5,7 @@
 #include <cstring>
 #include <fstream>
 #include <sstream>
+#include <vector>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -13,7 +14,10 @@
 #ifndef NOMINMAX
 #define NOMINMAX 1   // иначе min/max-макросы windows.h ломают std::min/std::max
 #endif
+#include <winsock2.h>   // ДО windows.h: socket/bind для FindFreeTcpPort
+#include <ws2tcpip.h>
 #include <windows.h>
+#include <shellapi.h>   // ShellExecuteW
 #include <shlobj.h>
 #else
 #include <errno.h>
@@ -23,6 +27,8 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 #endif
 
 namespace platform {
@@ -284,6 +290,134 @@ bool AppendTextFile(const std::filesystem::path& p, const std::string& data) {
   std::string old;
   ReadTextFile(p, old);
   return WriteTextFile(p, old + data);
+}
+
+// ===================== Браузер для CDP-автоматизации =====================
+
+bool FindChromiumBrowser(std::string& exeOut, std::string& errOut) {
+#if defined(_WIN32)
+  // 1) Реестр: App Paths
+  const wchar_t* keys[] = {
+      L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe",
+      L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\msedge.exe",
+      L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chromium.exe"};
+  for (const wchar_t* sub : keys) {
+    for (HKEY root : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE}) {
+      wchar_t buf[1024];
+      DWORD sz = sizeof(buf);
+      LSTATUS st = RegGetValueW(root, sub, L"", RRF_RT_REG_SZ, nullptr, buf, &sz);
+      if (st == ERROR_SUCCESS && buf[0] != L'\0') {
+        std::filesystem::path p(buf);
+        std::error_code ec;
+        if (std::filesystem::exists(p, ec)) {
+          exeOut = PathToStr(p);
+          return true;
+        }
+      }
+    }
+  }
+  // 2) Типовые пути
+  const char* candidates[] = {
+      "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+      "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+      "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+      "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe"};
+  for (const char* path : candidates) {
+    std::error_code ec;
+    if (std::filesystem::exists(path, ec)) {
+      exeOut = path;
+      return true;
+    }
+  }
+  errOut = "Не найден Google Chrome или Microsoft Edge. Установите любой из них "
+           "(обычный, не Portable) — chat.deepseek.com мы открываем в нём.";
+  return false;
+#else
+  const char* candidates[] = {"/usr/bin/google-chrome", "/usr/bin/chromium",
+                              "/usr/bin/chromium-browser", "/usr/bin/microsoft-edge",
+                              "/opt/google/chrome/google-chrome"};
+  for (const char* path : candidates) {
+    std::error_code ec;
+    if (std::filesystem::exists(path, ec)) {
+      exeOut = path;
+      return true;
+    }
+  }
+  errOut = "Chrome/Chromium/Edge не найден в PATH-системных папках.";
+  return false;
+#endif
+}
+
+bool LaunchDetached(const std::string& exe, const std::string& args, std::string& errOut) {
+#if defined(_WIN32)
+  std::string cmdline = "\"" + exe + "\" " + args;
+  std::wstring wCmd(cmdline.begin(), cmdline.end());
+  std::wstring wExe(exe.begin(), exe.end());
+  STARTUPINFOW si{};
+  si.cb = sizeof(si);
+  PROCESS_INFORMATION pi{};
+  // Командная строка должна быть изменяемой — копируем в вектор
+  std::vector<wchar_t> cmdBuf(wCmd.begin(), wCmd.end());
+  cmdBuf.push_back(L'\0');
+  BOOL ok = CreateProcessW(wExe.c_str(), cmdBuf.data(), nullptr, nullptr, FALSE,
+                           CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS, nullptr, nullptr, &si, &pi);
+  if (!ok) {
+    errOut = "CreateProcessW failed: " + std::to_string(GetLastError());
+    return false;
+  }
+  CloseHandle(pi.hProcess);
+  CloseHandle(pi.hThread);
+  return true;
+#else
+  std::string cmd = "\"" + exe + "\" " + args + " >/dev/null 2>&1 &";
+  int rc = std::system(cmd.c_str());
+  if (rc != 0) {
+    errOut = "system(launch) rc=" + std::to_string(rc);
+    return false;
+  }
+  return true;
+#endif
+}
+
+int FindFreeTcpPort(int from, int to) {
+  for (int port = from; port <= to; ++port) {
+#if defined(_WIN32)
+    SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s == INVALID_SOCKET) break;
+    sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    sa.sin_port = htons(static_cast<u_short>(port));
+    BOOL ok = bind(s, reinterpret_cast<sockaddr*>(&sa), sizeof(sa)) == 0;
+    closesocket(s);
+    if (ok) return port;
+#else
+    int s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s < 0) break;
+    int yes = 1;
+    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+    sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    sa.sin_port = htons(static_cast<uint16_t>(port));
+    bool ok = bind(s, reinterpret_cast<sockaddr*>(&sa), sizeof(sa)) == 0;
+    ::close(s);
+    if (ok) return port;
+#endif
+  }
+  return 0;
+}
+
+bool OpenInBrowser(const std::string& url) {
+#if defined(_WIN32)
+  std::wstring wUrl(url.begin(), url.end());
+  auto r = ShellExecuteW(nullptr, L"open", wUrl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+  return reinterpret_cast<intptr_t>(r) > 32;
+#elif defined(__APPLE__)
+  return std::system(("open \"" + url + "\" &").c_str()) == 0;
+#else
+  return std::system(("xdg-open \"" + url + "\" >/dev/null 2>&1 &").c_str()) == 0;
+#endif
 }
 
 }  // namespace platform
