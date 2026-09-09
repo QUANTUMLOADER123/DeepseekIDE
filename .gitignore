@@ -1,0 +1,25 @@
+# Build
+build*/
+out/
+cmake-build-*/
+*.o
+*.obj
+*.exe
+*.dll
+*.dylib
+*.so
+*.a
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# Runtime data created by DeepSeekIDE inside user projects
+.deepseekide/
+
+# OS
+.DS_Store
+Thumbs.db

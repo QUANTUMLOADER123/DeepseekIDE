@@ -1,0 +1,71 @@
+name: Build
+
+on:
+  push:
+    branches: [main, "arena/**"]
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libglfw3-dev libcurl4-openssl-dev \
+              xorg-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+
+      - name: Configure
+        run: cmake -B build -GNinja -DCMAKE_BUILD_TYPE=Release -DDEEPSEEKIDE_ENABLE_WEBVIEW=OFF
+
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+
+      - name: Self-tests
+        run: ./build/deepseekide_selftest
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: deepseekide-linux
+          path: |
+            build/deepseekide
+            build/assets
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (curl собирается из исходников с schannel)
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DDEEPSEEKIDE_ENABLE_WEBVIEW=ON
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Self-tests
+        run: .\build\Release\deepseekide_selftest.exe
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: deepseekide-windows
+          path: |
+            build/Release/deepseekide.exe
+            build/Release/assets
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLFW
+        run: brew install glfw ninja
+      - name: Configure
+        run: cmake -B build -GNinja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build -j"$(sysctl -n hw.ncpu)"
+      - name: Self-tests
+        run: ./build/deepseekide_selftest
