@@ -72,13 +72,25 @@
 
 ### Сборка
 
+**Windows — самый простой путь:**
+1. Дважды кликните **`build-windows.bat`** — он сам создаст `build\DeepSeekIDE.sln` **и соберёт** `build\Release\deepseekide.exe`.
+2. Хотите работать в Visual Studio — откройте `build\DeepSeekIDE.sln` (либо откройте саму папку проекта через *Файл → Открыть → Папка*: VS 2022 понимает CMake напрямую).
+
+**Linux / macOS — аналогично:**
+```bash
+./build-linux-macos.sh        # запуск: ./build/deepseekide
+```
+
+**Руками (везде):**
 ```bash
 git clone https://github.com/QUANTUMLOADER123/DeepseekIDE.git
 cd DeepseekIDE
-cmake -B build -GNinja -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-./build/deepseekide            # Windows: build\Release\deepseekide.exe
+cmake -B build -GNinja -DCMAKE_BUILD_TYPE=Release   # без -G Ninja на Windows создастся .sln
+cmake --build build -j                              # Windows: добавьте --config Release
+./build/deepseekide                                  # Windows: build\Release\deepseekide.exe
 ```
+
+> Откуда берётся `.sln`: проект собирается **CMake**'ом — файл Visual Studio-решения генерируется автоматически в `build/` при конфигурации на Windows. Коммитить `.sln` в репозиторий не нужно: он конкретен для машины и компилятора.
 
 ### Первый запуск
 
