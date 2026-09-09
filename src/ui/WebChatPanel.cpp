@@ -1,8 +1,17 @@
 #include "ui/WebChatPanel.h"
 
+#include <filesystem>
+
+#include "app/Platform.h"
+
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <nlohmann/json.hpp>
+
+#if defined(_WIN32)
+extern "C" int _putenv_s(const char*, const char*);  // CRT, без лишних инклюдов
+#endif
 
 #if defined(DEEPSEEKIDE_WEBVIEW)
 #  if defined(_WIN32)
@@ -118,6 +127,28 @@ std::string SendJs(const std::string& text) {
 
 }  // namespace
 
+// Хронологический boot-лог webchat-панели (то же boot.log, что и у приложения).
+static void PanelBootStep(const std::string& step) {
+  std::error_code ec;
+  std::filesystem::create_directories(platform::ConfigDir(), ec);
+  platform::AppendTextFile(platform::ConfigDir() / "boot.log",
+                           "webchat: " + step + "\n");
+}
+
+#if DSIDE_HAS_WV && defined(_WIN32)
+// WebView2 с GPU-композитингом на части машин (виртуалки, старые драйверы)
+// рисует ПОЛНОСТЬЮ БЕЛОЕ окно при живом движке. Форсируем программный рендер
+// через официальную переменную среды — если пользователь сам ничего не задал.
+static void ForceSoftwareCompositing() {
+  static bool done = false;
+  if (done) return;
+  done = true;
+  if (std::getenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") == nullptr)
+    _putenv_s("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+              "--disable-gpu-compositing");
+}
+#endif
+
 // ---------------------------------------------------------------------------
 // Платформенная часть
 // ---------------------------------------------------------------------------
@@ -135,6 +166,8 @@ struct WebChatPanel::Impl {
 };
 
 WebChatPanel::WebChatPanel() = default;
+
+static bool sFirstStateLogged = false;
 
 WebChatPanel::~WebChatPanel() { Detach(); }
 
@@ -244,6 +277,8 @@ void WebChatPanel::ThreadMain() {
 #if DSIDE_HAS_WV
     void* parentArg = nullptr;
 #  if defined(_WIN32)
+    PanelBootStep("thread start");
+    ForceSoftwareCompositing();
     ComApartment com;
     if (!com.usable()) {
       char hbuf[24];
@@ -266,11 +301,13 @@ void WebChatPanel::ThreadMain() {
     parentArg = child;
 #  endif
 
+    PanelBootStep("creating WebView2 controller…");
     webview::webview w(false, parentArg);  // МОЖЕТ БРОСИТЬ exception — ловим ниже
     {
       std::lock_guard<std::mutex> lk(mMtx);
       mImpl->wv = &w;
     }
+    PanelBootStep("controller created OK");
     w.bind("dsideState", [this](const std::string& req) {
       OnStateJson(req.c_str());
       return std::string("ok");
@@ -280,11 +317,7 @@ void WebChatPanel::ThreadMain() {
     w.set_size(760, 900, WEBVIEW_HINT_NONE);
 #  endif
 
-    // Тёмная заставка, пока грузится сайт.
-    w.navigate(
-        "data:text/html;charset=utf-8,<html><body style='background:%230b0e17;color:%238a93ac;"
-        "font:14px sans-serif;display:flex;height:100vh;align-items:center;justify-content:center'"
-        ">DeepSeekIDE загружает chat.deepseek.com&#8230;</body></html>");
+    PanelBootStep("navigating to chat url");
     w.navigate(mUrl);
 
     // Инжектор: потоковый ms-цикл — idempotent install каждые 1.5 с.
@@ -367,6 +400,10 @@ void WebChatPanel::OnStateJson(const char* json) {
     st.last = j.value("t", std::string{});
     std::lock_guard<std::mutex> lk(mMtx);
     mState = std::move(st);
+    if (!sFirstStateLogged) {
+      sFirstStateLogged = true;
+      PanelBootStep("bridge state push received (JS жив)");
+    }
   } catch (...) {
     // не роняем поток из-за битого JSON
   }

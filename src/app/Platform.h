@@ -28,6 +28,7 @@ std::string TimeAgo(long long epochMs);                // "5 мин назад"
 // Чтение/запись текстовых файлов (UTF-8).
 bool ReadTextFile(const std::filesystem::path& p, std::string& out, std::uintmax_t maxBytes = 0);
 bool WriteTextFile(const std::filesystem::path& p, const std::string& data, std::string* err = nullptr);
+bool AppendTextFile(const std::filesystem::path& p, const std::string& data);  // создание, если нет
 
 // Размер файла в человекочитаемом виде.
 std::string HumanSize(std::uintmax_t bytes);

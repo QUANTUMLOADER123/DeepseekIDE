@@ -45,10 +45,10 @@ void CenteredText(const char* text) {
 // Маркеры загрузки в %APPDATA%/DeepSeekIDE/boot.log — чтобы понять,
 // на каком шаге падает старт: каждый шаг перезаписывает файл своей меткой.
 static void BootStep(const char* step) {
-  std::string content = std::string("DeepSeekIDE boot log\nstep: ") + step + "\n";
   std::error_code ec;
   std::filesystem::create_directories(platform::ConfigDir(), ec);
-  platform::WriteTextFile(platform::ConfigDir() / "boot.log", content);
+  platform::AppendTextFile(platform::ConfigDir() / "boot.log",
+                           std::string(platform::NowHMS()) + "  " + step + "\n");
 }
 
 std::filesystem::path BootLogPathForMain() {

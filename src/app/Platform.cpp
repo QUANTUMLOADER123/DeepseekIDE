@@ -280,4 +280,10 @@ CommandResult RunCommandCapture(const std::string& command, const std::filesyste
 }
 #endif
 
+bool AppendTextFile(const std::filesystem::path& p, const std::string& data) {
+  std::string old;
+  ReadTextFile(p, old);
+  return WriteTextFile(p, old + data);
+}
+
 }  // namespace platform
