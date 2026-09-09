@@ -7,6 +7,9 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+#ifndef NOMINMAX
+#define NOMINMAX 1   // min/max-макросы windows.h ломают std::min/std::max
+#endif
 #include <windows.h>
 #endif
 

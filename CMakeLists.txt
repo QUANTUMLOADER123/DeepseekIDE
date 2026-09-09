@@ -13,6 +13,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# Windows: windows.h определяет макросы min/max, ломающие std::min/std::max;
+# а MSVC ругается на getenv и пр. "небезопасные" CRT-функции. Глушим оба.
+if(MSVC)
+  add_compile_definitions(NOMINMAX  _CRT_SECURE_NO_WARNINGS)
+endif()
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 option(DEEPSEEKIDE_BUILD_GUI      "Build the Dear ImGui GUI"            ON)
 option(DEEPSEEKIDE_BUILD_TESTS    "Build console self-tests"            ON)
 option(DEEPSEEKIDE_ENABLE_WEBVIEW "Embedded chat.deepseek.com window"   ON)
