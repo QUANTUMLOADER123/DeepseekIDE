@@ -71,6 +71,8 @@ private:
   };
 
   void ThreadMain();
+  void ThreadBody();                   // одна итерация цикла (для try/catch наверху)
+  void TouchStatus(const std::function<void(Status&)>& fn);  // потокобезопасная правка
   bool EnsureBrowserLocked(std::string& err);           // под мьютексом НЕ держать
   bool AttachCdp(std::string& err);
   bool PollState(nlohmann::json& stateOut, std::string& err);

@@ -59,28 +59,35 @@ bool CdpClient::Evaluate(const std::string& expr, std::string& valueOut, std::st
       }
     }
   }
-  const auto& rr = j["result"];
-  const auto& inner = rr["result"];
-  if (rr.value("subtype", std::string{}) == "error" || rr.value("isError", false) ||
-      rr.contains("exceptionDetails")) {
-    std::string desc;
-    if (rr.contains("exceptionDetails"))
-      desc = rr["exceptionDetails"]
-                 .value("text", std::string("JS-исключение"));
-    err = "JS evaluate error: " + (desc.empty() ? inner.dump() : desc);
+  if (!j.contains("result") || !j["result"].is_object()) {
+    err = "CDP: ответ без поля result";
     return false;
   }
-  if (inner.is_object() && inner.contains("value")) {
-    const auto& v = inner["value"];
-    if (v.is_string()) valueOut = v.get<std::string>();
-    else valueOut = v.dump();
+  const auto& rr = j["result"];
+  if (rr.value("subtype", std::string{}) == "error" || rr.value("isError", false) ||
+      rr.contains("exceptionDetails")) {
+    std::string desc = "JS-исключение";
+    if (rr.contains("exceptionDetails") && rr["exceptionDetails"].is_object())
+      desc = rr["exceptionDetails"].value("text", desc);
+    err = "JS evaluate error: " + desc;
+    return false;
+  }
+  if (rr.contains("result") && rr["result"].is_object()) {
+    const auto& inner = rr["result"];
+    if (inner.contains("value")) {
+      const auto& v = inner["value"];
+      if (v.is_string()) valueOut = v.get<std::string>();
+      else valueOut = v.dump();
+      return true;
+    }
+    if (inner.value("type", std::string{}) == "undefined") {
+      valueOut.clear();
+      return true;
+    }
+    valueOut = inner.dump();
     return true;
   }
-  if (inner.value("type", std::string{}) == "undefined") {
-    valueOut.clear();
-    return true;
-  }
-  valueOut = inner.dump();
+  valueOut.clear();
   return true;
 }
 

@@ -258,16 +258,14 @@ bool ChatDriver::EnsureBrowserLocked(std::string& err) {
     // Браузера с CDP нет — запускаем
     if (mBrowserExe.empty()) {
       if (!platform::FindChromiumBrowser(mBrowserExe, err)) {
-        mStatus.stage = "offline";
-        mStatus.stageText = "браузер не найден";
-        mStatus.error = err;
+        TouchStatus([&](Status& s) { s.stage="offline"; s.stageText="браузер не найден"; s.error = err; });
         mError = err;
         return false;
       }
     }
     mPort = platform::FindFreeTcpPort(19226, 19260);
     if (mPort == 0) {
-      mStatus.error = "не удалось выбрать свободный порт CDP";
+      TouchStatus([](Status& s){ s.error = "не удалось выбрать свободный порт CDP"; });
       return false;
     }
     std::string args =
@@ -275,12 +273,9 @@ bool ChatDriver::EnsureBrowserLocked(std::string& err) {
         " --user-data-dir=\"" + platform::PathToStr(platform::ConfigDir() / "browser-profile") +
         "\" --no-first-run --no-default-browser-check --new-window \"" + mUrl + "\"";
     mCfg.log("chat", "Запускаю браузер: " + mBrowserExe);
-    mStatus.stage = "launching";
-    mStatus.stageText = "запускаю браузер…";
+    TouchStatus([](Status& s){ s.stage = "launching"; s.stageText = "запускаю браузер…"; });
     if (!platform::LaunchDetached(mBrowserExe, args, err)) {
-      mStatus.stage = "offline";
-      mStatus.stageText = "не смог запустить браузер";
-      mStatus.error = err;
+      TouchStatus([&](Status& s){ s.stage="offline"; s.stageText="не смог запустить браузер"; s.error = err; });
       mError = err;
       return false;
     }
@@ -294,13 +289,12 @@ bool ChatDriver::EnsureBrowserLocked(std::string& err) {
     }
   }
 
-  mStatus.browser = mBrowserExe;
+  TouchStatus([&](Status& s){ s.browser = mBrowserExe; });
   return true;
 }
 
 bool ChatDriver::AttachCdp(std::string& err) {
-  mStatus.stage = "connecting";
-  mStatus.stageText = "ищу вкладку chat.deepseek.com…";
+  TouchStatus([](Status& s){ s.stage = "connecting"; s.stageText = "ищу вкладку chat.deepseek.com…"; });
 
   // Ищем page-target с нашим URL среди активных
   for (int attempt = 0; attempt < 20; ++attempt) {
@@ -318,9 +312,7 @@ bool ChatDriver::AttachCdp(std::string& err) {
             mCdp = std::make_unique<CdpClient>();
             if (mCdp->Connect(ws, err, 4000)) {
               mCfg.log("chat", "CDP подключен к вкладке: " + url);
-              mStatus.stage = "online";
-              mStatus.stageText = "чат готов";
-              mStatus.error.clear();
+              TouchStatus([](Status& s){ s.stage = "online"; s.stageText = "чат готов"; s.error.clear(); });
               return true;
             }
             break;
@@ -332,9 +324,7 @@ bool ChatDriver::AttachCdp(std::string& err) {
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
   }
   err = "не нашёл вкладку chat.deepseek.com в отладочном браузере";
-  mStatus.stage = "offline";
-  mStatus.stageText = "нет вкладки чата";
-  mStatus.error = err;
+  TouchStatus([&](Status& s){ s.stage = "offline"; s.stageText = "нет вкладки чата"; s.error = err; });
   return false;
 }
 
@@ -355,15 +345,14 @@ bool ChatDriver::DoSendNow(const Queued& q, std::string& err) {
   if (!mCdp || !mCdp->Evaluate(SendJs(txt), val, err, 6000)) return false;
   if (val.find("no_textarea") != std::string::npos) {
     err = "на странице нет поля ввода — войдите в учётку DeepSeek в окне браузера";
-    mStatus.error = err;
+    TouchStatus([&](Status& s){ s.error = err; });
     return false;
   }
   mPhase = Phase::Sending;
   mSentAtMs = NowMs();
   mSettleSinceMs = 0;
   mBaseline = -1;  // узнаем на первом удачном опросе после отправки
-  mStatus.stage = "busy";
-  mStatus.stageText = "отправлено, жду ответ…";
+  TouchStatus([](Status& s){ s.stage = "busy"; s.stageText = "отправлено, жду ответ…"; });
   mCfg.log("agent", std::string(q.isTask ? "Задача: " : "Заметка: ") +
                         (q.text.size() > 200 ? q.text.substr(0, 200) + "…" : q.text));
   return true;
@@ -371,9 +360,41 @@ bool ChatDriver::DoSendNow(const Queued& q, std::string& err) {
 
 // ---------------------------------------------------------------------------
 
+void ChatDriver::TouchStatus(const std::function<void(Status&)>& fn) {
+  std::lock_guard<std::mutex> lk(mMtx);
+  fn(mStatus);
+}
+
 void ChatDriver::ThreadMain() {
   mCfg.log("chat", "Драйвер чата запущен (порт CDP автовыбор)");
   while (!mStop.load()) {
+    try {
+      ThreadBody();
+    } catch (const std::exception& e) {
+      // Любое исключение в потоке ранее роняло ВЕСЬ процесс — теперь просто лог
+      // и пауза: UI покажет ошибку, драйвер продолжит жить.
+      TouchStatus([&](Status& s) {
+        s.error = std::string("внутренняя ошибка драйвера: ") + e.what();
+        if (s.stage == "busy" || s.stage == "online") s.stage = "online";
+      });
+      {
+        std::lock_guard<std::mutex> lk(mMtx);
+        mError = std::string("внутренняя ошибка драйвера: ") + e.what();
+      }
+      mCfg.log("error", std::string("Чат-драйвер: ") + e.what());
+      std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+    }
+  }
+
+  {
+    std::lock_guard<std::mutex> lk(mMtx);
+    mStatus.stage = "offline";
+  }
+  mCfg.log("chat", "Драйвер чата остановлен");
+}
+
+// Одна итерация основного цикла.
+void ChatDriver::ThreadBody() {
     // 1) Подключение/переподключение
     {
       std::lock_guard<std::mutex> lk(mMtx);
@@ -401,7 +422,7 @@ void ChatDriver::ThreadMain() {
       }
       mConnectRequested.store(false);
       if (!mStop.load()) std::this_thread::sleep_for(std::chrono::milliseconds(500));
-      continue;
+      return;
     }
 
     // 2) Периодика: запрос "новый чат"
@@ -412,7 +433,7 @@ void ChatDriver::ThreadMain() {
       else
         mCfg.log("chat", "NewChat: " + e);
       std::this_thread::sleep_for(std::chrono::milliseconds(300));
-      continue;
+      return;
     }
 
     // 3) Очередь на отправку (только в Idle)
@@ -445,7 +466,7 @@ void ChatDriver::ThreadMain() {
         mCfg.log("chat", "poll: " + err);
         std::lock_guard<std::mutex> lk(mMtx);
         if (mCdp) mCdp->Close();
-        continue;
+        return;
       }
       std::lock_guard<std::mutex> lk(mMtx);
       mStatus.chatPresent = st.value("p", 0) != 0;
@@ -498,7 +519,7 @@ void ChatDriver::ThreadMain() {
                                   std::to_string(mPendingReply.ops.size()) + " операций, " +
                                   std::to_string(mPendingReply.errors.size()) + " предупреждений");
             mBaseline = -1;
-            continue;
+            return;
           }
           if (nowL - mSentAtMs > 6 * 60 * 1000) {
             mPhase = Phase::TimedOut;
@@ -511,11 +532,5 @@ void ChatDriver::ThreadMain() {
     }
 
     std::this_thread::sleep_for(std::chrono::milliseconds(120));
-  }
-
-  {
-    std::lock_guard<std::mutex> lk(mMtx);
-    mStatus.stage = "offline";
-  }
-  mCfg.log("chat", "Драйвер чата остановлен");
 }
+

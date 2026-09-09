@@ -10,6 +10,8 @@
 //   --port N     : занять указанный порт (иначе автовыбор)
 
 #include <csignal>
+#include <cstdio>
+#include <exception>
 #include <chrono>
 #include <thread>
 #include <cstdlib>
@@ -60,7 +62,7 @@ std::filesystem::path FindWebRoot() {
 
 }  // namespace
 
-int main(int argc, char* argv[]) {
+int Run(int argc, char* argv[]) {
   bool noBrowser = false;
   int forcedPort = 0;
   for (int i = 1; i < argc; ++i) {
@@ -195,4 +197,41 @@ int main(int argc, char* argv[]) {
   server.Stop();
   Boot("выход");
   return 0;
+}
+
+int main(int argc, char* argv[]) {
+  // Любой необработанный вызов std::terminate (исключение в std::thread и т.п.)
+  // раньше давал «приложение упало» без следа. Пишем маркер в boot-server.log,
+  // чтобы следующий запуск показал, на какой стадии всё умерло.
+  std::set_terminate([] {
+    if (gBoot.is_open()) {
+      gBoot << "\n[КРАХ] std::terminate: необработанное исключение (см. последнюю строку выше)\n";
+      gBoot.flush();
+    }
+  });
+#ifndef _WIN32
+  std::signal(SIGSEGV, [](int) {
+    if (gBoot.is_open()) { gBoot << "\n[КРАХ] SIGSEGV (обращение к памяти)\n"; gBoot.flush(); }
+    _Exit(2);
+  });
+  std::signal(SIGABRT, [](int) {
+    if (gBoot.is_open()) { gBoot << "\n[КРАХ] SIGABRT (assert/terminate)\n"; gBoot.flush(); }
+    _Exit(2);
+  });
+#endif
+  try {
+    return Run(argc, argv);
+  } catch (const std::exception& e) {
+    if (gBoot.is_open()) {
+      gBoot << "\n[КРАХ] исключение в main: " << e.what() << "\n";
+      gBoot.flush();
+    }
+    std::fprintf(stderr, "DeepSeekIDE КРАХ: %s\n(подробности в %%APPDATA%%/DeepSeekIDE/boot-server.log)\n",
+                 e.what());
+    return 2;
+  } catch (...) {
+    if (gBoot.is_open()) { gBoot << "\n[КРАХ] неизвестное исключение\n"; gBoot.flush(); }
+    std::fprintf(stderr, "DeepSeekIDE КРАХ: неизвестное исключение\n");
+    return 2;
+  }
 }
