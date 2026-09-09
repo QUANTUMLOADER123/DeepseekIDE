@@ -3,11 +3,16 @@
 #include <atomic>
 #include <thread>
 
+#ifdef DEEPSEEKIDE_WEBVIEW
+// ВАЖНО: строго ДО открытия namespace webchat — webview.h тянет за собой
+// стандартные заголовки (<algorithm> и др.), которые нельзя включать
+// внутри нашего пространства имён.
+#include <webview/webview.h>
+#endif
+
 namespace webchat {
 
 #ifdef DEEPSEEKIDE_WEBVIEW
-
-#include <webview/webview.h>
 
 namespace {
 std::atomic<int> gOpenCount{0};
