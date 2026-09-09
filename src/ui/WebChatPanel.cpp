@@ -128,6 +128,7 @@ struct WebChatPanel::Impl {
   HWND child = nullptr;                // дочернее окно-контейнер браузера
   HWND parent = nullptr;
 #endif
+  bool shownOnce = false;              // окно-контейнер уже показано (Windows)
   bool threadDone = false;             // поток завершился (ставится из потока)
 };
 
@@ -210,68 +211,97 @@ void WebChatPanel::Detach() {
 }
 
 void WebChatPanel::ThreadMain() {
-#if DSIDE_HAS_WV
-  void* parentArg = nullptr;
-#  if defined(_WIN32)
-  EnsureChildClass();
-  // Дочернее окно-контейнер; браузер подчиняется его размерам.
-  HWND child = CreateWindowExW(0, kChildClass, L"", WS_CHILD | WS_CLIPCHILDREN, 0, 0, 400, 400,
-                               mImpl->parent, nullptr, GetModuleHandleW(nullptr), nullptr);
-  mImpl->child = child;
-  if (child) ShowWindow(child, SW_SHOW);
-  parentArg = child;
-#  endif
-
-  webview::webview w(false, parentArg);
-  {
+  auto fail = [this](std::string msg) {
     std::lock_guard<std::mutex> lk(mMtx);
-    mImpl->wv = &w;
-  }
-  w.bind("dsideState", [this](const std::string& req) {
-    OnStateJson(req.c_str());
-    return std::string("ok");
-  });
-#  if !defined(_WIN32)
-  w.set_title("DeepSeekIDE — chat.deepseek.com");
-  w.set_size(760, 900, WEBVIEW_HINT_NONE);
-#  endif
-
-  // Тёмная заставка, пока грузится сайт.
-  w.navigate(
-      "data:text/html;charset=utf-8,<html><body style='background:%230b0e17;color:%238a93ac;"
-      "font:14px sans-serif;display:flex;height:100vh;align-items:center;justify-content:center'"
-      ">DeepSeekIDE загружает chat.deepseek.com&#8230;</body></html>");
-  w.navigate(mUrl);
-
-  // Инжектор: потоковый ms-цикл — idempotent install каждые 1.5 с.
-  std::thread injector([this] {
-    for (;;) {
-      {
-        std::lock_guard<std::mutex> lk(mMtx);
-        if (!mLaunched) break;
-      }
-      std::this_thread::sleep_for(std::chrono::milliseconds(1200));
-      {
-        std::lock_guard<std::mutex> lk(mMtx);
-        if (!mLaunched) break;
-      }
-      InstallerTick();
-    }
-  });
-
-  w.run();  // блокирует до terminate()
-
-  if (injector.joinable()) injector.join();
-  {
-    std::lock_guard<std::mutex> lk(mMtx);
+    mError = std::move(msg);
     if (mImpl) {
+#if DSIDE_HAS_WV
       mImpl->wv = nullptr;
+#endif
       mImpl->threadDone = true;
     }
-  }
+  };
+  try {
+#if DSIDE_HAS_WV
+    void* parentArg = nullptr;
+#  if defined(_WIN32)
+    EnsureChildClass();
+    // Дочернее окно-контейнер; браузер подчиняется его размерам.
+    // Изначально НЕ показываем — ShowWindow делает первый успешный SetRect
+    // (иначе пользователь видит белый прямоугольник при старте).
+    HWND child = CreateWindowExW(0, kChildClass, L"", WS_CHILD | WS_CLIPCHILDREN, 0, 0,
+                                 400, 400, mImpl->parent, nullptr,
+                                 GetModuleHandleW(nullptr), nullptr);
+    if (!child) {
+      fail("Не удалось создать окно-контейнер для браузера (CreateWindowExW)");
+      return;
+    }
+    mImpl->child = child;
+    parentArg = child;
+#  endif
+
+    webview::webview w(false, parentArg);  // МОЖЕТ БРОСИТЬ exception — ловим ниже
+    {
+      std::lock_guard<std::mutex> lk(mMtx);
+      mImpl->wv = &w;
+    }
+    w.bind("dsideState", [this](const std::string& req) {
+      OnStateJson(req.c_str());
+      return std::string("ok");
+    });
+#  if !defined(_WIN32)
+    w.set_title("DeepSeekIDE — chat.deepseek.com");
+    w.set_size(760, 900, WEBVIEW_HINT_NONE);
+#  endif
+
+    // Тёмная заставка, пока грузится сайт.
+    w.navigate(
+        "data:text/html;charset=utf-8,<html><body style='background:%230b0e17;color:%238a93ac;"
+        "font:14px sans-serif;display:flex;height:100vh;align-items:center;justify-content:center'"
+        ">DeepSeekIDE загружает chat.deepseek.com&#8230;</body></html>");
+    w.navigate(mUrl);
+
+    // Инжектор: потоковый ms-цикл — idempotent install каждые 1.5 с.
+    std::thread injector([this] {
+      for (;;) {
+        {
+          std::lock_guard<std::mutex> lk(mMtx);
+          if (!mLaunched) break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+        {
+          std::lock_guard<std::mutex> lk(mMtx);
+          if (!mLaunched) break;
+        }
+        InstallerTick();
+      }
+    });
+
+    w.run();  // блокирует до terminate()
+
+    if (injector.joinable()) injector.join();
+    {
+      std::lock_guard<std::mutex> lk(mMtx);
+      if (mImpl) {
+        mImpl->wv = nullptr;
+        mImpl->threadDone = true;
+      }
+    }
 #else
-  (void)this;
+    fail("webview не собран (DEEPSEEKIDE_WEBVIEW=OFF)");
 #endif
+  } catch (const std::exception& e) {
+#if DSIDE_HAS_WV && defined(_WIN32)
+    fail(std::string("Не удалось запустить встроенный браузер: ") + e.what() +
+         ". Возможно, отсутствует WebView2 Runtime — скачайте бесплатный "
+         "Evergreen Bootstrapper c сайта Microsoft (go.microsoft.com/fwlink/p/?LinkId=2124703). "
+         "Редактор IDE продолжит работать без чата.");
+#else
+    fail(std::string("Не удалось запустить встроенный браузер: ") + e.what());
+#endif
+  } catch (...) {
+    fail("Не удалось запустить встроенный браузер (неизвестная ошибка)");
+  }
 }
 
 void WebChatPanel::InstallerTick() {
@@ -316,7 +346,13 @@ void WebChatPanel::SetRect(int x, int y, int w, int h) {
     std::lock_guard<std::mutex> lk(mMtx);
     if (mImpl) child = mImpl->child;
   }
-  if (child) ::MoveWindow(child, x, y, w > 0 ? w : 1, h > 0 ? h : 1, TRUE);
+  if (child) {
+    ::MoveWindow(child, x, y, w > 0 ? w : 1, h > 0 ? h : 1, TRUE);
+    if (mVisible && !mImpl->shownOnce && w > 0 && h > 0) {
+      mImpl->shownOnce = true;
+      ShowWindow(child, SW_SHOW);
+    }
+  }
 #else
   (void)x; (void)y; (void)w; (void)h;
 #endif
@@ -330,7 +366,8 @@ void WebChatPanel::SetVisible(bool visible) {
     std::lock_guard<std::mutex> lk(mMtx);
     if (mImpl) child = mImpl->child;
   }
-  if (child) ShowWindow(child, visible ? SW_SHOW : SW_HIDE);
+  if (child && (!visible || mImpl->shownOnce))
+    ShowWindow(child, visible ? SW_SHOW : SW_HIDE);
 #else
   (void)visible;
 #endif

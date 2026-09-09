@@ -21,6 +21,9 @@
 
 struct GLFWwindow;
 
+// Путь к boot.log — используется main.cpp при фатальном исключении до Init.
+std::filesystem::path BootLogPathForMain();
+
 // Главный класс DeepSeekIDE: окно, ImGui, встроенный веб-чат chat.deepseek.com
 // (левая половина) и редактор с панелями (правая половина).
 class Application {

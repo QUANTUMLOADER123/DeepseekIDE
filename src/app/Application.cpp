@@ -42,6 +42,21 @@ void CenteredText(const char* text) {
 
 }  // namespace
 
+// Маркеры загрузки в %APPDATA%/DeepSeekIDE/boot.log — чтобы понять,
+// на каком шаге падает старт: каждый шаг перезаписывает файл своей меткой.
+static void BootStep(const char* step) {
+  std::string content = std::string("DeepSeekIDE boot log\nstep: ") + step + "\n";
+  std::error_code ec;
+  std::filesystem::create_directories(platform::ConfigDir(), ec);
+  platform::WriteTextFile(platform::ConfigDir() / "boot.log", content);
+}
+
+std::filesystem::path BootLogPathForMain() {
+  std::error_code ec;
+  std::filesystem::create_directories(platform::ConfigDir(), ec);
+  return platform::ConfigDir() / "boot.log";
+}
+
 // ---------------------------------------------------------------------------
 
 int Application::Run(int argc, char** argv) {
@@ -105,8 +120,10 @@ bool Application::Init(int argc, char** argv) {
     else if (!a.empty() && a[0] != '-' && mCliProject.empty()) mCliProject = a;
   }
 
+  BootStep("start");
   // Настройки + обвязка инструментов и моста
   mSettings = Settings::Load();
+  BootStep("settings loaded");
   mSplitRatio = std::min(0.72f, std::max(0.28f, mSettings.chatSplit));
 
   ToolContext tctx;
@@ -119,6 +136,7 @@ bool Application::Init(int argc, char** argv) {
   mToolsPtr = std::make_unique<ToolRegistry>(std::move(tctx));
   mTools = mToolsPtr.get();
   mBridge.Wire(&mWebChat, mTools, &mSnaps, &mProject);
+  BootStep("tools wired");
 
   // --- GLFW ---
   glfwSetErrorCallback(GlfwErrorCallback);
@@ -144,6 +162,7 @@ bool Application::Init(int argc, char** argv) {
   }
   glfwSetWindowUserPointer(mWindow, this);
   glfwSetDropCallback(mWindow, GlfwDropCallback);
+  BootStep("glfw window created");
   glfwMakeContextCurrent(mWindow);
   glfwSwapInterval(1);  // vsync
 
@@ -154,6 +173,7 @@ bool Application::Init(int argc, char** argv) {
   if (mDpiScale < 0.75f) mDpiScale = 0.75f;
   if (mDpiScale > 3.0f) mDpiScale = 3.0f;
   glfwShowWindow(mWindow);
+  BootStep("window shown");
 
   // --- ImGui ---
   IMGUI_CHECKVERSION();
@@ -182,6 +202,7 @@ bool Application::Init(int argc, char** argv) {
   ImGui_ImplOpenGL3_Init(glsl_version);
 
   fonts::LoadAll(io, mDpiScale, mSettings.uiFontSize, mSettings.codeFontSize);
+  BootStep("fonts loaded");
 
   // --- Панели: контексты и колбэки ---
   FileExplorerPanel::Callbacks ecb;
@@ -224,12 +245,16 @@ bool Application::Init(int argc, char** argv) {
       OpenProject(platform::StrToPath(start));
   }
 
+  BootStep("panels wired");
+
   // Встроенный чат: после того как окно создано.
   AttachWebChat();
+  BootStep(mWebChat.Supported() ? "webchat attached" : "webchat: no webview build");
 
   Log("info", "DeepSeekIDE запущен: " + platform::NowIso());
   if (!mWebChat.Supported())
     Log("warn", "Встроенный браузер не доступен: " + mWebChat.LastError());
+  BootStep("init done");
   return true;
 }
 
@@ -242,6 +267,7 @@ void Application::AttachWebChat() {
 }
 
 void Application::Shutdown() {
+  BootStep("shutdown");
   mWebChat.Detach();
   if (mWindow) {
     ImGui_ImplOpenGL3_Shutdown();
@@ -256,6 +282,11 @@ void Application::Shutdown() {
 // ---------------------------------------------------------------------------
 
 void Application::Frame() {
+  static bool sFirstFrame = true;
+  if (sFirstFrame) {
+    sFirstFrame = false;
+    BootStep("first frame");
+  }
   ImGui_ImplOpenGL3_NewFrame();
   ImGui_ImplGlfw_NewFrame();
   ImGui::NewFrame();
@@ -426,9 +457,9 @@ void Application::RenderLayout() {
     int wx = 0, wy = 0;
     glfwGetWindowPos(mWindow, &wx, &wy);
     bool iconified = glfwGetWindowAttrib(mWindow, GLFW_ICONIFIED) != 0;
-    mWebChat.SetVisible(!iconified);
     mWebChat.SetRect(static_cast<int>(contentPos.x - wx), static_cast<int>(contentPos.y - wy),
                      static_cast<int>(splitW), static_cast<int>(avail.y));
+    mWebChat.SetVisible(!iconified);
   } else {
     DrawChatFallback(contentPos.x, contentPos.y, splitW, avail.y);
   }
