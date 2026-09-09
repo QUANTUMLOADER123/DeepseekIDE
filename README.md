@@ -23,12 +23,11 @@ deepseekide.exe  = локальный HTTP-сервер (127.0.0.1, порт в�
 2. Дважды щёлкните **`build-windows.bat`**. Получите `deepseekide.exe` в корне папки.
 3. Запустите `deepseekide.exe` → в браузере откроется IDE.
 
-## Сборка (Linux)
+## Сборка вручную (любая ОС)
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j && ./build/deepseekide_tests   # 62/62
-./build/deepseekide                                   # сервер + автооткрытие вкладки
+cmake --build build -j          # deepseekide + deepseekide_tests
 ```
 
 ## Использование
