@@ -4,9 +4,11 @@
 
 #include "app/Platform.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <vector>
 #include <nlohmann/json.hpp>
 
 #if defined(_WIN32)
@@ -273,23 +275,63 @@ void WebChatPanel::ThreadMain() {
       mImpl->threadDone = true;
     }
   };
-  try {
-#if DSIDE_HAS_WV
-    void* parentArg = nullptr;
+
+#if !DSIDE_HAS_WV
+  fail("webview не собран (DEEPSEEKIDE_WEBVIEW=OFF)");
+  return;
+#else
+  // Перебор профилей запуска WebView2: на части машин GPU-композитинг рисует
+  // сплошное белое окно, на других антивирус/политика мешает дочерним процессам
+  // (песочнице) — движок «жив», но страница мёртвая. Watchdog следит: если за
+  // 12 секунд JS-мост не поднялся — пересоздаём движок со следующим профилем.
+  const bool userArgs = std::getenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") != nullptr;
+  std::vector<std::string> profiles =
 #  if defined(_WIN32)
-    PanelBootStep("thread start");
-    ForceSoftwareCompositing();
-    ComApartment com;
-    if (!com.usable()) {
-      char hbuf[24];
-      std::snprintf(hbuf, sizeof(hbuf), "%08X", static_cast<unsigned>(com.hr));
-      fail("COM-окружение недоступно (CoInitializeEx = 0x" + std::string(hbuf) + ")");
-      return;
+      userArgs ? std::vector<std::string>{std::string()}
+               : std::vector<std::string>{"--disable-gpu-compositing",
+                                          "--no-sandbox --disable-gpu"};
+#  else
+      std::vector<std::string>{std::string()};
+#  endif
+
+#  if defined(_WIN32)
+  PanelBootStep("thread start");
+  if (userArgs) PanelBootStep("используются аргументы из WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS");
+  ForceSoftwareCompositing();
+  ComApartment com;
+  if (!com.usable()) {
+    char hbuf[24];
+    std::snprintf(hbuf, sizeof(hbuf), "%08X", static_cast<unsigned>(com.hr));
+    fail("COM-окружение недоступно (CoInitializeEx = 0x" + std::string(hbuf) + ")");
+    return;
+  }
+  EnsureChildClass();
+#  endif
+
+  size_t attempt = 0;
+  bool bridgeUp = false;
+  for (; attempt < profiles.size() && !bridgeUp; ++attempt) {
+    {
+      std::lock_guard<std::mutex> lk(mMtx);
+      if (!mLaunched) break;  // приложение закрывается
     }
-    EnsureChildClass();
-    // Дочернее окно-контейнер; браузер подчиняется его размерам.
-    // Изначально НЕ показываем — ShowWindow делает первый успешный SetRect
-    // (иначе пользователь видит белый прямоугольник при старте).
+#  if defined(_WIN32)
+    if (!userArgs) {
+      _putenv_s("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+                profiles[attempt].empty() ? "" : profiles[attempt].c_str());
+      PanelBootStep("попытка " + std::to_string(attempt + 1) + " из " +
+                    std::to_string(profiles.size()) + ", args: " +
+                    (profiles[attempt].empty() ? std::string("(пусто)") : profiles[attempt]));
+    }
+#  endif
+
+    // Контейнер: на каждой попытке — новый (движок держит на него хендлы).
+#if defined(_WIN32)
+    if (mImpl->child) {
+      DestroyWindow(mImpl->child);
+      mImpl->child = nullptr;
+      mImpl->shownOnce = false;
+    }
     HWND child = CreateWindowExW(0, kChildClass, L"", WS_CHILD | WS_CLIPCHILDREN, 0, 0,
                                  400, 400, mImpl->parent, nullptr,
                                  GetModuleHandleW(nullptr), nullptr);
@@ -298,81 +340,129 @@ void WebChatPanel::ThreadMain() {
       return;
     }
     mImpl->child = child;
-    parentArg = child;
-#  endif
+    void* parentArg = child;
+#else
+    void* parentArg = nullptr;
+#endif
 
-    PanelBootStep("creating WebView2 controller…");
-    webview::webview w(false, parentArg);  // МОЖЕТ БРОСИТЬ exception — ловим ниже
-    {
-      std::lock_guard<std::mutex> lk(mMtx);
-      mImpl->wv = &w;
-    }
-    PanelBootStep("controller created OK");
-    w.bind("dsideState", [this](const std::string& req) {
-      OnStateJson(req.c_str());
-      return std::string("ok");
-    });
+    try {
+      PanelBootStep("создаю controller WebView2…");
+      webview::webview w(false, parentArg);  // может бросить exception — ловим
+      {
+        std::lock_guard<std::mutex> lk(mMtx);
+        mImpl->wv = &w;
+        mState = State{};  // состояние обнуляем под новую попытку
+      }
+      PanelBootStep("controller создан, захожу в run()");
+      w.bind("dsideState", [this](const std::string& req) {
+        OnStateJson(req.c_str());
+        return std::string("ok");
+      });
 #  if !defined(_WIN32)
-    w.set_title("DeepSeekIDE — chat.deepseek.com");
-    w.set_size(760, 900, WEBVIEW_HINT_NONE);
+      w.set_title("DeepSeekIDE — chat.deepseek.com");
+      w.set_size(760, 900, WEBVIEW_HINT_NONE);
 #  endif
+      w.navigate(mUrl);
 
-    PanelBootStep("navigating to chat url");
-    w.navigate(mUrl);
+      // Watchdog: инжектор моста + supervision попытки (тайм-аут 12 с).
+      const long long startedAt =
+          std::chrono::duration_cast<std::chrono::milliseconds>(
+              std::chrono::steady_clock::now().time_since_epoch()).count();
+      std::atomic<bool> stopWd{false};
+      auto* wp = &w;
+      std::thread watchdog([this, &stopWd, startedAt, wp] {
+        for (;;) {
+          if (stopWd.load()) break;
+          bool alive, ok;
+          {
+            std::lock_guard<std::mutex> lk(mMtx);
+            alive = mLaunched;
+            ok = mState.ok;
+          }
+          if (!alive) break;
+          if (!ok) {
+            InstallerTick();
+            long long now =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count();
+            if (now - startedAt > 12000) {
+              PanelBootStep("мост не поднялся за 12 с на этой попытке — пересоздаю");
+              wp->dispatch([wp] { wp->terminate(); });
+              break;
+            }
+          }
+          std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+        }
+      });
 
-    // Инжектор: потоковый ms-цикл — idempotent install каждые 1.5 с.
-    std::thread injector([this] {
-      for (;;) {
-        {
-          std::lock_guard<std::mutex> lk(mMtx);
-          if (!mLaunched) break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(1200));
-        {
-          std::lock_guard<std::mutex> lk(mMtx);
-          if (!mLaunched) break;
-        }
-        InstallerTick();
+      w.run();  // блокирует до terminate()
+
+      stopWd.store(true);
+      if (watchdog.joinable()) watchdog.join();
+      {
+        std::lock_guard<std::mutex> lk(mMtx);
+        if (mImpl) mImpl->wv = nullptr;
+        bridgeUp = mState.ok;
+        if (!mLaunched) break;  // завершение приложения — не следующая попытка
       }
-    });
-
-    w.run();  // блокирует до terminate()
-
-    if (injector.joinable()) injector.join();
-    {
-      std::lock_guard<std::mutex> lk(mMtx);
-      if (mImpl) {
-        mImpl->wv = nullptr;
-        mImpl->threadDone = true;
+      if (bridgeUp) PanelBootStep("JS-мост поднялся");
+      else PanelBootStep("движок завершился без живого моста");
+    }
+#if DSIDE_HAS_WV
+    catch (const webview::exception& e) {
+      std::string msg = "WebView2 (попытка " + std::to_string(attempt + 1) + "), код " +
+                        std::to_string(static_cast<int>(e.error().code()));
+      if (!e.error().message().empty()) msg += ": " + e.error().message();
+      PanelBootStep(msg);
+      {
+        std::lock_guard<std::mutex> lk(mMtx);
+        mError = msg;  // последний текст — покажем в Журнале позже
+        if (!mLaunched) break;
+        if (mImpl) mImpl->wv = nullptr;
       }
     }
-#else
-    fail("webview не собран (DEEPSEEKIDE_WEBVIEW=OFF)");
 #endif
-#if DSIDE_HAS_WV
-  } catch (const webview::exception& e) {
-    std::string msg = "Не удалось запустить встроенный браузер (webview код " +
-                      std::to_string(static_cast<int>(e.error().code())) + ")";
-    if (!e.error().message().empty()) msg += ": " + e.error().message();
-#  if defined(_WIN32)
-    msg += ". Если Microsoft Edge у вас обычно работает, а ошибка остаётся — "
-           "WebView2 может блокироваться групповой политикой или антивирусом; "
-           "попробуйте запуск от имени обычного пользователя без «песочницы».";
-#  endif
-    fail(msg);
-#endif
-  } catch (const std::exception& e) {
-#if DSIDE_HAS_WV && defined(_WIN32)
-    fail(std::string("Не удалось запустить встроенный браузер: ") + e.what() +
-         ". Возможно, отсутствует WebView2 Runtime — скачайте бесплатный "
-         "Evergreen Bootstrapper c сайта Microsoft (go.microsoft.com/fwlink/p/?LinkId=2124703). "
-         "Редактор IDE продолжит работать без чата.");
-#else
-    fail(std::string("Не удалось запустить встроенный браузер: ") + e.what());
-#endif
-  } catch (...) {
-    fail("Не удалось запустить встроенный браузер (неизвестная ошибка)");
+    catch (const std::exception& e) {
+      std::string msg = std::string("WebView2 (попытка ") + std::to_string(attempt + 1) +
+                        "): " + e.what();
+      PanelBootStep(msg);
+      {
+        std::lock_guard<std::mutex> lk(mMtx);
+        mError = msg;
+        if (!mLaunched) break;
+        if (mImpl) mImpl->wv = nullptr;
+      }
+    } catch (...) {
+      PanelBootStep("неизвестная ошибка при создании движка");
+      {
+        std::lock_guard<std::mutex> lk(mMtx);
+        if (!mLaunched) break;
+        if (mImpl) mImpl->wv = nullptr;
+      }
+    }
   }
+
+  {
+    std::lock_guard<std::mutex> lk(mMtx);
+    if (mImpl) {
+      mImpl->wv = nullptr;
+      mImpl->threadDone = true;
+    }
+  }
+
+  if (!mLaunched) return;  // штатное завершение (detach)
+  if (!bridgeUp) {
+#  if defined(_WIN32)
+    fail("Встроенный браузер не смог отрисовать chat.deepseek.com ни на одном "
+         "профиле запуска (обычно это блокировка антивирусом/политикой — "
+         "добавьте deepseekide.exe и msedgewebview2.exe в исключения, либо "
+         "обновите драйвер видеокарты). Редактор IDE продолжит работать; "
+         "подробности — в boot.log (папка %APPDATA%\\DeepSeekIDE).");
+#  else
+    fail("Встроенный браузер не смог загрузить chat.deepseek.com.");
+#  endif
+  }
+#endif
 }
 
 void WebChatPanel::InstallerTick() {
