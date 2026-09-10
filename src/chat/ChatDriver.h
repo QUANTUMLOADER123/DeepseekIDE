@@ -122,6 +122,9 @@ private:
   // последних ~60000 символов — с авто-«Продолжить» ответ бывает длиннее,
   // и начало (с блоками deepseekide-ops!) без склейки терялось бы навсегда.
   std::string mReplyFull;
+  // Подпись последнего авто-отправленного запроса «НУЖЕН ФАЙЛ: …» — защита
+  // от петли, если модель просит те же файлы повторно.
+  std::string mLastFileReqSig;
 
   ParsedOps mPendingReply;
   bool mReplyPending = false;

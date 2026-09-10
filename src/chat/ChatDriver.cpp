@@ -496,6 +496,7 @@ bool ChatDriver::DoSendNow(const Queued& q, std::string& err) {
   mSettleSinceMs = 0;
   mLastContinueMs = 0;
   mBaseline = -1;  // узнаем на первом удачном опросе после отправки
+  if (q.isTask) mLastFileReqSig.clear();
   mReplyFull.clear();
   TouchStatus([](Status& s){ s.stage = "busy"; s.stageText = "отправлено, жду ответ…"; });
   mCfg.log("agent", std::string(q.isTask ? "Задача: " : "Заметка: ") +
@@ -601,7 +602,7 @@ std::string ChatDriver::DebugInfo() {
           << "\n";
       }
     } else {
-      s << " ощибка: " << ver.error << "\n";
+      s << " ошибка: " << ver.error << "\n";
     }
   }
   s << "\nВкладки браузера (/json/list):\n";
@@ -817,11 +818,43 @@ void ChatDriver::ThreadBody() {
               mCfg.onSession(task, mPendingReply);
             }
             mPhase = Phase::Ready;
-            mStatus.stage = mStatus.chatPresent ? "online" : "online";
+            mStatus.stage = "online";
             mStatus.stageText = "ответ получен";
             mCfg.log("agent", "Ответ зафиксирован: " +
                                   std::to_string(mPendingReply.ops.size()) + " операций, " +
                                   std::to_string(mPendingReply.errors.size()) + " предупреждений");
+            // Модель могла попросить файлы («НУЖЕН ФАЙЛ: <путь>») — по контракту
+            // промпта присылаем содержимое следующим сообщением. Раньше эту
+            // просьбу никто не выполнял, и диалог с файлами зависал.
+            if (mCfg.tools) {
+              const auto wants = dside::FindFileRequests(raw);
+              if (!wants.empty()) {
+                std::string sig;
+                for (const auto& w : wants) { sig += w; sig += '|'; }
+                if (sig == mLastFileReqSig) {
+                  mCfg.log("agent",
+                           "Модель повторно ждёт те же файлы — уже отправляли, не дублирую.");
+                } else {
+                  mLastFileReqSig = sig;
+                  std::ostringstream note;
+                  note << "Вы просили содержимое файлов. Присылаю (строки пронумерованы —\n"
+                          "при insert_lines/replace_lines ориентируйтесь по этим номерам):\n\n";
+                  int sent = 0;
+                  for (const auto& w : wants) {
+                    if (++sent > 3) { note << "(остальные запросы — следующим сообщением)\n"; break; }
+                    ToolRunResult fr = mCfg.tools->Execute("read_file", {{"path", w}});
+                    std::string body = utf8::Sanitize(fr.output);
+                    if (body.size() > 120000)
+                      body = utf8::Truncate(body, 120000) + "\n…(обрезано — показаны первые 120000 символов)\n";
+                    note << "ФАЙЛ «" << w << "» " << (fr.ok ? "" : "— ОШИБКА ЧТЕНИЯ: ")
+                         << "\n```\n" << body << "\n```\n\n";
+                  }
+                  mQueue.push_back(Queued{false, note.str()});
+                  mCfg.log("agent", "Модель попросила " + std::to_string(wants.size()) +
+                                    " файл(ов) — отправляю содержимое в чат автоматически.");
+                }
+              }
+            }
             mBaseline = -1;
             return;
           }

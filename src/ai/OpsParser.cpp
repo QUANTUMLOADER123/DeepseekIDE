@@ -99,3 +99,63 @@ bool dside::ExtractOps(const std::string& answer, const std::set<std::string>& k
   out.text = Trim(rest);
   return !out.ops.empty();
 }
+
+namespace {
+
+// Разрешённые написания маркера (модель обычно повторяет регистр промпта,
+// но страхуемся от «нормального» письма).
+const char* kMarkers[] = {"НУЖЕН ФАЙЛ:", "Нужен файл:", "нужен файл:"};
+
+std::string CleanPath(std::string p) {
+  auto junk = [](char c) {
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '`' || c == '"' ||
+           c == '\''  || c == '<' || c == '>';
+  };
+  // Крутим до стабилизации: «`path`.» → точка не junk, затем за ней бэктик.
+  for (;;) {
+    size_t before = p.size();
+    while (!p.empty() && junk(p.front())) p.erase(p.begin());
+    while (!p.empty() && junk(p.back())) p.pop_back();
+    // Точка/запятая в конце — это пунктуация предложения, не часть пути
+    while (!p.empty() && (p.back() == '.' || p.back() == ',')) p.pop_back();
+    if (p.size() == before) break;
+  }
+  if (p.size() > 200) p.resize(200);
+  return p;
+}
+
+}  // namespace
+
+std::vector<std::string> dside::FindFileRequests(const std::string& answer) {
+  std::vector<std::string> out;
+  std::string line;
+  bool inFence = false;
+  for (size_t i = 0; i <= answer.size(); ++i) {
+    if (i == answer.size() || answer[i] == '\n') {
+      // Маркер ищем только вне блоков кода — внутри контента write_file
+      // такая строка может встретиться как данные, а не просьба.
+      if (line.rfind("```", 0) == 0) {
+        inFence = !inFence;
+      } else if (!inFence && out.size() < 5) {
+        for (const char* m : kMarkers) {
+          const std::string marker = m;
+          const size_t at = line.find(marker);
+          if (at != std::string::npos) {
+            std::string path = CleanPath(line.substr(at + marker.size()));
+            if (!path.empty()) {
+              bool dup = false;
+              for (const auto& e : out)
+                if (e == path) { dup = true; break; }
+              if (!dup) out.push_back(std::move(path));
+            }
+            break;
+          }
+        }
+      }
+      line.clear();
+    } else {
+      line.push_back(answer[i]);
+    }
+  }
+  return out;
+}

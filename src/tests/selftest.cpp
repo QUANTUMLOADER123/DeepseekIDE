@@ -259,6 +259,19 @@ static void TestOpsParser() {
   dside::ExtractOps("```deepseekide-ops\n{\"name\":\"read_file\",\"args\":{\"path\":\"a\"}}\n```",
                     dside::MutationOps(), p4);
   CHECK(p4.ops.empty(), "read_file не входит в мутации");
+
+  // «НУЖЕН ФАЙЛ: …» — контракт промпта: просьба содержимого файла
+  {
+    const auto r1 = dside::FindFileRequests("Текст.\nНУЖЕН ФАЙЛ: src/main.cpp\nЕщё текст");
+    CHECK(r1.size() == 1 && r1[0] == "src/main.cpp", "простой запрос файла");
+    const auto r2 = dside::FindFileRequests(
+        "НУЖЕН ФАЙЛ: `site/css/style.css`.\nНУЖЕН ФАЙЛ: site/css/style.css\nНужен файл: script.js");
+    CHECK(r2.size() == 2, "дубликат склеился, вариант «Нужен файл:» тоже ловится");
+    CHECK(r2.size() == 2 && r2[0] == "site/css/style.css" && r2[1] == "script.js",
+          "пути очищены от бэктиков и пунктуации");
+    const auto r3 = dside::FindFileRequests("```cpp\n// НУЖЕН ФАЙЛ: x.h\n```\nГотово");
+    CHECK(r3.empty(), "маркер внутри блока кода игнорируется");
+  }
 }
 
 
