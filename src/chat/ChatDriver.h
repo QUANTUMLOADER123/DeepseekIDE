@@ -75,6 +75,8 @@ public:
   std::string LastError() const { std::lock_guard<std::mutex> lk(mMtx); return mError; }
 
 private:
+  bool AttachViaBrowserWs(std::string& err);   // основной: browser WS + attachToTarget
+  bool AttachViaJsonList(std::string& err);    // запасной: /json/list → page WS
   struct Queued {
     bool isTask = false;
     std::string text;
