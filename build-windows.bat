@@ -35,13 +35,22 @@ if exist "%VSWHERE%" (
 )
 
 if defined VSV (
+  echo %VSV% | findstr /b "18." >nul && set "GEN=Visual Studio 18 2026"
   echo %VSV% | findstr /b "17." >nul && set "GEN=Visual Studio 17 2022"
   echo %VSV% | findstr /b "16." >nul && set "GEN=Visual Studio 16 2019"
 )
 
+rem vswhere knows VS up to some version - also ask cmake itself to pick
+rem the newest installed Visual Studio (works for VS 2026+ too)
+if not defined GEN (
+  cmake -S . -B build -A x64 --check-generator 2>nul
+)
 if not defined GEN (
   where cl >nul 2>nul
   if not errorlevel 1 set "GEN=NMake Makefiles" && set "NMAKE=1"
+)
+if not defined GEN (
+  set "GEN=@auto"
 )
 
 if not defined GEN (
@@ -62,6 +71,9 @@ echo Using generator: %GEN%
 echo [1/3] CMake configure...
 if "%NMAKE%"=="1" (
   cmake -S . -B build -G "%GEN%" -DCMAKE_BUILD_TYPE=Release
+) else if "%GEN%"=="@auto" (
+  rem let cmake choose the newest installed Visual Studio by itself
+  cmake -S . -B build -A x64
 ) else (
   cmake -S . -B build -G "%GEN%" -A x64
 )
