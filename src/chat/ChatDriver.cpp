@@ -31,8 +31,21 @@ const char* kStateJs = R"JS(
     var last=n?(blocks[n-1].innerText||''):'';
     if(last.length>60000)last=last.substring(last.length-60000);
     var now=Date.now();
+    // Кнопка «Продолжить»: DeepSeek обрезал ответ лимитом. Докликиваем сами
+    // и ФОРСИМ busy — иначе тишина после обрезка засчитается как конец ответа.
+    var cont=null;
+    var btns=document.querySelectorAll('div[role=button].ds-button');
+    for(var bi=0;bi<btns.length;bi++){
+      var bt=(btns[bi].innerText||'').replace(/\s+/g,' ').trim();
+      if(bt==='Продолжить'||bt==='Continue'){cont=btns[bi];break;}
+    }
+    if(cont){
+      cont.click();
+      window.__dsideActivity=now;
+      return JSON.stringify({ok:1,n:n,t:last,b:1,c:1,p:!!document.querySelector('textarea'),u:String(location.href)});
+    }
     var busy=(now-window.__dsideActivity)<1300||(now-window.__dsideSentAt)<2500;
-    return JSON.stringify({ok:1,n:n,t:last,b:busy?1:0,p:!!document.querySelector('textarea'),u:String(location.href)});
+    return JSON.stringify({ok:1,n:n,t:last,b:busy?1:0,c:0,p:!!document.querySelector('textarea'),u:String(location.href)});
   }catch(e){return JSON.stringify({ok:0,e:String(e)});}
 })()
 )JS";
@@ -71,10 +84,22 @@ std::string SendJs(const std::string& text) {
 
 const char* kNewChatJs = R"JS(
 (function(){
-  var nodes=document.querySelectorAll('a,button,div[role=button]');
+  function txt(el){return (el.innerText||'').replace(/\s+/g,' ').trim();}
+  // Кнопка «Новый чат» у DeepSeek — div[tabindex] БЕЗ role=button, поэтому
+  // старый селектор 'div[role=button]' её просто не видел. Ищем шире.
+  var nodes=document.querySelectorAll('[role=button],a,button,[tabindex="0"]');
   for(var i=0;i<nodes.length;i++){
-    var t=(nodes[i].innerText||'').replace(/\s+/g,' ').trim();
+    var t=txt(nodes[i]);
     if(t==='New chat'||t==='Новый чат'){nodes[i].click();return 'ok';}
+  }
+  // Запасной путь: точный span с текстом → клик ближайшего кликабельного предка.
+  var spans=document.querySelectorAll('span');
+  for(var j=0;j<spans.length;j++){
+    var t2=txt(spans[j]);
+    if(t2==='New chat'||t2==='Новый чат'){
+      var p=spans[j].closest('[role=button],[tabindex="0"],a,button')||spans[j].parentElement;
+      if(p){p.click();return 'ok_via_span';}
+    }
   }
   return 'not_found';
 })()
@@ -456,6 +481,7 @@ bool ChatDriver::DoSendNow(const Queued& q, std::string& err) {
   mPhase = Phase::Sending;
   mSentAtMs = NowMs();
   mSettleSinceMs = 0;
+  mLastContinueMs = 0;
   mBaseline = -1;  // узнаем на первом удачном опросе после отправки
   TouchStatus([](Status& s){ s.stage = "busy"; s.stageText = "отправлено, жду ответ…"; });
   mCfg.log("agent", std::string(q.isTask ? "Задача: " : "Заметка: ") +
@@ -661,10 +687,14 @@ void ChatDriver::ThreadBody() {
     // 2) Периодика: запрос "новый чат"
     if (mNewChatRequested.exchange(false)) {
       std::string v, e;
-      if (mCdp->Evaluate(kNewChatJs, v, e, 3000))
-        mCfg.log("chat", "Новый чат нажат");
-      else
+      if (mCdp->Evaluate(kNewChatJs, v, e, 3000)) {
+        if (v.find("not_found") != std::string::npos)
+          mCfg.log("chat", "NewChat: кнопка «Новый чат» на странице не найдена");
+        else
+          mCfg.log("chat", "Новый чат нажат (" + v + ")");
+      } else {
         mCfg.log("chat", "NewChat: " + e);
+      }
       std::this_thread::sleep_for(std::chrono::milliseconds(300));
       return;
     }
@@ -706,6 +736,16 @@ void ChatDriver::ThreadBody() {
       mStatus.busy = st.value("b", 0) != 0;
       const int n = st.value("n", 0);
       const long long nowL = NowMs();
+      if (st.value("c", 0) != 0) {
+        // На странице видна кнопка «Продолжить» — скрипт её только что нажал.
+        // Ответ ещё пишется: сдвигаем дедлайн тишины.
+        mLastContinueMs = nowL;
+        if (mPhase == Phase::Sending || mPhase == Phase::WaitingSettle) {
+          mPhase = Phase::WaitingSettle;
+          mSettleSinceMs = 0;
+          mStatus.stageText = "ответ обрезан лимитом — продолжаю генерацию…";
+        }
+      }
 
       switch (mPhase) {
         case Phase::Idle:
@@ -759,7 +799,7 @@ void ChatDriver::ThreadBody() {
             mBaseline = -1;
             return;
           }
-          if (nowL - mSentAtMs > 6 * 60 * 1000) {
+          if (nowL - (mLastContinueMs > mSentAtMs ? mLastContinueMs : mSentAtMs) > 6 * 60 * 1000) {
             mPhase = Phase::TimedOut;
             mStatus.stage = "online";
             mStatus.stageText = "чат готов";

@@ -209,28 +209,7 @@ body {
 .agent-actions { display: flex; gap: 8px; margin-top: 9px; align-items: center; }
 .agent-actions .primary { flex: 1; }
 
-.pending-reply { flex: 0 0 auto; max-height: 50%; overflow: auto; border-top: 1px solid var(--border); padding: 12px; background: var(--bg2); }
-.pr-head { display: flex; justify-content: space-between; align-items: center; font-weight: 700; font-size: 13px; margin-bottom: 7px; }
 .badge { background: var(--accent); color: #fff; border-radius: 12px; padding: 2px 11px; font-size: 11px; font-weight: 600; }
-.pr-text { white-space: pre-wrap; word-break: break-word; font-size: 12.5px; color: #3a4f63; max-height: 140px; overflow: auto; padding: 8px 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 9px; }
-.pr-ops { display: flex; flex-direction: column; gap: 6px; margin-bottom: 9px; }
-.op {
-  display: flex; gap: 9px; align-items: flex-start; padding: 8px 10px; font-size: 12px;
-  border: 1px solid var(--border); border-radius: 10px; background: var(--panel);
-  transition: border-color .15s;
-}
-.op:hover { border-color: var(--accent); }
-.op input { margin-top: 3px; accent-color: var(--accent-strong); }
-.op .desc { flex: 1; word-break: break-all; }
-.op.write { border-left: 3px solid var(--accent-strong); }
-.op.edit { border-left: 3px solid var(--accent); }
-.op.delete { border-left: 3px solid var(--err); }
-.op.mkdir { border-left: 3px solid var(--ok); }
-.apply-report {
-  margin: 9px 0 0; background: #1f2d3d; color: #c8e6f7; border-radius: 10px;
-  padding: 11px; font: 11.5px/1.55 "Cascadia Code", Consolas, monospace; white-space: pre-wrap;
-  max-height: 170px; overflow: auto;
-}
 
 /* ============ LOG ============ */
 #logbar { flex: 0 0 auto; background: #17293c; border-top: 2px solid var(--accent); display: flex; flex-direction: column; max-height: 40vh; }

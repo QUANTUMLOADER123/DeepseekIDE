@@ -343,62 +343,27 @@ async function pollEventsSmart() {
 }
 
 // ------------------------- ответ агента -------------------------
-let pending = null;
+// ВАЖНО: правки агента применяются АВТОМАТИЧЕСКИ, без окон подтверждения.
+// Панели «Принять/Отклонить» больше нет — пользователь решения не принимает.
+let applyingOps = false;
 async function pollReply() {
-  if (pending) return;
+  if (applyingOps) return;  // предыдущее применение ещё идёт — не дублируем
   const r = await api('/api/chat/reply');
   if (!r.ready) return;
   addFeedText('agent', 'deepseek', r.text || '(пусто)');
-  // Если операций нет — применять нечего: панель «Применить» не показываем,
-  // ничего не спрашиваем. Ошибки парсера всё равно вываливаем в ленту.
-  if (!r.ops || !r.ops.length) {
-    pending = null;
-    (r.errs || []).forEach((e) => sysMsg('парсер: ' + e));
-    return;
-  }
-  pending = r;
-  showPending(r);
-}
-
-function showPending(r) {
-  const box = $('pendingReply');
-  box.classList.remove('hidden');
-  $('prText').textContent = r.text || '';
-  $('prOpsCount').textContent = (r.ops || []).length + ' операций';
-  $('applyReport').classList.add('hidden');
-  const ops = $('prOps');
-  ops.innerHTML = '';
-  (r.ops || []).forEach((op, i) => {
-    const div = document.createElement('label');
-    div.className = 'op ' + opClass(op.name);
-    div.innerHTML = '<input type="checkbox" checked data-i="' + i + '"><span class="desc">' +
-                    esc(op.describe || op.name) + '</span>';
-    ops.appendChild(div);
-  });
   (r.errs || []).forEach((e) => sysMsg('парсер: ' + e));
+  if (!r.ops || !r.ops.length) return;
+  await applyOpsNow(r.ops, 'ответ агента: ' + r.ops.length + ' операций');
 }
 
-function opClass(name) {
-  if (name === 'write_file' || name === 'append_file') return 'write';
-  if (name.startsWith('edit') || name.startsWith('insert') || name.startsWith('replace')) return 'edit';
-  if (name.startsWith('delete')) return 'delete';
-  return 'mkdir';
-}
-
-async function applyPending(selectedOnly) {
-  if (!pending) return;
-  const chosen = [];
-  document.querySelectorAll('#prOps input[type=checkbox]').forEach((cb) => {
-    if (cb.checked) chosen.push(pending.ops[+cb.dataset.i]);
-  });
-  if (!chosen.length) { sysMsg('Ни одной выбранной операции.'); return; }
-  const r = await api('/api/chat/apply', { json: { ops: chosen } });
+async function applyOpsNow(ops, label) {
+  applyingOps = true;
+  sysMsg(label + ' — применяю автоматически…');
+  const r = await api('/api/chat/apply', { json: { ops } });
+  applyingOps = false;
   if (r.error) { sysMsg('Применение: ' + r.error); return; }
   addFeedText('sys', 'применено', r.report || 'готово');
-  const rep = $('applyReport');
-  rep.textContent = r.report || '';
-  rep.classList.remove('hidden');
-  $('prOpsCount').textContent = 'готово: ' + r.done + '/' + r.total;
+  refreshTreeNow();
 }
 
 // ------------------------- журнал -------------------------
@@ -516,9 +481,6 @@ function bind() {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); send('task'); }
   });
 
-  $('btnApply').onclick = () => applyPending(true);
-  $('btnDiscard').onclick = () => { pending = null; $('pendingReply').classList.add('hidden'); };
-
   $('btnSnapsRefresh').onclick = pollSnaps;
 
   $('logHead').onclick = (e) => {
@@ -576,32 +538,15 @@ async function openSession(id) {
   activeSessionId = id;
   const s = await api('/api/session?id=' + encodeURIComponent(id));
   if (s.error) { sysMsg('Сессия: ' + s.error); return; }
-  const ops = (s.ops || []).map((o) => ({
-    name: o.name, args: o.args,
-    describe: opDescribeFallback(o),
-  }));
-  pending = { text: s.replyText, ops, errs: s.errs || [] };
-  addFeedText('sys', 'сессия', 'Открыта сессия: «' + (s.title || id) + '» — можно применить операции ещё раз');
-  showPending(pending);
+  const ops = (s.ops || []).map((o) => ({ name: o.name, args: o.args }));
+  (s.errs || []).forEach((e) => sysMsg('парсер: ' + e));
+  if (s.replyText) addFeedText('agent', 'deepseek', s.replyText);
+  sysMsg('Открыта сессия: «' + (s.title || id) + '» (' + ops.length + ' оп) — применяю ещё раз');
+  if (ops.length) await applyOpsNow(ops, 'сессия «' + (s.title || id) + '»');
   setSide('files');
 }
 
-// describe для операций из сессии (сервер them хранит без describe)
-function opDescribeFallback(op) {
-  const p = (op.args && (op.args.path || op.args.to || op.args.from)) || '';
-  switch (op.name) {
-    case 'write_file': return 'записать файл ' + p;
-    case 'edit_file': return 'правка в ' + p + ` («${(op.args.old_string || '').slice(0, 40)}…»)`;
-    case 'append_file': return 'дописать в ' + p;
-    case 'insert_lines': return 'вставить строки в ' + p;
-    case 'replace_lines': return 'заменить строки ' + p;
-    case 'make_dir': return 'создать папку ' + p;
-    case 'delete_path': return 'удалить ' + p;
-    case 'copy_file': return 'копировать ' + (op.args.from || '') + ' → ' + (op.args.to || '');
-    case 'move_file': return 'переместить ' + (op.args.from || '') + ' → ' + (op.args.to || '');
-    default: return op.name + ' ' + p;
-  }
-}
+
 
 // ------------------------- boot -------------------------
 (async function boot() {

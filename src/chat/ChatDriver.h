@@ -109,6 +109,9 @@ private:
   int mBaseline = -1;
   long long mSentAtMs = 0;
   long long mSettleSinceMs = 0;
+  // Когда последний раз жали «Продолжить» — общий таймаут ответа считаем от неё,
+  // иначе длинный ответ через 2+ продолжения упрётся в 6 минут от отправки.
+  long long mLastContinueMs = 0;
   long long mLastBrowserTryMs = 0;
   long long mLastPollMs = 0;
   int mPort = 0;         // порт CDP, выбранный при запуске (0 = ещё не нашли)
