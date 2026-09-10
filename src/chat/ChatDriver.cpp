@@ -189,6 +189,11 @@ bool ChatDriver::TakeReply(ParsedOps& out) {
   if (!mReplyPending) return false;
   out = mPendingReply;
   mReplyPending = false;
+  // ВАЖНО: фазу обязательно возвращаем в Idle — иначе после первого ответа
+  // приложение навсегда «ещё жду предыдущее» (блокировка всех отправок).
+  if (mPhase == Phase::Ready || mPhase == Phase::TimedOut) mPhase = Phase::Idle;
+  mStatus.stage = "online";
+  mStatus.stageText = "чат готов";
   return true;
 }
 

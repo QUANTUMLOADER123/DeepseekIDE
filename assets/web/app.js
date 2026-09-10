@@ -348,8 +348,15 @@ async function pollReply() {
   if (pending) return;
   const r = await api('/api/chat/reply');
   if (!r.ready) return;
-  pending = r;
   addFeedText('agent', 'deepseek', r.text || '(пусто)');
+  // Если операций нет — применять нечего: панель «Применить» не показываем,
+  // ничего не спрашиваем. Ошибки парсера всё равно вываливаем в ленту.
+  if (!r.ops || !r.ops.length) {
+    pending = null;
+    (r.errs || []).forEach((e) => sysMsg('парсер: ' + e));
+    return;
+  }
+  pending = r;
   showPending(r);
 }
 
