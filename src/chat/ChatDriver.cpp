@@ -7,6 +7,7 @@
 #include "app/Platform.h"
 #include "cdp/CdpClient.h"
 #include "net/HttpClient.h"
+#include "util/Utf8.h"
 
 namespace {
 
@@ -29,7 +30,13 @@ const char* kStateJs = R"JS(
     var blocks=document.querySelectorAll('div.ds-markdown');
     var n=blocks.length;
     var last=n?(blocks[n-1].innerText||''):'';
-    if(last.length>60000)last=last.substring(last.length-60000);
+    if(last.length>60000){
+      // Срез UTF-16 может попасть посреди суррогатной пары (эмодзи) —
+      // lone surrogate ломает JSON-декодер на нашей стороне. Отступаем.
+      last=last.substring(last.length-60000);
+      var c0=last.charCodeAt(0);
+      if(c0>=0xDC00&&c0<=0xDFFF)last=last.substring(1);
+    }
     var now=Date.now();
     // Кнопка «Продолжить»: DeepSeek обрезал ответ лимитом. Докликиваем сами
     // и ФОРСИМ busy — иначе тишина после обрезка засчитается как конец ответа.
@@ -50,7 +57,9 @@ const char* kStateJs = R"JS(
 })()
 )JS";
 
-std::string JsVar(const std::string& s) { return nlohmann::json(s).dump(); }
+// Экранирование строки как JS-литерала. DumpJson (error_handler replace)
+// nikогда не кидает type_error.316 даже на битом UTF-8 — подменит U+FFFD.
+std::string JsVar(const std::string& s) { return utf8::DumpJson(nlohmann::json(s)); }
 
 std::string SendJs(const std::string& text) {
   return std::string(
@@ -230,6 +239,9 @@ std::string ChatDriver::BuildPrompt(const std::string& task) {
     ToolRunResult r = mCfg.tools->Execute("list_files", {{"max_entries", 350}});
     if (!r.output.empty()) tree = r.output;
   }
+  // Дерево собиралось из имён файлов ОС (на Windows возможны битые UTF-8) —
+  // чистим до того, как строка уедет в JsVar/CDP.
+  tree = utf8::Sanitize(tree);
 
   std::ostringstream p;
   p << "Вы — агент программирования, встроенный в IDE DeepSeekIDE на моём компьютере. "
@@ -485,7 +497,7 @@ bool ChatDriver::DoSendNow(const Queued& q, std::string& err) {
   mBaseline = -1;  // узнаем на первом удачном опросе после отправки
   TouchStatus([](Status& s){ s.stage = "busy"; s.stageText = "отправлено, жду ответ…"; });
   mCfg.log("agent", std::string(q.isTask ? "Задача: " : "Заметка: ") +
-                        (q.text.size() > 200 ? q.text.substr(0, 200) + "…" : q.text));
+                        (q.text.size() > 200 ? utf8::Truncate(q.text, 200) + "…" : q.text));
   mLastUserText = q.text;
   return true;
 }

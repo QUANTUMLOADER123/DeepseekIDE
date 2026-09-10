@@ -1,5 +1,7 @@
 #include "ai/ToolRegistry.h"
 
+#include "util/Utf8.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -186,7 +188,7 @@ std::string ToolRegistry::Describe(const std::string& name, const nlohmann::json
     std::string v;
     if (args.is_object() && args.contains(k) && args[k].is_string())
       v = args[k].get<std::string>();
-    if (v.size() > 48) v = v.substr(0, 45) + "...";
+    if (v.size() > 48) v = utf8::Truncate(v, 45) + "...";
     return v;
   };
   if (name == "run_command") return name + " · " + a("command");

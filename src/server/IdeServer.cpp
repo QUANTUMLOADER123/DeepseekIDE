@@ -9,6 +9,7 @@
 #include "ai/ToolRegistry.h"
 #include "app/Platform.h"
 #include "cpp-httplib/httplib.h"
+#include "util/Utf8.h"
 
 namespace {
 
@@ -67,15 +68,18 @@ void IdeServer::RecordSession(const std::string& task, const ParsedOps& parsed) 
   for (const auto& op : parsed.ops)
     ops.push_back({{"name", op.value("name", "")},
                    {"args", op.value("args", nlohmann::json::object())}});
-  std::string title = task.size() > 60 ? task.substr(0, 60) + "…" : task;
+  // Заголовок: срез строго по границе символа — substr по байтам посреди
+  // кириллицы давал битый UTF-8, и sessions.json потом не сериализовался.
+  const std::string safeTask = utf8::Sanitize(task);
+  std::string title = safeTask.size() > 60 ? utf8::Truncate(safeTask, 60) + "…" : safeTask;
   if (title.empty()) title = "(без текста)";
   std::lock_guard<std::mutex> lk(mSesMtx);
   mSessions.push_back({{"id", "s" + std::to_string(++mSessionSeq) + "-" +
                                   std::to_string(NowMs())},
                        {"at", NowMs()},
                        {"title", title},
-                       {"task", task},
-                       {"replyText", parsed.text},
+                       {"task", safeTask},
+                       {"replyText", utf8::Sanitize(parsed.text)},
                        {"ops", ops},
                        {"errs", parsed.errors},
                        {"applied", nlohmann::json::array()}});
@@ -88,7 +92,7 @@ void IdeServer::SaveSessionsLocked() {
   if (mSessionsPath.empty()) return;
   nlohmann::json j = {{"sessions", mSessions}};
   std::string err;
-  platform::WriteTextFile(mSessionsPath, j.dump(1), &err);
+  platform::WriteTextFile(mSessionsPath, utf8::DumpJson(j, 1), &err);
 }
 
 void IdeServer::Log(const std::string& level, const std::string& msg) {
@@ -208,11 +212,11 @@ bool IdeServer::Start(const Cfg& cfg, int port, std::string& errOut) {
     }
     try {
       nlohmann::json out = fn(body);
-      res.set_content(out.dump(), "application/json; charset=utf-8");
+      res.set_content(utf8::DumpJson(out), "application/json; charset=utf-8");
     } catch (const std::exception& e) {
       res.status = 500;
       nlohmann::json err = {{"error", e.what()}};
-      res.set_content(err.dump(), "application/json");
+      res.set_content(utf8::DumpJson(err), "application/json");
     }
   };
 
@@ -257,7 +261,7 @@ bool IdeServer::Start(const Cfg& cfg, int port, std::string& errOut) {
       std::string text;
       if (!platform::ReadTextFile(abs, text, 2 * 1024 * 1024))
         return nlohmann::json{{"error", "не читается (бинарный?)"}};
-      return nlohmann::json{{"path", path}, {"content", text}};
+      return nlohmann::json{{"path", path}, {"content", utf8::Sanitize(text)}};
     });
   });
 
@@ -368,8 +372,10 @@ bool IdeServer::Start(const Cfg& cfg, int port, std::string& errOut) {
         ToolRunResult r = mCfg.tools->Execute(name, args);
         report << (r.ok ? "✓ " : "✗ ") << ToolRegistry::Describe(name, args);
         if (!r.ok) {
-          std::string o = r.output;
-          if (o.size() > 160) o = o.substr(0, 157) + "…";
+          // Вывод консоли (на Windows нередко CP866 и битый UTF-8) + срез
+          // строго по границе символа.
+          std::string o = utf8::Sanitize(r.output);
+          if (o.size() > 160) o = utf8::Truncate(o, 157) + "…";
           report << " — " << o;
         }
         report << "\n";

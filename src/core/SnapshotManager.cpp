@@ -1,5 +1,7 @@
 #include "core/SnapshotManager.h"
 
+#include "util/Utf8.h"
+
 #include <algorithm>
 #include <cstdio>
 #include <nlohmann/json.hpp>
@@ -56,7 +58,7 @@ void SnapshotManager::Commit() {
   j["files"] = nlohmann::json::array();
   for (const auto& f : mCurrent.files)
     j["files"].push_back({{"path", f.path}, {"existed", f.existed}});
-  platform::WriteTextFile(dir / "meta.json", j.dump(2));
+  platform::WriteTextFile(dir / "meta.json", utf8::DumpJson(j, 2));
 }
 
 void SnapshotManager::Abandon() {

@@ -1,5 +1,7 @@
 #include "cdp/CdpClient.h"
 
+#include "util/Utf8.h"
+
 bool CdpClient::Connect(const std::string& wsUrl, std::string& err, int timeoutMs,
                         bool probePage) {
   if (!mWs.Connect(wsUrl, err, timeoutMs)) return false;
@@ -20,7 +22,7 @@ bool CdpClient::SendCmd(const std::string& method, const nlohmann::json& params,
   const int id = mNextId++;
   nlohmann::json req = {{"id", id}, {"method", method}, {"params", params}};
   if (!mSession.empty()) req["sessionId"] = mSession;
-  if (!mWs.SendText(req.dump())) {
+  if (!mWs.SendText(utf8::DumpJson(req))) {
     err = "WebSocket разорван (отправка)";
     return false;
   }
@@ -69,15 +71,17 @@ bool CdpClient::Evaluate(const std::string& expr, std::string& valueOut, std::st
     const auto& inner = resp["result"];
     if (inner.contains("value")) {
       const auto& v = inner["value"];
-      if (v.is_string()) valueOut = v.get<std::string>();
-      else valueOut = v.dump();
+      // Санитизация: строка со страницы дальше уедет в JSON/файлы —
+      // гарантируем валидный UTF-8 независимо от того, что вернул Chrome.
+      if (v.is_string()) valueOut = utf8::Sanitize(v.get<std::string>());
+      else valueOut = utf8::DumpJson(v);
       return true;
     }
     if (inner.value("type", std::string{}) == "undefined") {
       valueOut.clear();
       return true;
     }
-    valueOut = inner.dump();
+    valueOut = utf8::DumpJson(inner);
     return true;
   }
   valueOut.clear();

@@ -1,5 +1,7 @@
 #include "core/Settings.h"
 
+#include "util/Utf8.h"
+
 #include <nlohmann/json.hpp>
 
 #include "app/Platform.h"
@@ -52,5 +54,5 @@ bool Settings::Save() const {
   j["show_whitespace"] = showWhitespace;
   j["chat_split"]       = chatSplit;
   j["last_project"]   = lastProject;
-  return platform::WriteTextFile(SettingsPath(), j.dump(2));
+  return platform::WriteTextFile(SettingsPath(), utf8::DumpJson(j, 2));
 }

@@ -12,6 +12,7 @@
 
 #include "ai/OpsParser.h"
 #include "ai/ToolRegistry.h"
+#include "util/Utf8.h"
 #include "app/Platform.h"
 #include "core/ProjectManager.h"
 #include "core/SnapshotManager.h"
@@ -259,6 +260,87 @@ static void TestOpsParser() {
   CHECK(p4.ops.empty(), "read_file не входит в мутации");
 }
 
+
+// 7) UTF-8 безопасность: санитизация, обрезка по границе символа, неубиваемый dump
+static void TestUtf8Safety() {
+  std::printf("[7] UTF-8: sanitize/truncate/dump\n");
+
+  // Валидные строки не трогаем
+  const std::string good = "Привет, мир — DeepSeekIDE 🎉";
+  CHECK(utf8::Valid(good), "кириллица+эмодзи — валидный UTF-8");
+  CHECK(utf8::Sanitize(good) == good, "валидная строка проходит без изменений");
+
+  // Байт 0xE2 без продолжения (как у пользователя в логе) удаляется
+  {
+    std::string bad = "Нормальный текст";
+    bad.push_back('\xE2');  // обрыв 3-байтной последовательности
+    bad += " хвост";
+    CHECK(!utf8::Valid(bad), "обрыв E2 — невалиден");
+    const std::string fixed = utf8::Sanitize(bad);
+    CHECK(utf8::Valid(fixed), "после Sanitize — валиден");
+    CHECK(fixed == "Нормальный текст хвост", "убран только битый байт");
+  }
+
+  // Сиротные continuation-байты и обрывы эмодзи
+  {
+    std::string bad;
+    bad.push_back('\xF0'); bad.push_back('\x9F');  // половина 🎉
+    bad += "ok";
+    const std::string fixed = utf8::Sanitize(bad);
+    CHECK(fixed == "ok" && utf8::Valid(fixed), "полуэмодзи вычищен");
+  }
+
+  // Overlong и суррогаты бракуем
+  {
+    std::string overlong;
+    overlong.push_back('\xC0'); overlong.push_back('\x80');  // '.' в overlong
+    CHECK(!utf8::Valid(overlong), "overlong C0 80 — невалиден");
+    std::string surr;
+    surr.push_back('\xED'); surr.push_back('\xA0'); surr.push_back('\x80');  // U+D800
+    CHECK(!utf8::Valid(surr), "закодированный суррогат — невалиден");
+  }
+
+  // Обрезка: 60-байтовый срез кириллической задачи не рвёт символ
+  {
+    const std::string task = "СОздай тут какой то дефолтный сайт (Тест)";  // 74 байта
+    const std::string t = utf8::Truncate(task, 60);
+    CHECK(t.size() <= 60 && utf8::Valid(t), "срез на границе символа");
+    const std::string title = t + "…";
+    CHECK(utf8::Valid(title), "заголовок с многоточием валиден");
+  }
+
+  // Обрезка короче строки, где байт maxBytes — lead-многобайтового
+  {
+    const std::string s = "абвгде";  // 12 байт
+    const std::string t = utf8::Truncate(s, 5);  // режем посреди 3-й буквы 'в'
+    CHECK(t == "аб" && utf8::Valid(t), "недособранный символ отброшен");
+  }
+
+  // Неубиваемый dump: битый UTF-8 внутри JSON не должен ронять dump()
+  {
+    nlohmann::json j;
+    std::string bad = "abc";
+    bad.push_back('\xE2');  // как в type_error.316 у пользователя
+    bad += "def";
+    j["text"] = bad;
+    std::string out;
+    bool threw = false;
+    try {
+      out = utf8::DumpJson(j, 1);
+    } catch (const std::exception& e) {
+      threw = true;
+      std::printf("  [FAIL] DumpJson кинул: %s\n", e.what());
+    }
+    CHECK(!threw, "DumpJson не бросает на битом UTF-8");
+    CHECK(out.find("\\uFFFD") != std::string::npos || out.find("�") != std::string::npos,
+          "битый байт заменён на U+FFFD, а не крах");
+    // строгий dump на той же строке обязан бросить — значит, регрессия реальна
+    bool strictThrew = false;
+    try { (void)j.dump(); } catch (const std::exception&) { strictThrew = true; }
+    CHECK(strictThrew, "контроль: обычный dump() на таких данных действительно падает");
+  }
+}
+
 // 6) Сеть (не падаем без сети или при rate-limit — просто SKIP)
 static void TestNetwork() {
   std::printf("[6] HTTPS через наш HttpClient\n");
@@ -288,6 +370,7 @@ int main() {
   TestToolsLive(root);
   TestNewToolOps(root);
   TestOpsParser();
+  TestUtf8Safety();
   TestNetwork();
 
   std::error_code ec;

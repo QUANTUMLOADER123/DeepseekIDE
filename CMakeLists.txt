@@ -40,6 +40,7 @@ set(SOURCES
   src/ai/OpsParser.cpp
   src/ai/ToolRegistry.cpp
   src/net/HttpClient.cpp
+  src/util/Utf8.cpp
   src/app/Platform.cpp)
 
 add_executable(deepseekide
