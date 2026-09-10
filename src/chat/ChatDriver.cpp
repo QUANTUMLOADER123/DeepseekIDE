@@ -710,6 +710,20 @@ void ChatDriver::ThreadBody() {
       } else {
         mCfg.log("chat", "NewChat: " + e);
       }
+      // Семантика «Новый чат» — бросить текущий диалог: ждать ответа и держать
+      // старые накопители больше нечего. Иначе при settle в сессию падал бы
+      // текст из УЖЕ закрытого разговора.
+      {
+        std::lock_guard<std::mutex> lk(mMtx);
+        mPhase = Phase::Idle;
+        mQueue.clear();
+        mBaseline = -1;
+        mReplyFull.clear();
+        mLastFileReqSig.clear();
+        mReplyPending = false;
+        mPendingReply = ParsedOps{};
+        mStatus.stageText = "новый чат — готов";
+      }
       std::this_thread::sleep_for(std::chrono::milliseconds(300));
       return;
     }
@@ -741,12 +755,21 @@ void ChatDriver::ThreadBody() {
       nlohmann::json st;
       std::string err;
       if (!PollState(st, err)) {
-        mCfg.log("chat", "poll: " + err);
         std::lock_guard<std::mutex> lk(mMtx);
-        if (mCdp) mCdp->Close();
+        // Одиночный кашель evaluate (страница тормозит на отрисовке, жёсткий
+        // GC и т.п.) — НЕ повод рвать CDP и гонять полный ре-аттач. Рвём
+        // только после 3 подряд идущих провалов — это уже реальный обрыв.
+        if (++mPollFails >= 3) {
+          mPollFails = 0;
+          mCfg.log("chat", "poll: " + err + " (3 подряд — разрыв и переподключение)");
+          if (mCdp) mCdp->Close();
+        } else {
+          mCfg.log("chat", "poll: " + err + " (попытка " + std::to_string(mPollFails) + "/3)");
+        }
         return;
       }
       std::lock_guard<std::mutex> lk(mMtx);
+      mPollFails = 0;
       mStatus.chatPresent = st.value("p", 0) != 0;
       mStatus.busy = st.value("b", 0) != 0;
       const int n = st.value("n", 0);
@@ -760,14 +783,14 @@ void ChatDriver::ThreadBody() {
           n > mBaseline) {
         stitch::AppendWindow(mReplyFull, winT);
       }
-      if (st.value("c", 0) != 0) {
+      const bool contClicked = st.value("c", 0) != 0;
+      if (contClicked) {
         // На странице видна кнопка «Продолжить» — скрипт её только что нажал.
         // Ответ ещё пишется: сдвигаем дедлайн тишины.
         mLastContinueMs = nowL;
         if (mPhase == Phase::Sending || mPhase == Phase::WaitingSettle) {
           mPhase = Phase::WaitingSettle;
           mSettleSinceMs = 0;
-          mStatus.stageText = "ответ обрезан лимитом — продолжаю генерацию…";
         }
       }
 
@@ -865,6 +888,15 @@ void ChatDriver::ThreadBody() {
             mError = "чат не ответил за 6 минут — ожидание снято.";
           }
           break;
+      }
+
+      // Живой прогресс генерации (settle выше уже вышел по return со своим текстом).
+      if (mPhase == Phase::WaitingSettle) {
+        mStatus.stageText =
+            std::string(contClicked ? "ответ обрезан лимитом — продолжаю генерацию… ("
+                                    : "пишу ответ… (") +
+            std::to_string(mReplyFull.size()) + " символов" +
+            (mReplyFull.size() > 60000 ? ", окно склеено)" : ")");
       }
     }
 
