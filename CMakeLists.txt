@@ -41,6 +41,7 @@ set(SOURCES
   src/ai/ToolRegistry.cpp
   src/net/HttpClient.cpp
   src/util/Utf8.cpp
+  src/util/TextStitch.cpp
   src/app/Platform.cpp)
 
 add_executable(deepseekide

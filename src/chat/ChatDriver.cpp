@@ -7,6 +7,7 @@
 #include "app/Platform.h"
 #include "cdp/CdpClient.h"
 #include "net/HttpClient.h"
+#include "util/TextStitch.h"
 #include "util/Utf8.h"
 
 namespace {
@@ -495,6 +496,7 @@ bool ChatDriver::DoSendNow(const Queued& q, std::string& err) {
   mSettleSinceMs = 0;
   mLastContinueMs = 0;
   mBaseline = -1;  // узнаем на первом удачном опросе после отправки
+  mReplyFull.clear();
   TouchStatus([](Status& s){ s.stage = "busy"; s.stageText = "отправлено, жду ответ…"; });
   mCfg.log("agent", std::string(q.isTask ? "Задача: " : "Заметка: ") +
                         (q.text.size() > 200 ? utf8::Truncate(q.text, 200) + "…" : q.text));
@@ -748,6 +750,15 @@ void ChatDriver::ThreadBody() {
       mStatus.busy = st.value("b", 0) != 0;
       const int n = st.value("n", 0);
       const long long nowL = NowMs();
+      // Окно ответа длиной ~60000 символов доклеиваем к полному тексту.
+      // ВАЖНО: только когда появился НОВЫЙ markdown-блок (n > mBaseline),
+      // иначе склеили бы хвост ответа из ПРЕДЫДУЩЕГО диалога и ExtractOps
+      // вытащил бы чужие ops. Пока блока нет — окно игнорируем.
+      const std::string winT = st.value("t", std::string{});
+      if ((mPhase == Phase::WaitingSettle || mPhase == Phase::Sending) && mBaseline >= 0 &&
+          n > mBaseline) {
+        stitch::AppendWindow(mReplyFull, winT);
+      }
       if (st.value("c", 0) != 0) {
         // На странице видна кнопка «Продолжить» — скрипт её только что нажал.
         // Ответ ещё пишется: сдвигаем дедлайн тишины.
@@ -789,9 +800,12 @@ void ChatDriver::ThreadBody() {
             mSettleSinceMs = nowL;
           }
           if (mSettleSinceMs != 0 && nowL - mSettleSinceMs > 1800) {
-            // Тишина после генерации — ответ готов
+            // Тишина после генерации — ответ готов.
+            // Берём ПОЛНЫЙ склеенный текст: при длинных ответах с авто-«Продолжить»
+            // окно t хранит лишь последние ~60000 символов, и ops-блоки из начала
+            // без склейки терялись навсегда.
             ParsedOps parsed;
-            std::string raw = st.value("t", std::string{});
+            const std::string& raw = !mReplyFull.empty() ? mReplyFull : winT;
             dside::ExtractOps(raw, dside::MutationOps(), parsed);
             {
               mPendingReply = std::move(parsed);

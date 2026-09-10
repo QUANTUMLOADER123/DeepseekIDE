@@ -118,6 +118,11 @@ private:
   std::string mBrowserExe;
   std::string mUrl;
 
+  // Полный текст текущего ответа. JS-скрипт состояния отдаёт только окно
+  // последних ~60000 символов — с авто-«Продолжить» ответ бывает длиннее,
+  // и начало (с блоками deepseekide-ops!) без склейки терялось бы навсегда.
+  std::string mReplyFull;
+
   ParsedOps mPendingReply;
   bool mReplyPending = false;
 };

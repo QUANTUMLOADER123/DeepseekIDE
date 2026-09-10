@@ -12,6 +12,7 @@
 
 #include "ai/OpsParser.h"
 #include "ai/ToolRegistry.h"
+#include "util/TextStitch.h"
 #include "util/Utf8.h"
 #include "app/Platform.h"
 #include "core/ProjectManager.h"
@@ -341,6 +342,60 @@ static void TestUtf8Safety() {
   }
 }
 
+
+// 8) Склейка окон ответа: JS отдаёт только последний кусок, накопитель полнотекста
+static void TestTextStitch() {
+  std::printf("[8] Склейка окон ответа\n");
+
+  // Потоковый рост: два окна с перекрытием
+  {
+    std::string full;
+    stitch::AppendWindow(full, "Начало ответа, пишем дальше…");
+    stitch::AppendWindow(full, "пишем дальше… ещё кусок");
+    CHECK(full == "Начало ответа, пишем дальше… ещё кусок",
+          "перекрывающиеся окна склеены без дубля");
+  }
+
+  // Полное перекрытие (то же окно повторно) — не растём
+  {
+    std::string full = "одно и то же";
+    stitch::AppendWindow(full, "одно и то же");
+    CHECK(full == "одно и то же", "повтор окна не дублируется");
+  }
+
+  // Длинная генерация, посчитанная кусками по модулю окна 60000
+  {
+    std::string big;
+    for (int i = 0; i < 200000; ++i) big.push_back(char('a' + ((unsigned)(i * 2654435761u) >> 24) % 26));
+    const size_t win = 60000;
+    std::string full;
+    for (size_t shown = 1000; shown <= big.size(); shown += 1000) {
+      const size_t start = shown > win ? shown - win : 0;
+      stitch::AppendWindow(full, big.substr(start, shown - start));
+    }
+    CHECK(full == big, "200К-символьный ответ собран без потерь");
+  }
+
+  // Разрыв окна (между опросами прилетело больше, чем размер окна):
+  // кусок дописывается целиком с маркером — текст начала НЕ затирается
+  {
+    std::string full = "ранний…текст";
+    stitch::AppendWindow(full, "СОВСЕМ другой фрагмент");
+    CHECK(full.find("ранний") != std::string::npos &&
+              full.find("СОВСЕМ другой фрагмент") != std::string::npos,
+          "окно без перекрытия дописано, а не подменило накопитель");
+  }
+
+  // Перекрытие по UTF-8 не портит строки
+  {
+    std::string full;
+    stitch::AppendWindow(full, "Ура 🎉 сайт");
+    stitch::AppendWindow(full, "сайт готов ✅");
+    CHECK(utf8::Valid(full) && full.find("🎉") != std::string::npos,
+          "многобайтовые на стыке не ломаются");
+  }
+}
+
 // 6) Сеть (не падаем без сети или при rate-limit — просто SKIP)
 static void TestNetwork() {
   std::printf("[6] HTTPS через наш HttpClient\n");
@@ -371,6 +426,7 @@ int main() {
   TestNewToolOps(root);
   TestOpsParser();
   TestUtf8Safety();
+  TestTextStitch();
   TestNetwork();
 
   std::error_code ec;
