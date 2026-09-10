@@ -40,11 +40,6 @@ if defined VSV (
   echo %VSV% | findstr /b "16." >nul && set "GEN=Visual Studio 16 2019"
 )
 
-rem vswhere knows VS up to some version - also ask cmake itself to pick
-rem the newest installed Visual Studio (works for VS 2026+ too)
-if not defined GEN (
-  cmake -S . -B build -A x64 --check-generator 2>nul
-)
 if not defined GEN (
   where cl >nul 2>nul
   if not errorlevel 1 set "GEN=NMake Makefiles" && set "NMAKE=1"
