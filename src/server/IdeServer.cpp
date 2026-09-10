@@ -62,6 +62,35 @@ IdeServer::IdeServer() = default;
 
 IdeServer::~IdeServer() { Stop(); }
 
+void IdeServer::RecordSession(const std::string& task, const ParsedOps& parsed) {
+  nlohmann::json ops = nlohmann::json::array();
+  for (const auto& op : parsed.ops)
+    ops.push_back({{"name", op.value("name", "")},
+                   {"args", op.value("args", nlohmann::json::object())}});
+  std::string title = task.size() > 60 ? task.substr(0, 60) + "…" : task;
+  if (title.empty()) title = "(без текста)";
+  std::lock_guard<std::mutex> lk(mSesMtx);
+  mSessions.push_back({{"id", "s" + std::to_string(++mSessionSeq) + "-" +
+                                  std::to_string(NowMs())},
+                       {"at", NowMs()},
+                       {"title", title},
+                       {"task", task},
+                       {"replyText", parsed.text},
+                       {"ops", ops},
+                       {"errs", parsed.errors},
+                       {"applied", nlohmann::json::array()}});
+  while (mSessions.size() > 100) mSessions.erase(mSessions.begin());
+  SaveSessionsLocked();
+  Log("agent", "Сессия сохранена: " + title);
+}
+
+void IdeServer::SaveSessionsLocked() {
+  if (mSessionsPath.empty()) return;
+  nlohmann::json j = {{"sessions", mSessions}};
+  std::string err;
+  platform::WriteTextFile(mSessionsPath, j.dump(1), &err);
+}
+
 void IdeServer::Log(const std::string& level, const std::string& msg) {
   std::lock_guard<std::mutex> lk(mLogMtx);
   mLog.push_back(LogEntry{NowMs(), level, msg});
@@ -91,6 +120,20 @@ bool IdeServer::Start(const Cfg& cfg, int port, std::string& errOut) {
   mPort = port;
   mImpl = std::make_unique<Impl>();
   auto& srv = mImpl->srv;
+
+  // сессии диалогов
+  mSessionsPath = platform::ConfigDir() / "sessions.json";
+  {
+    std::string text;
+    if (platform::ReadTextFile(mSessionsPath, text)) {
+      auto j = nlohmann::json::parse(text, nullptr, false);
+      if (j.is_object() && j["sessions"].is_array()) {
+        std::lock_guard<std::mutex> lk(mSesMtx);
+        mSessions = j["sessions"].get<std::vector<nlohmann::json>>();
+        mSessionSeq = static_cast<int>(mSessions.size());
+      }
+    }
+  }
 
   Log("info", "DeepSeekIDE сервер: порт " + std::to_string(port));
 
@@ -139,7 +182,7 @@ bool IdeServer::Start(const Cfg& cfg, int port, std::string& errOut) {
     // Маленький синий ромб (svg)
     res.set_content(
         "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>"
-        "<path d='M16 2 L30 16 L16 30 L2 16 Z' fill='#4D6BFE'/></svg>",
+        "<path d='M16 2 L30 16 L16 30 L2 16 Z' fill='#8FCBEE'/></svg>",
         "image/svg+xml");
   });
 
@@ -338,6 +381,57 @@ bool IdeServer::Start(const Cfg& cfg, int port, std::string& errOut) {
       mCfg.project->MarkDirty();
       return nlohmann::json{{"ok", true}, {"report", report.str()}, {"done", okCount},
                             {"total", arr.size()}};
+    });
+  });
+
+  srv.Get("/api/chat/debug", [this, api](const httplib::Request& req, httplib::Response& res) {
+    api(req, res, [this](const nlohmann::json&) {
+      return nlohmann::json{{"ok", true}, {"info", mCfg.chat->DebugInfo()}};
+    });
+  });
+
+  srv.Post("/api/chat/newtab", [this, api](const httplib::Request& req, httplib::Response& res) {
+    api(req, res, [this](const nlohmann::json&) {
+      std::string err = mCfg.chat->OpenChatTab();
+      if (!err.empty()) Log("warn", "newtab: " + err);
+      return nlohmann::json{{"ok", err.empty()}, {"error", err}};
+    });
+  });
+
+  srv.Get("/api/sessions", [this, api](const httplib::Request& req, httplib::Response& res) {
+    api(req, res, [this](const nlohmann::json&) {
+      std::lock_guard<std::mutex> lk(mSesMtx);
+      nlohmann::json arr = nlohmann::json::array();
+      for (const auto& s : mSessions)
+        arr.push_back({{"id", s.value("id", "")}, {"at", s.value("at", 0LL)},
+                       {"title", s.value("title", "")},
+                       {"opsCount", s.value("ops", nlohmann::json::array()).size()}});
+      return nlohmann::json{{"sessions", arr}};
+    });
+  });
+
+  srv.Get("/api/session", [this, api](const httplib::Request& req, httplib::Response& res) {
+    const std::string id = req.get_param_value("id");
+    api(req, res, [this, id](const nlohmann::json&) {
+      std::lock_guard<std::mutex> lk(mSesMtx);
+      for (const auto& s : mSessions)
+        if (s.value("id", "") == id) return s;
+      return nlohmann::json{{"error", "сессия не найдена"}};
+    });
+  });
+
+  srv.Post("/api/session/delete", [this, api](const httplib::Request& req, httplib::Response& res) {
+    api(req, res, [this](const nlohmann::json& body) {
+      std::string id = body.value("id", "");
+      std::lock_guard<std::mutex> lk(mSesMtx);
+      for (auto it = mSessions.begin(); it != mSessions.end(); ++it) {
+        if (it->value("id", "") == id) {
+          mSessions.erase(it);
+          SaveSessionsLocked();
+          return nlohmann::json{{"ok", true}};
+        }
+      }
+      return nlohmann::json{{"error", "не найдена"}};
     });
   });
 

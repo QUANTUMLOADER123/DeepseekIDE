@@ -25,6 +25,9 @@ public:
     ToolRegistry* tools = nullptr;
     std::function<void(const std::string& level, const std::string& msg)> log;
     std::string url = "https://chat.deepseek.com/";
+    // Когда пришёл готовый ответ: (текст задачи, разобранный ответ).
+    // Вызывается из потока драйвера БЕЗ удержания мьютекса драйвера.
+    std::function<void(const std::string& task, const ParsedOps& parsed)> onSession;
   };
 
   struct Status {
@@ -50,6 +53,13 @@ public:
   // Кнопка «Подключить чат»: форсировать поиск/запуск браузера и аттач.
   // Возвращает "" при успехе или текст ошибки.
   std::string ConnectNow();
+
+  // Кнопка «Открыть вкладку чата» (если вкладку закрыли / не создалась).
+  // Использует DevTools HTTP: PUT /json/new?<url>.
+  std::string OpenChatTab();
+
+  // Диагностика: браузер/порт/список вкладок — показывает в UI «Диагностика».
+  std::string DebugInfo();
 
   // Сообщить задачу (с промптом-обёрткой) или заметку (сырой текст).
   bool SendTask(const std::string& task, std::string& errorOut);
@@ -82,6 +92,7 @@ private:
 
   Cfg mCfg;
   std::unique_ptr<CdpClient> mCdp;
+  std::string mLastUserText;   // последняя задача/заметка (для сессий)
   mutable std::mutex mMtx;
   Status mStatus;
   std::string mError;

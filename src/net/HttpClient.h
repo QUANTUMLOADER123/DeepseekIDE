@@ -24,6 +24,10 @@ public:
   static HttpResponse Get(const std::string& url, const std::vector<std::string>& headers,
                           long timeoutSec = 30);
 
+  // PUT с пустым телом (нужен DevTools /json/new — Chrome 111+ принимает только PUT).
+  static HttpResponse Put(const std::string& url, const std::vector<std::string>& headers,
+                          long timeoutSec = 30);
+
   static void GlobalInit();  // curl_global_init, вызывается один раз из main
 };
 }  // namespace net

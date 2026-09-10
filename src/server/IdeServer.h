@@ -47,6 +47,9 @@ public:
   // Внешнее изменение файла (перечитать в редакторе): publish в /api/events.
   void NotifyFileChanged(const std::string& rel);
 
+  // Фиксация диалога (задача → ответ): вызывается ChatDriver при готовом ответе.
+  void RecordSession(const std::string& task, const ParsedOps& parsed);
+
 private:
   struct Impl;
   std::string ServeFile(const std::string& rel, std::string& contentTypeOut, bool& okOut) const;
@@ -69,4 +72,10 @@ private:
   mutable std::mutex mEvMtx;
   std::deque<nlohmann::json> mEvents;  // fileChanged и т.п.
   int mEvSeq = 0;
+
+  mutable std::mutex mSesMtx;
+  std::vector<nlohmann::json> mSessions;
+  std::filesystem::path mSessionsPath;
+  int mSessionSeq = 0;
+  void SaveSessionsLocked();
 };

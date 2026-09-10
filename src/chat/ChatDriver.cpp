@@ -296,8 +296,9 @@ bool ChatDriver::EnsureBrowserLocked(std::string& err) {
 bool ChatDriver::AttachCdp(std::string& err) {
   TouchStatus([](Status& s){ s.stage = "connecting"; s.stageText = "ищу вкладку chat.deepseek.com…"; });
 
-  // Ищем page-target с нашим URL среди активных
-  for (int attempt = 0; attempt < 20; ++attempt) {
+  // Ищем page-target с нашим URL среди активных (страница может долго грузиться
+  // первым запуском: CDN, cloudflare-проверка, логин — ждём до 30 секунд).
+  for (int attempt = 0; attempt < 60; ++attempt) {
     auto res = net::HttpClient::Get(
         "http://127.0.0.1:" + std::to_string(mPort) + "/json/list", {}, 1);
     if (res.Ok()) {
@@ -306,7 +307,9 @@ bool ChatDriver::AttachCdp(std::string& err) {
         for (const auto& t : arr) {
           const std::string type = t.value("type", std::string{});
           const std::string url = t.value("url", std::string{});
-          if (type == "page" && url.rfind("https://chat.deepseek.com", 0) == 0) {
+          // Гибкий матч: любая page-вкладка домена deepseek.com (м.б. редирект
+          // Cloudflare/auth и т.п.) — её и берём под управление.
+          if (type == "page" && url.find("deepseek.com") != std::string::npos) {
             const std::string ws = t.value("webSocketDebuggerUrl", std::string{});
             if (ws.empty()) break;
             mCdp = std::make_unique<CdpClient>();
@@ -323,7 +326,8 @@ bool ChatDriver::AttachCdp(std::string& err) {
     if (mStop.load()) return false;
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
   }
-  err = "не нашёл вкладку chat.deepseek.com в отладочном браузере";
+  err = "не нашёл вкладку chat.deepseek.com в отладочном браузере. "
+        "Попробуйте кнопку «+ Вкладка» — она откроет её вручную.";
   TouchStatus([&](Status& s){ s.stage = "offline"; s.stageText = "нет вкладки чата"; s.error = err; });
   return false;
 }
@@ -355,7 +359,95 @@ bool ChatDriver::DoSendNow(const Queued& q, std::string& err) {
   TouchStatus([](Status& s){ s.stage = "busy"; s.stageText = "отправлено, жду ответ…"; });
   mCfg.log("agent", std::string(q.isTask ? "Задача: " : "Заметка: ") +
                         (q.text.size() > 200 ? q.text.substr(0, 200) + "…" : q.text));
+  mLastUserText = q.text;
   return true;
+}
+
+
+// Открыть вкладку chat.deepseek.com через DevTools HTTP (PUT /json/new).
+std::string ChatDriver::OpenChatTab() {
+  int port;
+  std::string url;
+  {
+    std::lock_guard<std::mutex> lk(mMtx);
+    port = mPort;
+    url = mUrl;
+  }
+  if (port == 0) {
+    return "отладочный браузер ещё не запущен — сначала «Подключить чат»";
+  }
+  // минимальный urlencode для фиксированного URL
+  auto enc = [](const std::string& s) {
+    std::string o;
+    static const char* hex = "0123456789ABCDEF";
+    for (unsigned char ch : s) {
+      if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
+          ch == '-' || ch == '_' || ch == '.' || ch == '~')
+        o.push_back(static_cast<char>(ch));
+      else {
+        o.push_back('%');
+        o.push_back(hex[(ch >> 4) & 15]);
+        o.push_back(hex[ch & 15]);
+      }
+    }
+    return o;
+  };
+  const std::string base = "http://127.0.0.1:" + std::to_string(port);
+  auto r = net::HttpClient::Put(base + "/json/new?" + enc(url), {}, 5);
+  if (!r.Ok()) {
+    // старые Chrome принимали GET
+    r = net::HttpClient::Get(base + "/json/new?" + enc(url), {}, 5);
+  }
+  if (!r.Ok()) {
+    return "не смог создать вкладку (HTTP " + std::to_string(r.status) + " " + r.error + ")";
+  }
+  mConnectRequested.store(true);
+  mCfg.log("chat", "Вкладка чата создана через /json/new");
+  return "";
+}
+
+std::string ChatDriver::DebugInfo() {
+  std::string browser, url, stage;
+  int port;
+  bool cdp;
+  {
+    std::lock_guard<std::mutex> lk(mMtx);
+    browser = mBrowserExe.empty() ? mStatus.browser : mBrowserExe;
+    url = mUrl;
+    stage = mStatus.stage;
+    port = mPort;
+    cdp = mCdp && mCdp->Connected();
+  }
+  std::ostringstream s;
+  s << "Браузер: " << (browser.empty() ? "(ещё не найден/не запущен)" : browser) << "\n";
+  s << "URL чата: " << url << "\n";
+  s << "Статус: " << stage << "\n";
+  s << "CDP порт: " << (port ? std::to_string(port) : std::string("(не выбран)")) << "\n";
+  s << "WebSocket CDP: " << (cdp ? "подключен" : "нет") << "\n";
+  if (port == 0) {
+    s << "\nПодсказка: нажмите «Подключить чат» — этап подключения сам найдёт браузер и запустит его.\n";
+    return s.str();
+  }
+  s << "\nВкладки браузера (/json/list):\n";
+  auto r = net::HttpClient::Get("http://127.0.0.1:" + std::to_string(port) + "/json/list", {}, 3);
+  if (!r.Ok()) {
+    s << "  [ошибка /json/list: " << r.error << "]\n";
+    return s.str();
+  }
+  auto arr = nlohmann::json::parse(r.body, nullptr, false);
+  int cnt = 0;
+  if (arr.is_array()) {
+    for (const auto& t : arr) {
+      if (t.value("type", std::string{}) != "page") continue;
+      ++cnt;
+      std::string tu = t.value("url", std::string{});
+      std::string tt = t.value("title", std::string{});
+      if (tt.size() > 60) tt = tt.substr(0, 57) + "…";
+      s << "  " << cnt << ". " << tu << "\n     «" << tt << "»\n";
+    }
+  }
+  if (cnt == 0) s << "  (page-вкладок нет)\n";
+  return s.str();
 }
 
 // ---------------------------------------------------------------------------
@@ -511,6 +603,11 @@ void ChatDriver::ThreadBody() {
             {
               mPendingReply = std::move(parsed);
               mReplyPending = true;
+            }
+            if (mCfg.onSession) {
+              std::string task;
+              { task = mLastUserText; }
+              mCfg.onSession(task, mPendingReply);
             }
             mPhase = Phase::Ready;
             mStatus.stage = mStatus.chatPresent ? "online" : "online";

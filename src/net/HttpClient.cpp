@@ -111,4 +111,31 @@ HttpResponse HttpClient::Post(const std::string& url, const std::vector<std::str
   return out;
 }
 
+HttpResponse HttpClient::Put(const std::string& url, const std::vector<std::string>& headers,
+                             long timeoutSec) {
+  HttpResponse out;
+  Url u;
+  if (!SplitUrl(url, u)) {
+    out.error = "битый URL: " + url;
+    return out;
+  }
+#ifndef CPPHTTPLIB_OPENSSL_SUPPORT
+  if (u.https) {
+    out.error = "https требует сборку с OpenSSL: " + url;
+    return out;
+  }
+#endif
+  httplib::Client cli(u.host, u.port);
+  cli.set_connection_timeout(10, 0);
+  cli.set_read_timeout(timeoutSec, 0);
+  auto res = cli.Put(u.path.c_str(), ToHeaders(headers), std::string(), "application/json");
+  if (!res) {
+    out.error = httplib::to_string(res.error());
+    return out;
+  }
+  out.status = res->status;
+  out.body = std::move(res->body);
+  return out;
+}
+
 }  // namespace net

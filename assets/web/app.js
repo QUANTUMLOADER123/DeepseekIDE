@@ -83,28 +83,31 @@ function loadMonaco() {
         },
       };
       require(['vs/editor/editor.main'], () => {
-        monaco.editor.defineTheme('dsDark', {
-          base: 'vs-dark', inherit: true,
+        monaco.editor.defineTheme('dsLight', {
+          base: 'vs', inherit: true,
           rules: [
-            { token: '', foreground: 'd9e1f0', background: '0b0e17' },
-            { token: 'comment', foreground: '5a6588', fontStyle: 'italic' },
-            { token: 'keyword', foreground: '8ea0ff' },
-            { token: 'string', foreground: '8be18a' },
-            { token: 'number', foreground: 'f5b544' },
-            { token: 'type', foreground: '7fd6ff' },
+            { token: '', foreground: '2b4354', background: 'f2f7fb' },
+            { token: 'comment', foreground: '8fa8bc', fontStyle: 'italic' },
+            { token: 'keyword', foreground: '2b87c4', fontStyle: 'bold' },
+            { token: 'string', foreground: '3e9e6e' },
+            { token: 'number', foreground: 'c07f1f' },
+            { token: 'type', foreground: '0f7c9e' },
+            { token: 'function', foreground: '7a5fd1' },
           ],
           colors: {
-            'editor.background': '#0b0e17',
-            'editor.lineHighlightBackground': '#12162b',
-            'editorLineNumber.foreground': '#3c4364',
-            'editorLineNumber.activeForeground': '#9aa5cf',
-            'editor.overviewRulerBorder': '#232740',
-            'editorIndentGuide.background1': '#1a1e37',
+            'editor.background': '#f2f7fb',
+            'editor.lineHighlightBackground': '#eaf2f8',
+            'editorLineNumber.foreground': '#a9c3d6',
+            'editorLineNumber.activeForeground': '#57a9df',
+            'editor.overviewRulerBorder': '#d7e6f0',
+            'editorIndentGuide.background1': '#dbe9f2',
+            'editorCursor.foreground': '#3290c8',
+            'editor.selectionBackground': '#bfe3f7',
           },
         });
-        monaco.editor.setTheme('dsDark');
+        monaco.editor.setTheme('dsLight');
         monacoEditor = monaco.editor.create($('editor'), {
-          value: '', language: 'plaintext', theme: 'dsDark',
+          value: '', language: 'plaintext', theme: 'dsLight',
           fontFamily: '"Cascadia Code", Consolas, "JetBrains Mono", monospace',
           fontSize: 14, fontLigatures: true,
           minimap: { enabled: true, scale: 0.8 },
@@ -454,6 +457,23 @@ async function refreshTreeNow() { await pollState(); }
 
 // ------------------------- кнопки -------------------------
 function bind() {
+  $('tabFiles').onclick = () => setSide('files');
+  $('tabSessions').onclick = () => setSide('sessions');
+  $('btnSessionsRefresh').onclick = pollSessions;
+
+  $('btnNewTab').onclick = async () => {
+    const r = await api('/api/chat/newtab', { method: 'POST', json: {} });
+    if (r.error) sysMsg('+ Вкладка: ' + r.error);
+    else sysMsg('+ Вкладка чата открыта в отладочном браузере');
+    pollState();
+  };
+  $('btnDebug').onclick = async () => {
+    sysMsg('Запрашиваю диагностику…');
+    const r = await api('/api/chat/debug');
+    if (r.error) sysMsg('Диагностика: ' + r.error);
+    else addFeedText('sys', 'диагностика', r.info || '(пусто)');
+  };
+
   $('btnOpenFolder').onclick = async () => {
     const path = prompt('Полный путь к папке проекта:\n(например C:\\Projects\\mygame)', lastProjRoot || '');
     if (!path) return;
@@ -510,6 +530,72 @@ function bind() {
   });
 }
 
+// ------------------------- боковые вкладки (Проводник/Сессии) -------------------------
+function setSide(name) {
+  $('tabFiles').classList.toggle('active', name === 'files');
+  $('tabSessions').classList.toggle('active', name === 'sessions');
+  $('pageFiles').classList.toggle('hidden', name !== 'files');
+  $('pageSessions').classList.toggle('hidden', name !== 'sessions');
+}
+
+// ------------------------- сессии диалогов -------------------------
+let activeSessionId = null;
+async function pollSessions() {
+  const r = await api('/api/sessions');
+  if (!r.sessions) return;
+  const w = $('sessions');
+  if (!r.sessions.length) {
+    if (!activeSessionId)
+      w.innerHTML = '<div class="hint">Пока пусто — они появятся сами, когда агент ответит</div>';
+    return;
+  }
+  w.innerHTML = '';
+  r.sessions.slice().reverse().forEach((s) => {
+    const d = new Date(s.at);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    const div = document.createElement('div');
+    div.className = 'sess';
+    div.innerHTML =
+      '<div class="title">' + esc(s.title) +
+      '  <span class="badge">' + (s.opsCount || 0) + ' оп</span></div>' +
+      '<div class="meta">' + hh + ':' + mm + ' · ' + d.toLocaleDateString('ru-RU') + '</div>';
+    div.onclick = () => openSession(s.id);
+    w.appendChild(div);
+  });
+}
+
+async function openSession(id) {
+  activeSessionId = id;
+  const s = await api('/api/session?id=' + encodeURIComponent(id));
+  if (s.error) { sysMsg('Сессия: ' + s.error); return; }
+  const ops = (s.ops || []).map((o) => ({
+    name: o.name, args: o.args,
+    describe: opDescribeFallback(o),
+  }));
+  pending = { text: s.replyText, ops, errs: s.errs || [] };
+  addFeedText('sys', 'сессия', 'Открыта сессия: «' + (s.title || id) + '» — можно применить операции ещё раз');
+  showPending(pending);
+  setSide('files');
+}
+
+// describe для операций из сессии (сервер them хранит без describe)
+function opDescribeFallback(op) {
+  const p = (op.args && (op.args.path || op.args.to || op.args.from)) || '';
+  switch (op.name) {
+    case 'write_file': return 'записать файл ' + p;
+    case 'edit_file': return 'правка в ' + p + ` («${(op.args.old_string || '').slice(0, 40)}…»)`;
+    case 'append_file': return 'дописать в ' + p;
+    case 'insert_lines': return 'вставить строки в ' + p;
+    case 'replace_lines': return 'заменить строки ' + p;
+    case 'make_dir': return 'создать папку ' + p;
+    case 'delete_path': return 'удалить ' + p;
+    case 'copy_file': return 'копировать ' + (op.args.from || '') + ' → ' + (op.args.to || '');
+    case 'move_file': return 'переместить ' + (op.args.from || '') + ' → ' + (op.args.to || '');
+    default: return op.name + ' ' + p;
+  }
+}
+
 // ------------------------- boot -------------------------
 (async function boot() {
   bind();
@@ -517,6 +603,7 @@ function bind() {
   if (!ok) makeFallback();
   pollState();
   pollSnaps();
+  pollSessions();
   pollLog();
   pollEventsSmart();
   setInterval(pollState, 2000);
@@ -524,5 +611,6 @@ function bind() {
   setInterval(pollLog, 1500);
   setInterval(pollEventsSmart, 2600);
   setInterval(pollSnaps, 12000);
+  setInterval(pollSessions, 5000);
   sysMsg('Добро пожаловать в DeepSeekIDE! Откройте папку проекта слева, затем нажмите «Подключить чат».');
 })();

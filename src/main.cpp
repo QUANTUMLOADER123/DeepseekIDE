@@ -115,6 +115,9 @@ int Run(int argc, char* argv[]) {
     server.Log(level, msg);
     Boot("[" + level + "] " + msg);
   };
+  chatCfg.onSession = [&](const std::string& task, const ParsedOps& parsed) {
+    server.RecordSession(task, parsed);
+  };
   ChatDriver chat(std::move(chatCfg));
 
   // Открыть проект из последней сессии
