@@ -109,12 +109,16 @@ bool WsClient::Connect(const std::string& url, std::string& err, int timeoutMs) 
     err = "socket() failed";
     return false;
   }
+  mSock = s;  // ВАЖНО: SendAll/SendFrame работают через mSock — назначаем СРАЗУ,
+              // иначе handshake улетает на INVALID_SOCKET (баг "не удалось
+              // отправить handshake" при живом браузере).
   sockaddr_in sa{};
   sa.sin_family = AF_INET;
   sa.sin_port = htons(port);
   if (inet_pton(AF_INET, numeric.c_str(), &sa.sin_addr) != 1) {
     err = "inet_pton failed для " + numeric;
     CloseSock(s);
+    mSock = kInvalid;
     return false;
   }
 
@@ -133,12 +137,14 @@ bool WsClient::Connect(const std::string& url, std::string& err, int timeoutMs) 
     if (e != WSAEWOULDBLOCK && e != WSAEINPROGRESS) {
       err = "connect() failed (" + std::to_string(e) + ")";
       CloseSock(s);
+      mSock = kInvalid;
       return false;
     }
 #else
     if (errno != EINPROGRESS) {
       err = "connect() failed (" + std::to_string(errno) + ")";
       CloseSock(s);
+      mSock = kInvalid;
       return false;
     }
 #endif
@@ -150,6 +156,7 @@ bool WsClient::Connect(const std::string& url, std::string& err, int timeoutMs) 
     if (rc <= 0) {
       err = "connect timeout (" + std::to_string(timeoutMs) + " ms)";
       CloseSock(s);
+      mSock = kInvalid;
       return false;
     }
     int soErr = 0;
@@ -162,6 +169,7 @@ bool WsClient::Connect(const std::string& url, std::string& err, int timeoutMs) 
     if (soErr != 0) {
       err = "connect refused (code " + std::to_string(soErr) + ")";
       CloseSock(s);
+      mSock = kInvalid;
       return false;
     }
   }
@@ -185,6 +193,7 @@ bool WsClient::Connect(const std::string& url, std::string& err, int timeoutMs) 
   if (!sent) {
     err = "не удалось отправить handshake";
     CloseSock(s);
+    mSock = kInvalid;
     return false;
   }
   // Ответ: читаем до \r\n\r\n (небольшой накопитель)
@@ -208,9 +217,9 @@ bool WsClient::Connect(const std::string& url, std::string& err, int timeoutMs) 
   if (head.find(" 101") == std::string::npos || head.find("\r\n\r\n") == std::string::npos) {
     err = "WS handshake rejected: " + (head.size() > 80 ? head.substr(0, 80) : head);
     CloseSock(s);
+    mSock = kInvalid;
     return false;
   }
-  mSock = s;
   return true;
 }
 
