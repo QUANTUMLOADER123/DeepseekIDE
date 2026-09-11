@@ -558,6 +558,29 @@ async function openSession(id) {
   pollSessions();
   pollLog();
   pollEventsSmart();
+  // Тумблер «терминал агенту»: читаем/пишем /api/settings
+  (function initShellToggle() {
+    const chk = document.getElementById('chkShell');
+    if (!chk) return;
+    api('/api/settings').then((r) => {
+      if (r && typeof r.allow_shell === 'boolean') chk.checked = r.allow_shell;
+    }).catch(() => {});
+    chk.addEventListener('change', async () => {
+      try {
+        const r = await api('/api/settings', { json: { allow_shell: chk.checked } });
+        if (r && r.ok) {
+          sysMsg(chk.checked
+            ? 'Агенту разрешены консольные команды (run_command). Вывод модель получает автоматически.'
+            : 'Консольные команды агенту запрещены.');
+          if (typeof r.allow_shell === 'boolean') chk.checked = r.allow_shell;
+        }
+      } catch (e) {
+        chk.checked = !chk.checked;
+        sysMsg('Не удалось сохранить настройку: ' + (e && e.message ? e.message : e));
+      }
+    });
+  })();
+
   setInterval(pollState, 2000);
   setInterval(pollReply, 2200);
   setInterval(pollLog, 1500);

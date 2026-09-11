@@ -271,6 +271,48 @@ static void TestOpsParser() {
           "пути очищены от бэктиков и пунктуации");
     const auto r3 = dside::FindFileRequests("```cpp\n// НУЖЕН ФАЙЛ: x.h\n```\nГотово");
     CHECK(r3.empty(), "маркер внутри блока кода игнорируется");
+
+    // Строгость v11: пересказ промпта в середине строки — НЕ запрос.
+    // (баг пользователя: модель перечисляла возможности, а IDE послал в чат
+    // ошибку чтения «файла» по имени «путь&gt;, и ты присылаешь его сам»)
+    {
+      const auto r4 = dside::FindFileRequests(
+          "- ❌ Чтение файлов без разрешения — если мне нужен контент, я пишу "
+          "«НУЖЕН ФАЙЛ: &lt;путь&gt;», и ты присылаешь его сам.");
+      CHECK(r4.empty(), "пересказ контракта (маркер не в начале строки) игнорируется");
+      const auto r5 = dside::FindFileRequests(
+          "НУЖЕН ФАЙЛ: &lt;путь&gt;, и ты присылаешь его сам");
+      CHECK(r5.empty(), "плейсхолдер <путь> после анescape — не валидный путь");
+      const auto r6 = dside::FindFileRequests("- NEED FILE: site/main.py\nГотово");
+      CHECK(r6.size() == 1 && r6[0] == "site/main.py", "англ. маркер в бюллете — норм");
+      const auto r7 = dside::FindFileRequests("NEED FILE: readme\nтекст");
+      CHECK(r7.empty(), "слово без расширения/сепаратора — не путь");
+      const auto r8 = dside::FindFileRequests("Need file: docs/guide.md.\nконец");
+      CHECK(r8.size() == 1 && r8[0] == "docs/guide.md", "Need file с точкой-финишем");
+    }
+    // NEED SEARCH / НУЖЕН ПОИСК
+    {
+      const auto q1 = dside::FindSearchRequests("NEED SEARCH: main.py\nок");
+      CHECK(q1.size() == 1 && q1[0] == "main.py", "англ. поисковая директива");
+      const auto q2 = dside::FindSearchRequests(
+          "НУЖЕН ПОИСК: `replace_lines`\nещё\nНУЖЕН ПОИСК: replace_lines");
+      CHECK(q2.size() == 1 && q2[0] == "replace_lines", "рус. директива + дедуп + бэктики");
+      const auto q3 = dside::FindSearchRequests("я говорю про NEED SEARCH: x — это пример");
+      CHECK(q3.empty(), "упоминание директивы не в начале строки игнорируется");
+    }
+
+    // Расширенный белый список: run_command разрешён для чата
+    {
+      CHECK(dside::ChatAllowedOps().count("run_command") == 1,
+            "run_command входит в разрешённые операции чата");
+      CHECK(dside::MutationOps().count("run_command") == 0,
+            "в «чистые мутации» run_command не попал (границы сохранены)");
+      ParsedOps pr;
+      dside::ExtractOps(
+          "```deepseekide-ops\n[{\"name\":\"run_command\",\"args\":{\"command\":\"python -V\"}}]\n```",
+          dside::ChatAllowedOps(), pr);
+      CHECK(pr.ops.size() == 1 && pr.errors.empty(), "run_command проходит через блок");
+    }
   }
 
   // DOM-путь: тело блока без fence-ограждений (страница отрендерила кодовый

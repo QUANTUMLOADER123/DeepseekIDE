@@ -9,6 +9,7 @@
 //   --no-browser : не открывать вкладку автоматически (напечатать ссылку)
 //   --port N     : занять указанный порт (иначе автовыбор)
 
+#include <algorithm>
 #include <csignal>
 #include <cstdio>
 #include <exception>
@@ -24,6 +25,8 @@
 #include "app/Platform.h"
 #include "chat/ChatDriver.h"
 #include "core/ProjectManager.h"
+#include <nlohmann/json.hpp>
+
 #include "core/Settings.h"
 #include "core/SnapshotManager.h"
 #include "server/IdeServer.h"
@@ -105,6 +108,7 @@ int Run(int argc, char* argv[]) {
   };
   toolCtx.fileChanged = [&](const std::string& rel) { server.NotifyFileChanged(rel); };
   toolCtx.allowShell = [&] { return settings.allowShell; };
+  // (заглушка для IDE-server настроек проволокаем ниже, после serverCfg)
   toolCtx.shellTimeoutSec = [&] { return settings.shellTimeout; };
   ToolRegistry tools(toolCtx);
 
@@ -157,6 +161,23 @@ int Run(int argc, char* argv[]) {
   srvCfg.webRoot = webRoot;
   srvCfg.token = RandomToken();
   srvCfg.onOpenProject = doOpenProject;
+  // Настройки из веб-морды (тумблер «терминал агенту» и т.п.) — читают/пишут
+  // ту же Settings-структуру, которую слушают гейтинги инструментов.
+  srvCfg.onGetSettings = [&] {
+    return nlohmann::json{{"allow_shell", settings.allowShell},
+                          {"shell_timeout", settings.shellTimeout}};
+  };
+  srvCfg.onSetSettings = [&](const nlohmann::json& patch) {
+    if (patch.contains("allow_shell")) settings.allowShell = patch.value("allow_shell", false);
+    if (patch.contains("shell_timeout"))
+      settings.shellTimeout = std::max(5, std::min(600, patch.value("shell_timeout", 60)));
+    settings.Save();
+    server.Log("info", std::string("Настройки: shell-команды агенту ") +
+                           (settings.allowShell ? "РАЗРЕШЕНЫ" : "запрещены"));
+    return nlohmann::json{{"ok", true},
+                          {"allow_shell", settings.allowShell},
+                          {"shell_timeout", settings.shellTimeout}};
+  };
 
   std::string err;
   if (!server.Start(srvCfg, port, err)) {

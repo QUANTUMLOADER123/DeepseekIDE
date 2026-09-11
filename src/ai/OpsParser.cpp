@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
+#include <functional>
 
 namespace {
 
@@ -106,6 +108,16 @@ void dside::ParseOpsBody(const std::string& body, const std::set<std::string>& k
   }
 }
 
+const std::set<std::string>& dside::ChatAllowedOps() {
+  // Кэш: MutationOps + run_command (выполнение команд, если shell разрешён).
+  static const std::set<std::string> ops = [] {
+    std::set<std::string> o = dside::MutationOps();
+    o.insert("run_command");
+    return o;
+  }();
+  return ops;
+}
+
 bool dside::ExtractOps(const std::string& answer, const std::set<std::string>& known,
                        ParsedOps& out) {
   out = ParsedOps{};
@@ -151,9 +163,42 @@ bool dside::ExtractOps(const std::string& answer, const std::set<std::string>& k
 
 namespace {
 
-// Разрешённые написания маркера (модель обычно повторяет регистр промпта,
-// но страхуемся от «нормального» письма).
-const char* kMarkers[] = {"НУЖЕН ФАЙЛ:", "Нужен файл:", "нужен файл:"};
+// Просьба файла — СТРОГАЯ строка-команда: маркер только в начале строки
+// (после пробелов/бу́ллета), иначе модель, ПЕРЕСКАЗЫВАЯ промпт («я пишу
+// «НУЖЕН ФАЙЛ: <путь>»…»), провоцировала фантомные запросы мусорных «файлов».
+bool MarkerAtLineStart(const std::string& line, size_t& markerPos) {
+  size_t i = 0;
+  while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) ++i;
+  if (i < line.size() && (line[i] == '-' || line[i] == '*' || line[i] == '>')) {
+    ++i;
+    while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) ++i;
+  }
+  markerPos = i;
+  return true;
+}
+
+// Декодирует HTML-сущности (&lt; &gt; &amp; &quot;) — страница их изредка
+// подсовывает в innerText, и «&lt;путь&gt;» раньше улетал в read_file как есть.
+std::string UnescapeHtml(std::string p) {
+  struct Rep { const char* from; const char* to; };
+  static const Rep reps[] = {{"&lt;", "<"}, {"&gt;", ">"}, {"&quot;", "\""},
+                             {"&#39;", "'"}, {"&amp;", "&"}};
+  for (const auto& r : reps) {
+    for (size_t at = p.find(r.from); at != std::string::npos; at = p.find(r.from))
+      p.replace(at, std::strlen(r.from), r.to);
+  }
+  return p;
+}
+
+// Похоже ли на относительный путь проекта (а не на кусок фразы)?
+bool LooksLikePath(const std::string& p) {
+  if (p.empty() || p.size() > 200) return false;
+  if (p.find_first_of("<>«»&;|*?") != std::string::npos) return false;
+  bool hasSep = p.find('/') != std::string::npos || p.find('\\') != std::string::npos;
+  bool hasDot = p.find('.') != std::string::npos;
+  if (!hasSep && !hasDot) return false;  // «путь» без расширения/сепаратора — не путь
+  return true;
+}
 
 std::string CleanPath(std::string p) {
   auto junk = [](char c) {
@@ -175,7 +220,10 @@ std::string CleanPath(std::string p) {
 
 }  // namespace
 
-std::vector<std::string> dside::FindFileRequests(const std::string& answer) {
+std::vector<std::string> ScanDirectiveRequests(
+    const std::string& answer, const std::vector<const char*>& markers,
+    const std::function<std::string(const std::string&)>& clean,
+    const std::function<bool(const std::string&)>& valid) {
   std::vector<std::string> out;
   std::string line;
   bool inFence = false;
@@ -186,19 +234,19 @@ std::vector<std::string> dside::FindFileRequests(const std::string& answer) {
       if (line.rfind("```", 0) == 0) {
         inFence = !inFence;
       } else if (!inFence && out.size() < 5) {
-        for (const char* m : kMarkers) {
+        size_t startPos = 0;
+        static_cast<void>(MarkerAtLineStart(line, startPos));
+        for (const char* m : markers) {
           const std::string marker = m;
-          const size_t at = line.find(marker);
-          if (at != std::string::npos) {
-            std::string path = CleanPath(line.substr(at + marker.size()));
-            if (!path.empty()) {
-              bool dup = false;
-              for (const auto& e : out)
-                if (e == path) { dup = true; break; }
-              if (!dup) out.push_back(std::move(path));
-            }
-            break;
+          if (line.compare(startPos, marker.size(), marker) != 0) continue;
+          std::string val = clean(UnescapeHtml(line.substr(startPos + marker.size())));
+          if (valid(val)) {
+            bool dup = false;
+            for (const auto& e : out)
+              if (e == val) { dup = true; break; }
+            if (!dup) out.push_back(std::move(val));
           }
+          break;
         }
       }
       line.clear();
@@ -207,4 +255,31 @@ std::vector<std::string> dside::FindFileRequests(const std::string& answer) {
     }
   }
   return out;
+}
+
+
+std::vector<std::string> dside::FindFileRequests(const std::string& answer) {
+  return ScanDirectiveRequests(
+      answer,
+      {"НУЖЕН ФАЙЛ:", "Нужен файл:", "нужен файл:",
+       "NEED FILE:",   "Need file:",   "need file:"},
+      [](const std::string& v) { return CleanPath(v); },
+      [](const std::string& v) { return LooksLikePath(v); });
+}
+
+std::vector<std::string> dside::FindSearchRequests(const std::string& answer) {
+  return ScanDirectiveRequests(
+      answer,
+      {"НУЖЕН ПОИСК:", "Нужен поиск:", "нужен поиск:",
+       "NEED SEARCH:",   "Need search:",   "need search:"},
+      [](const std::string& v) {
+        std::string t = Trim(v);
+        while (!t.empty() && (t.front() == '`' || t.front() == '"' || t.front() == '<'))
+          t.erase(t.begin());
+        while (!t.empty() && (t.back() == '`' || t.back() == '"' || t.back() == '>' ||
+                              t.back() == '.'))
+          t.pop_back();
+        return t;
+      },
+      [](const std::string& v) { return !v.empty() && v.size() <= 200; });
 }

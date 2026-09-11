@@ -33,6 +33,9 @@ public:
     std::filesystem::path webRoot;   // папка assets/web рядом с exe (index.html внутри)
     std::string token;               // доступ к API
     std::function<void(const std::string& projectPath)> onOpenProject;
+    // Настройки (тумблер shell и т.п.): чтение/запись со стороны владельца (main).
+    std::function<nlohmann::json()> onGetSettings;
+    std::function<nlohmann::json(const nlohmann::json& patch)> onSetSettings;
   };
 
   bool Start(const Cfg& cfg, int port, std::string& errOut);

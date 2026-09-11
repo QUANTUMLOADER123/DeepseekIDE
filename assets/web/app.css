@@ -239,3 +239,15 @@ body {
 
 @media (max-width: 1280px) { #main { grid-template-columns: 240px 1fr 340px; } }
 @media (max-width: 1000px) { #main { grid-template-columns: 210px 1fr; } #agent { display: none; } }
+
+/* Тумблер «терминал агенту» в топбаре */
+.shell-toggle{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;
+  margin-right:12px;color:#5b6b80;font-size:12.5px}
+.shell-toggle input{display:none}
+.shell-toggle .tgl{width:30px;height:17px;border-radius:999px;background:#d7e3f2;position:relative;
+  transition:background .18s ease;box-shadow:inset 0 1px 2px rgba(40,80,140,.12)}
+.shell-toggle .tgl::after{content:'';position:absolute;top:2px;left:2px;width:13px;height:13px;
+  border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(40,80,140,.35);transition:left .18s ease}
+.shell-toggle input:checked + .tgl{background:#7fc3ee}
+.shell-toggle input:checked + .tgl::after{left:15px}
+.shell-toggle:hover .tgl-text{color:#2f4a68}

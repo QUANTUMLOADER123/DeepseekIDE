@@ -319,6 +319,21 @@ bool IdeServer::Start(const Cfg& cfg, int port, std::string& errOut) {
     });
   });
 
+  // --- настройки ---
+  srv.Get("/api/settings", [this, api](const httplib::Request& req, httplib::Response& res) {
+    api(req, res, [this](const nlohmann::json&) {
+      if (mCfg.onGetSettings) return mCfg.onGetSettings();
+      return nlohmann::json{{"allow_shell", false}, {"readonly", true}};
+    });
+  });
+
+  srv.Post("/api/settings", [this, api](const httplib::Request& req, httplib::Response& res) {
+    api(req, res, [this](const nlohmann::json& body) {
+      if (!mCfg.onSetSettings) return nlohmann::json{{"error", "настройки недоступны"}};
+      return mCfg.onSetSettings(body);
+    });
+  });
+
   // --- чат ---
   srv.Post("/api/chat/connect", [this, api](const httplib::Request& req, httplib::Response& res) {
     api(req, res, [this](const nlohmann::json&) {
@@ -360,16 +375,26 @@ bool IdeServer::Start(const Cfg& cfg, int port, std::string& errOut) {
       std::ostringstream report;
       if (mCfg.snaps->EnabledForProject()) mCfg.snaps->Begin("DeepSeekIDE: правки из веб-чата");
       int okCount = 0;
+      std::ostringstream runNote;  // вывод run_command — уедет модели следующим сообщением
       const auto& arr = body["ops"];
       if (!arr.is_array()) return nlohmann::json{{"error", "ops должен быть массивом"}};
       for (const auto& op : arr) {
         std::string name = op.value("name", "");
         nlohmann::json args = op.value("args", nlohmann::json::object());
-        if (dside::MutationOps().count(name) == 0) {
+        if (dside::ChatAllowedOps().count(name) == 0) {
           report << "✗ " << name << " — операция не из белого списка\n";
           continue;
         }
         ToolRunResult r = mCfg.tools->Execute(name, args);
+        if (name == "run_command") {
+          // Модели без вывода команды работать вслепую: возвращаем stdout/stderr
+          // автосообщением (кириллица CP866/битый UTF-8 проходит санитизацию).
+          runNote << "$ " << utf8::Sanitize(args.value("command", "")) << "\n("
+                  << (r.ok ? "ok" : "error") << ")\n```\n";
+          std::string out = utf8::Sanitize(r.output);
+          if (out.size() > 20000) out = utf8::Truncate(out, 20000) + "\n…(truncated)\n";
+          runNote << out << "\n```\n\n";
+        }
         report << (r.ok ? "✓ " : "✗ ") << ToolRegistry::Describe(name, args);
         if (!r.ok) {
           // Вывод консоли (на Windows нередко CP866 и битый UTF-8) + срез
@@ -385,6 +410,19 @@ bool IdeServer::Start(const Cfg& cfg, int port, std::string& errOut) {
       report << "\nГотово: " << okCount << " из " << arr.size() << " операций успешно.";
       Log("agent", "Применение операций:\n" + report.str());
       mCfg.project->MarkDirty();
+      // Вывод run_command — модели следующим сообщением (важно для цикла
+      // «написал → собрал → починил»; модель видит реальные ошибки сборки).
+      {
+        const std::string note = runNote.str();
+        if (!note.empty() && mCfg.chat) {
+          std::string err2;
+          if (!mCfg.chat->SendNote(
+                  "SYSTEM: run_command output from DeepSeekIDE (you will not see this again "
+                  "— analyze it now):\n\n" + note,
+                  err2))
+            Log("warn", "не смог отправить вывод run_command в чат: " + err2);
+        }
+      }
       return nlohmann::json{{"ok", true}, {"report", report.str()}, {"done", okCount},
                             {"total", arr.size()}};
     });
