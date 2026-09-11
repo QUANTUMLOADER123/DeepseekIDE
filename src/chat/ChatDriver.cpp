@@ -910,6 +910,18 @@ void ChatDriver::ThreadBody() {
               { task = mLastUserText; }
               mCfg.onSession(task, mPendingReply);
             }
+            // АВТОПРИМЕНЕНИЕ: ни таблиц "принять/отклонить", ни кликов — правки
+            // уходят в проект сразу, отчёт — заметкой модели.
+            if (mCfg.onAutoApply && !mPendingReply.ops.empty()) {
+              const std::string rep = mCfg.onAutoApply(mPendingReply.ops);
+              if (!rep.empty()) {
+                std::string nerr;
+                if (!SendNote("SYSTEM: ops applied automatically by DeepSeekIDE:\n\n```\n" +
+                                  rep + "\n```\n",
+                              nerr))
+                  mCfg.log("warn", "не смог отправить отчёт авто-применения: " + nerr);
+              }
+            }
             mPhase = Phase::Ready;
             mStatus.stage = "online";
             mStatus.stageText = "ответ получен";

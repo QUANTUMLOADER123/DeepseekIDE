@@ -42,7 +42,8 @@ set(SOURCES
   src/net/HttpClient.cpp
   src/util/Utf8.cpp
   src/util/TextStitch.cpp
-  src/app/Platform.cpp)
+  src/app/Platform.cpp
+  src/server/OpsApply.cpp)
 
 add_executable(deepseekide
   ${SOURCES}
@@ -50,6 +51,7 @@ add_executable(deepseekide
   src/cdp/CdpClient.cpp
   src/chat/ChatDriver.cpp
   src/server/IdeServer.cpp
+  src/server/OpsApply.cpp
   src/main.cpp)
 
 target_include_directories(deepseekide PRIVATE

@@ -30,6 +30,7 @@
 #include "core/Settings.h"
 #include "core/SnapshotManager.h"
 #include "server/IdeServer.h"
+#include "server/OpsApply.h"
 
 namespace {
 
@@ -121,6 +122,26 @@ int Run(int argc, char* argv[]) {
   };
   chatCfg.onSession = [&](const std::string& task, const ParsedOps& parsed) {
     server.RecordSession(task, parsed);
+  };
+  // Автоприменение ops сразу после фикса ответа — никаких «принять/отклонить».
+  // Ядро исполнения общее с эндпойнтом /api/chat/apply (server/OpsApply).
+  chatCfg.onAutoApply = [&](const std::vector<nlohmann::json>& opsIn) -> std::string {
+    if (!project.IsOpen()) return std::string();
+    nlohmann::json arr = nlohmann::json::array();
+    for (const auto& o : opsIn) arr.push_back(o);
+    std::string report, runNote;
+    ApplyChatOps(
+        arr, tools, report, runNote,
+        [&] {
+          if (snaps.EnabledForProject()) snaps.Begin("DeepSeekIDE: автоправки из веб-чата");
+        },
+        [&] {
+          if (snaps.EnabledForProject()) snaps.Commit();
+        });
+    server.Log("agent", "Автоприменение операций:\n" + report);
+    project.MarkDirty();
+    if (!runNote.empty()) report += "\n\nrun_command output:\n" + runNote;
+    return report;
   };
   ChatDriver chat(std::move(chatCfg));
 

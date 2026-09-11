@@ -7,10 +7,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <set>
 #include <string>
 
 #include "ai/OpsParser.h"
+#include "server/OpsApply.h"
 #include "ai/ToolRegistry.h"
 #include "util/TextStitch.h"
 #include "util/Utf8.h"
@@ -313,6 +315,51 @@ static void TestOpsParser() {
           dside::ChatAllowedOps(), pr);
       CHECK(pr.ops.size() == 1 && pr.errors.empty(), "run_command проходит через блок");
     }
+  }
+
+  // --- v12: ядро автоприменения (server/OpsApply) ---
+  {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / "dside_opsapply_test";
+    fs::remove_all(root);
+    fs::create_directories(root);
+    // ВАЖНО: ToolRegistry копирует ToolContext в конструкторе — сначала
+    // донастраиваем контекст целиком, потом создаём реестр.
+    ProjectManager pm;
+    pm.SetRoot(root);
+    pm.Refresh();
+    CHECK(pm.IsOpen(), "проект в темп-папке открыт для теста OpsApply");
+    SnapshotManager sm;
+    ToolContext tctx;
+    tctx.allowShell = [] { return true; };
+    tctx.project = &pm;
+    tctx.snapshots = &sm;
+    ToolRegistry tools(tctx);
+
+    nlohmann::json ops = nlohmann::json::array();
+    ops.push_back({{"name", "write_file"},
+                   {"args", {{"path", "a.txt"}, {"content", "hello\nworld"}}}});
+    ops.push_back({{"name", "run_command"},
+                   {"args", {{"command", "echo TESTOUT42"}}}});
+    ops.push_back({{"name", "read_file"}, {"args", {{"path", "a.txt"}}}});  // не в белом списке
+    std::string report, runNote;
+    int snapBegun = 0, snapDone = 0;
+    const int ok = ApplyChatOps(
+        ops, tools, report, runNote, [&] { ++snapBegun; }, [&] { ++snapDone; }, nullptr,
+        [](const std::string& dn, const ToolRunResult& dr) {
+          std::printf("    [diag] %s -> %s: %s\n", dn.c_str(), dr.ok ? "ok" : "FAIL",
+                      dr.output.size() > 120 ? (dr.output.substr(0, 120) + "...").c_str()
+                                             : dr.output.c_str());
+        });
+    CHECK(ok == 2, "две операции успешны, третья отклонена белым списком");
+    CHECK(report.find("a.txt") != std::string::npos, "отчёт содержит упоминание файла");
+    CHECK(report.find("не из белого списка") != std::string::npos, "отчёт фиксирует отказ");
+    CHECK(runNote.find("TESTOUT42") != std::string::npos, "вывод run_command собран в runNote");
+    CHECK(snapBegun == 1 && snapDone == 1, "колбэки снимков вызваны ровно по разу");
+    std::ifstream f(root / "a.txt", std::ios::binary);
+    std::string body((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    CHECK(body == "hello\nworld", "файл действительно записан");
+    fs::remove_all(root);
   }
 
   // DOM-путь: тело блока без fence-ограждений (страница отрендерила кодовый
