@@ -35,6 +35,9 @@ static int gPassed = 0;
       ++gFailed;                                                       \
       std::printf("  [FAIL] %s  (%s:%d)\n", name, __FILE__, __LINE__); \
     }                                                                  \
+    /* В CI stdout — pipe с полной буферизацией: при падении процесса   \
+       хвост лога теряется, и место краша не видно. Сбрасываем сразу. */\
+    std::fflush(stdout);                                               \
   } while (0)
 
 static fs::path MakeTempProject() {
