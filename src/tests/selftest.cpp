@@ -272,6 +272,24 @@ static void TestOpsParser() {
     const auto r3 = dside::FindFileRequests("```cpp\n// НУЖЕН ФАЙЛ: x.h\n```\nГотово");
     CHECK(r3.empty(), "маркер внутри блока кода игнорируется");
   }
+
+  // DOM-путь: тело блока без fence-ограждений (страница отрендерила кодовый
+  // блок с панелью «Копировать/Скачать», и в innerText забора не осталось)
+  {
+    ParsedOps pd;
+    dside::ParseOpsBody(
+        "[{\"name\":\"write_file\",\"args\":{\"path\":\"main.py\",\"content\":\"print(1+1)\\n\"}}]",
+        dside::MutationOps(), 1, pd);
+    CHECK(pd.ops.size() == 1 && pd.ops[0]["name"] == "write_file",
+          "DOM-тело блока разобрано без текстового забора");
+    ParsedOps pe;
+    dside::ParseOpsBody("не json совсем", dside::MutationOps(), 2, pe);
+    CHECK(pe.ops.empty() && pe.errors.size() == 1, "битое DOM-тело — ошибка, без краха");
+    ParsedOps pu;
+    dside::ParseOpsBody("{\"name\":\"delete_path\",\"args\":{\"path\":\"x\"}}",
+                        dside::MutationOps(), 3, pu);
+    CHECK(pu.ops.size() == 1 && pu.errors.empty(), "одиночный объект из DOM тоже проходит");
+  }
 }
 
 

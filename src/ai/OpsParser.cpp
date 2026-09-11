@@ -26,6 +26,41 @@ const std::set<std::string>& dside::MutationOps() {
   return ops;
 }
 
+void dside::ParseOpsBody(const std::string& body, const std::set<std::string>& known,
+                         int blockIndex, ParsedOps& out) {
+  auto j = nlohmann::json::parse(body, nullptr, false);
+  if (j.is_discarded()) {
+    out.errors.push_back("Блок deepseekide-ops №" + std::to_string(blockIndex) +
+                         ": нечитаемый JSON — операция пропущена");
+    return;
+  }
+  std::vector<nlohmann::json> items;
+  if (j.is_array()) {
+    items.assign(j.begin(), j.end());
+  } else if (j.is_object() && j.contains("operations") && j["operations"].is_array()) {
+    items.assign(j["operations"].begin(), j["operations"].end());
+  } else if (j.is_object() && j.contains("name")) {
+    items.push_back(j);
+  } else {
+    out.errors.push_back("Блок deepseekide-ops №" + std::to_string(blockIndex) +
+                         ": ожидался объект {\"name\", \"args\"} или массив таких объектов");
+  }
+  for (auto& item : items) {
+    if (!item.is_object() || !item.contains("name") || !item["name"].is_string()) {
+      out.errors.push_back("Элемент без поля name в блоке №" + std::to_string(blockIndex));
+      continue;
+    }
+    const std::string name = item["name"].get<std::string>();
+    if (known.count(name) == 0) {
+      out.errors.push_back("Неизвестная или запрещённая операция: " + name);
+      continue;
+    }
+    nlohmann::json op = {{"name", name}, {"args", nlohmann::json::object()}};
+    if (item.contains("args") && item["args"].is_object()) op["args"] = item["args"];
+    out.ops.push_back(std::move(op));
+  }
+}
+
 bool dside::ExtractOps(const std::string& answer, const std::set<std::string>& known,
                        ParsedOps& out) {
   out = ParsedOps{};
@@ -60,38 +95,7 @@ bool dside::ExtractOps(const std::string& answer, const std::set<std::string>& k
                            : answer.substr(eol + 1, close - eol - 1);
     ++blocks;
     rest.append(answer, pos, open - pos);
-
-    auto j = nlohmann::json::parse(body, nullptr, false);
-    if (j.is_discarded()) {
-      out.errors.push_back("Блок deepseekide-ops №" + std::to_string(blocks) +
-                           ": нечитаемый JSON — операция пропущена");
-    } else {
-      std::vector<nlohmann::json> items;
-      if (j.is_array()) {
-        items.assign(j.begin(), j.end());
-      } else if (j.is_object() && j.contains("operations") && j["operations"].is_array()) {
-        items.assign(j["operations"].begin(), j["operations"].end());
-      } else if (j.is_object() && j.contains("name")) {
-        items.push_back(j);
-      } else {
-        out.errors.push_back("Блок deepseekide-ops №" + std::to_string(blocks) +
-                             ": ожидался объект {\"name\", \"args\"} или массив таких объектов");
-      }
-      for (auto& item : items) {
-        if (!item.is_object() || !item.contains("name") || !item["name"].is_string()) {
-          out.errors.push_back("Элемент без поля name в блоке №" + std::to_string(blocks));
-          continue;
-        }
-        const std::string name = item["name"].get<std::string>();
-        if (known.count(name) == 0) {
-          out.errors.push_back("Неизвестная или запрещённая операция: " + name);
-          continue;
-        }
-        nlohmann::json op = {{"name", name}, {"args", nlohmann::json::object()}};
-        if (item.contains("args") && item["args"].is_object()) op["args"] = item["args"];
-        out.ops.push_back(std::move(op));
-      }
-    }
+    ParseOpsBody(body, known, blocks, out);
     if (close == std::string::npos) break;
     pos = close + fence.size();
   }

@@ -23,6 +23,13 @@ bool ExtractOps(const std::string& answer, const std::set<std::string>& known, P
 // Список операций-мутаций, разрешённых веб-агенту.
 const std::set<std::string>& MutationOps();
 
+// Разбирает ТЕЛО одного блока deepseekide-ops (валидный JSON: объект {name,args}
+// или массив таких) и складывает операции/ошибки в out. blockIndex — номер
+// блока для текста ошибки («Блок №N»). Нужен, когда блоки приходят не из
+// текстового забора ``` , а из DOM страницы (пре-код с баннером языка).
+void ParseOpsBody(const std::string& body, const std::set<std::string>& known,
+                  int blockIndex, ParsedOps& out);
+
 // Извлекает запросы «НУЖЕН ФАЙЛ: <путь>» из текста ответа (системный промпт
 // учит модель так просить содержимое файла). Ищется только ВНЕ блоков
 // ```кода``` (внутри write_file-контента могло встретиться случайное слово).

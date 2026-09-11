@@ -39,6 +39,30 @@ const char* kStateJs = R"JS(
       if(c0>=0xDC00&&c0<=0xDFFF)last=last.substring(1);
     }
     var now=Date.now();
+    // DOM-сбор блоков deepseekide-ops: страница рендерит кодовый блок виджетом
+    // с баннером «deepseekide-ops | Копировать | Скачать», и в innerText ЗАБОРА
+    // (```) НЕ ОСТАЁТСЯ — текстовый парсер их в этом случае не увидит. Зато
+    // текст кода живёт в <pre><code>, а кнопки — ВНЕ <code>.
+    var opsBodies=[];
+    if(n){
+      try{
+        var pres=blocks[n-1].querySelectorAll('pre');
+        for(var pi=0;pi<pres.length&&opsBodies.length<20;pi++){
+          var pre=pres[pi];
+          var code=pre.querySelector('code');
+          var ct=((code?code.textContent:pre.textContent)||'').replace(/\n+$/,'');
+          if(!ct||(ct.indexOf('{')<0&&ct.indexOf('[')<0))continue;
+          // Подпись языка — в баннере, т.е. в тексте предка БЕЗ текста кода.
+          var host=pre,found=false;
+          for(var up=0;up<5&&host;up++){
+            var ht=host.textContent||'';
+            if(ht.length>=ct.length&&ht.split(ct).join('').indexOf('deepseekide-ops')>=0){found=true;break;}
+            host=host.parentElement;
+          }
+          if(found)opsBodies.push(ct);
+        }
+      }catch(e2){}
+    }
     // Кнопка «Продолжить»: DeepSeek обрезал ответ лимитом. Докликиваем сами
     // и ФОРСИМ busy — иначе тишина после обрезка засчитается как конец ответа.
     var cont=null;
@@ -50,10 +74,10 @@ const char* kStateJs = R"JS(
     if(cont){
       cont.click();
       window.__dsideActivity=now;
-      return JSON.stringify({ok:1,n:n,t:last,b:1,c:1,p:!!document.querySelector('textarea'),u:String(location.href)});
+      return JSON.stringify({ok:1,n:n,t:last,b:1,c:1,p:!!document.querySelector('textarea'),u:String(location.href),obs:opsBodies});
     }
     var busy=(now-window.__dsideActivity)<1300||(now-window.__dsideSentAt)<2500;
-    return JSON.stringify({ok:1,n:n,t:last,b:busy?1:0,c:0,p:!!document.querySelector('textarea'),u:String(location.href)});
+    return JSON.stringify({ok:1,n:n,t:last,b:busy?1:0,c:0,p:!!document.querySelector('textarea'),u:String(location.href),obs:opsBodies});
   }catch(e){return JSON.stringify({ok:0,e:String(e)});}
 })()
 )JS";
@@ -830,7 +854,24 @@ void ChatDriver::ThreadBody() {
             // без склейки терялись навсегда.
             ParsedOps parsed;
             const std::string& raw = !mReplyFull.empty() ? mReplyFull : winT;
-            dside::ExtractOps(raw, dside::MutationOps(), parsed);
+            // DOM-путь: код-блоки распознаны на странице по баннеру языка —
+            // в innerText забора (```) уже нет, текстовый ExtractOps их не найдёт.
+            // Если бы мы ДОБАВИЛИ их к fence-результату, при смешанном рендере
+            // append_file мог бы примениться дважды — поэтому DOM-путь первичен,
+            // текстовый — только запасной (obs нет: например, сырой стрим).
+            const auto obs = st.value("obs", nlohmann::json::array());
+            bool usedDom = false;
+            for (const auto& b : obs) {
+              if (!b.is_string()) continue;
+              dside::ParseOpsBody(b.get<std::string>(), dside::MutationOps(),
+                                  static_cast<int>(parsed.ops.size() + 1), parsed);
+              usedDom = true;
+            }
+            if (usedDom) {
+              if (parsed.text.empty()) parsed.text = raw;
+            } else {
+              dside::ExtractOps(raw, dside::MutationOps(), parsed);
+            }
             {
               mPendingReply = std::move(parsed);
               mReplyPending = true;
