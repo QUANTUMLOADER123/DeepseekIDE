@@ -361,6 +361,7 @@ static void TestOpsParser() {
     CHECK(snapBegun == 1 && snapDone == 1, "колбэки снимков вызваны ровно по разу");
     std::ifstream f(root / "a.txt", std::ios::binary);
     std::string body((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    f.close();  // на Windows remove_all ниже не удалит каталог с открытым файлом
     // write_file на Windows может писать \n как \r\n (текстовый режим потока) —
     // семантика «файл записан с этим текстом» от этого не меняется.
     std::string flat;
