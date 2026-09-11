@@ -1,5 +1,7 @@
 #include "ai/OpsParser.h"
 
+#include "util/Utf8.h"
+
 #include <algorithm>
 #include <cctype>
 
@@ -26,12 +28,55 @@ const std::set<std::string>& dside::MutationOps() {
   return ops;
 }
 
+namespace {
+
+// Вырезает первый сбалансированный JSON-объект/массив: находим первый '{' или '[',
+// дальше идём со счётчиком глубины, отслеживая строки и экранирование (скобки
+// ВНУТРИ строковых значений глубину не меняют). Виджет кодового блока на странице
+// обкладывает JSON мусором (кнопки «Копировать»/«Скачать» перед ним и финальная
+// проза ответа после) — строгий parse всего тела на этом падал с «нечитаемый JSON».
+std::string ExtractJsonSpan(const std::string& s) {
+  const size_t i = s.find_first_of("{[");
+  if (i == std::string::npos) return {};
+  int depth = 0;
+  bool inStr = false, esc = false;
+  for (size_t j = i; j < s.size(); ++j) {
+    const char c = s[j];
+    if (esc) { esc = false; continue; }
+    if (inStr) {
+      if (c == '\\') esc = true;
+      else if (c == '"') inStr = false;
+      continue;
+    }
+    if (c == '"') { inStr = true; continue; }
+    if (c == '{' || c == '[') {
+      ++depth;
+    } else if (c == '}' || c == ']') {
+      if (--depth == 0) return s.substr(i, j - i + 1);
+      if (depth < 0) break;
+    }
+  }
+  return s.substr(i);  // незакрытое — отдадим парсеру как есть, получим его ошибку
+}
+
+}  // namespace
+
 void dside::ParseOpsBody(const std::string& body, const std::set<std::string>& known,
                          int blockIndex, ParsedOps& out) {
   auto j = nlohmann::json::parse(body, nullptr, false);
   if (j.is_discarded()) {
+    // Мусор вокруг JSON («Копировать», «Скачать», финальная проза): режем до
+    // сбалансированного спана и пробуем ещё раз.
+    const std::string span = ExtractJsonSpan(body);
+    if (!span.empty()) j = nlohmann::json::parse(span, nullptr, false);
+  }
+  if (j.is_discarded()) {
+    // В лог — обрезанный превью тела (по границе символа), чтобы следующий
+    // подобный репорт диагностировался с первого взгляда.
+    const std::string preview = utf8::Truncate(utf8::Sanitize(Trim(body)), 160);
     out.errors.push_back("Блок deepseekide-ops №" + std::to_string(blockIndex) +
-                         ": нечитаемый JSON — операция пропущена");
+                         ": нечитаемый JSON — операция пропущена. Начало тела: «" +
+                         preview + "»");
     return;
   }
   std::vector<nlohmann::json> items;

@@ -289,6 +289,30 @@ static void TestOpsParser() {
     dside::ParseOpsBody("{\"name\":\"delete_path\",\"args\":{\"path\":\"x\"}}",
                         dside::MutationOps(), 3, pu);
     CHECK(pu.ops.size() == 1 && pu.errors.empty(), "одиночный объект из DOM тоже проходит");
+
+    // Точный сценарий из лога пользователя: тело обложено кнопками виджета
+    // «Копировать/Скачать» спереди и прозой ответа сзади — раньше давало
+    // «нечитаемый JSON» и 0 операций.
+    {
+      ParsedOps pj;
+      dside::ParseOpsBody(
+          "Копировать\nСкачать\n[{\"name\":\"make_dir\",\"args\":{\"path\":\"site\"}},"
+          "{\"name\":\"write_file\",\"args\":{\"path\":\"site/index.html\","
+          "\"content\":\"<html>{ словарь: \\\"значение\\\" }\\n\"}}]"
+          "\n\nГотово! Что получилось:\n\nsite/index.html — разметка\n",
+          dside::MutationOps(), 1, pj);
+      CHECK(pj.ops.size() == 2 && pj.errors.empty(),
+            "JSON вырезан из мусора виджета (кнопки + проза после)"
+            /* скобки внутри строк контента не ломают спан */);
+    }
+    // Вообще без JSON — одна внятная ошибка с превью, без падения
+    {
+      ParsedOps pn;
+      dside::ParseOpsBody("Копировать\nнет тут никакого джейсона", dside::MutationOps(), 2, pn);
+      CHECK(pn.ops.empty() && pn.errors.size() == 1, "нет JSON — ошибка с превью");
+      CHECK(pn.errors.size() == 1 && pn.errors[0].find("Начало тела") != std::string::npos,
+            "в ошибке есть превью тела для диагностики");
+    }
   }
 }
 
