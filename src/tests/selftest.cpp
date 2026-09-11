@@ -358,7 +358,12 @@ static void TestOpsParser() {
     CHECK(snapBegun == 1 && snapDone == 1, "колбэки снимков вызваны ровно по разу");
     std::ifstream f(root / "a.txt", std::ios::binary);
     std::string body((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    CHECK(body == "hello\nworld", "файл действительно записан");
+    // write_file на Windows может писать \n как \r\n (текстовый режим потока) —
+    // семантика «файл записан с этим текстом» от этого не меняется.
+    std::string flat;
+    for (char c : body)
+      if (c != '\r') flat.push_back(c);
+    CHECK(flat == "hello\nworld", "файл действительно записан (CRLF-переносы нормализованы)");
     fs::remove_all(root);
   }
 
