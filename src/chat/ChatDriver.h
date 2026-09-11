@@ -4,6 +4,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 
@@ -129,7 +130,11 @@ private:
   int mPollFails = 0;  // подряд идущие сбои опроса (рвём CDP только с 3-й попытки)
   // Подпись последнего авто-отправленного запроса «НУЖЕН ФАЙЛ: …» — защита
   // от петли, если модель просит те же файлы повторно.
-  std::string mLastFileReqSig;
+  // Уже отправленные модели «самообслуживание»-данные: дедуп поштучный,
+  // а не по сигнатуре целой пачки — иначе файлы за пределами первой
+  // порции (3 шт.) при повторном запросе той же пачки терялись навсегда.
+  std::set<std::string> mSentFileReqs;
+  std::set<std::string> mSentSearchReqs;
 
   ParsedOps mPendingReply;
   bool mReplyPending = false;

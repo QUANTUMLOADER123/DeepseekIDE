@@ -549,7 +549,7 @@ bool ChatDriver::DoSendNow(const Queued& q, std::string& err) {
   mSettleSinceMs = 0;
   mLastContinueMs = 0;
   mBaseline = -1;  // узнаем на первом удачном опросе после отправки
-  if (q.isTask) mLastFileReqSig.clear();
+  if (q.isTask) { mSentFileReqs.clear(); mSentSearchReqs.clear(); }
   mReplyFull.clear();
   TouchStatus([](Status& s){ s.stage = "busy"; s.stageText = "отправлено, жду ответ…"; });
   mCfg.log("agent", std::string(q.isTask ? "Задача: " : "Заметка: ") +
@@ -772,7 +772,8 @@ void ChatDriver::ThreadBody() {
         mQueue.clear();
         mBaseline = -1;
         mReplyFull.clear();
-        mLastFileReqSig.clear();
+        mSentFileReqs.clear();
+        mSentSearchReqs.clear();
         mReplyPending = false;
         mPendingReply = ParsedOps{};
         mStatus.stageText = "новый чат — готов";
@@ -935,20 +936,27 @@ void ChatDriver::ThreadBody() {
               const auto wants = dside::FindFileRequests(raw);
               const auto searches = dside::FindSearchRequests(raw);
               if (!wants.empty() || !searches.empty()) {
-                std::string sig = "F:";
-                for (const auto& w : wants) { sig += w; sig += '|'; }
-                sig += "S:";
-                for (const auto& q : searches) { sig += q; sig += '|'; }
-                if (sig == mLastFileReqSig) {
+                // Поштучный дедуп: отсылаем только то, чего модель ещё не видела.
+                // Раньше дедуп был по сигнатуре всей пачки целиком — при пачке >3
+                // файлов повторный запрос блокировался, и хвост терялся навсегда.
+                std::vector<std::string> todoFiles, todoSearches;
+                for (const auto& w : wants)
+                  if (mSentFileReqs.insert(w).second) todoFiles.push_back(w);
+                for (const auto& q : searches)
+                  if (mSentSearchReqs.insert(q).second) todoSearches.push_back(q);
+                if (todoFiles.empty() && todoSearches.empty()) {
                   mCfg.log("agent",
-                           "Модель повторно ждёт те же файлы/поиск — уже отправляли, не дублирую.");
+                           "Модель ждёт файлы/поиск, которые уже отправлены — не дублирую.");
                 } else {
-                  mLastFileReqSig = sig;
                   std::ostringstream note;
                   note << "SYSTEM: auto-reply from DeepSeekIDE.\n\n";
                   int sent = 0;
-                  for (const auto& w : wants) {
-                    if (++sent > 3) { note << "(more file requests: respond again after these)\n"; break; }
+                  size_t fsent = 0;
+                  for (const auto& w : todoFiles) {
+                    if (++sent > 3) {
+                      note << "(more files pending — repeat NEED FILE for them to continue)\n";
+                      break;
+                    }
                     note << "You requested file content of «" << w << "» (lines are numbered; "
                             "use those numbers with insert_lines/replace_lines).\n";
                     ToolRunResult fr = mCfg.tools->Execute("read_file", {{"path", w}});
@@ -958,10 +966,14 @@ void ChatDriver::ThreadBody() {
                              "\n…(truncated — first 120000 chars shown)\n";
                     note << "FILE \"" << w << "\"" << (fr.ok ? "" : " — READ ERROR: ")
                          << "\n```\n" << body << "\n```\n\n";
+                    ++fsent;
                   }
                   int ssent = 0;
-                  for (const auto& q : searches) {
-                    if (++ssent > 2) { note << "(more search requests: respond again after these)\n"; break; }
+                  for (const auto& q : todoSearches) {
+                    if (++ssent > 2) {
+                      note << "(more searches pending — repeat NEED SEARCH for them)\n";
+                      break;
+                    }
                     note << "You searched the project for «" << q << "». Matches (file:line: text):\n";
                     ToolRunResult sr = mCfg.tools->Execute("search_files", {{"query", q}});
                     std::string body = utf8::Sanitize(sr.output);
@@ -971,8 +983,8 @@ void ChatDriver::ThreadBody() {
                          << "\n```\n" << body << "\n```\n\n";
                   }
                   mQueue.push_back(Queued{false, note.str()});
-                  mCfg.log("agent", "Модель попросила " + std::to_string(wants.size()) +
-                                    " файл(ов), " + std::to_string(searches.size()) +
+                  mCfg.log("agent", "Модель попросила " + std::to_string(todoFiles.size()) +
+                                    " файл(ов), " + std::to_string(todoSearches.size()) +
                                     " поиск(ов) — отправляю автоматически в чат.");
                 }
               }
