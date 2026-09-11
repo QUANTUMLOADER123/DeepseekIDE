@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>DeepSeekIDE</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="/favicon.ico" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+<div id="app">
+  <!-- ======================= ВЕРХНИЙ БАР ======================= -->
+  <header id="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" width="26" height="26" class="logo">
+        <path d="M16 2 L30 16 L16 30 L2 16 Z" fill="url(#lg)"/>
+        <path d="M16 9 L23 16 L16 23 L9 16 Z" fill="#ffffff"/>
+        <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#8fcbee"/><stop offset="1" stop-color="#57a9df"/>
+        </linearGradient></defs>
+      </svg>
+      <span class="name">DeepSeek<em>IDE</em></span>
+      <span id="projName" class="proj-name dim">проект не открыт</span>
+    </div>
+    <div class="top-actions">
+      <label id="shellToggle" class="shell-toggle" title="Разрешить агенту run_command (сборка, тесты, установка пакетов). Вывод команд модель получает автоматически следующим сообщением. Хранится в настройках.">
+        <input type="checkbox" id="chkShell" />
+        <span class="tgl"></span><span class="tgl-text">терминал агенту</span>
+      </label>
+      <div id="chatStatus" class="chat-status off">
+        <span class="dot"></span>
+        <span id="chatStatusText">чат не подключен</span>
+      </div>
+      <button id="btnConnect" class="btn primary small" title="Запустить браузер с chat.deepseek.com">
+        ▶ Подключить чат
+      </button>
+      <button id="btnShutdown" class="btn ghost small" title="Выключить IDE-сервер">⏻</button>
+    </div>
+  </header>
+
+  <div id="main">
+    <!-- ======================= ЛЕВАЯ ПАНЕЛЬ: ПРОВОДНИК + СЕССИИ ======================= -->
+    <aside id="sidebar">
+      <nav class="side-tabs">
+        <button class="side-tab active" id="tabFiles" data-side="files">Проводник</button>
+        <button class="side-tab" id="tabSessions" data-side="sessions">Сессии</button>
+      </nav>
+
+      <div class="side-page" id="pageFiles">
+        <div class="side-section">
+          <div class="side-head">
+            <span>Проект</span>
+            <button id="btnOpenFolder" class="btn tiny">Открыть…</button>
+          </div>
+          <div id="tree" class="tree"><div class="hint">Откройте папку проекта</div></div>
+        </div>
+        <div class="side-section snaps">
+          <div class="side-head">
+            <span>Снапшоты</span>
+            <button id="btnSnapsRefresh" class="btn tiny" title="Обновить">⟳</button>
+          </div>
+          <div id="snaps" class="snaps-list"><div class="hint">Снимков пока нет</div></div>
+        </div>
+      </div>
+
+      <div class="side-page hidden" id="pageSessions">
+        <div class="side-head">
+          <span>Диалоги с агентом</span>
+          <button id="btnSessionsRefresh" class="btn tiny" title="Обновить">⟳</button>
+        </div>
+        <div id="sessions" class="sessions-list"><div class="hint">Пока пусто — они появятся сами, когда агент ответит</div></div>
+      </div>
+    </aside>
+
+    <!-- ======================= РЕДАКТОР ======================= -->
+    <section id="editor-wrap">
+      <div id="editorTabs" class="editor-tabs"><div class="hint">Откройте файл слева</div></div>
+      <div id="editor"></div>
+      <div id="editorStatus">
+        <span id="esPath"></span>
+        <span id="esMeta" class="dim"></span>
+        <span id="esSaved" class="save-hint"></span>
+      </div>
+    </section>
+
+    <!-- ======================= ПАНЕЛЬ АГЕНТА ======================= -->
+    <aside id="agent">
+      <div class="agent-head">
+        <span>Агент DeepSeek</span>
+        <div class="agent-head-btns">
+          <button id="btnNewTab" class="btn tiny" title="Открыть вкладку chat.deepseek.com в отладочном браузере">+ Вкладка</button>
+          <button id="btnDebug" class="btn tiny" title="Диагностика подключения: какие вкладки видит сервер">🔍 Диаг</button>
+          <button id="btnNewChat" class="btn tiny" title="Новый чат в браузере">Новый чат</button>
+        </div>
+      </div>
+
+      <div id="agentFeed" class="agent-feed"></div>
+
+      <div id="agentInput">
+        <textarea id="taskText" rows="4" placeholder="Задача для агента… например: «добавь сортировку по дате в список файлов» (Ctrl+Enter — отправить)"></textarea>
+        <div class="agent-actions">
+          <button id="btnSendTask" class="btn primary">Отправить задачу</button>
+          <button id="btnSendNote" class="btn ghost" title="Быстрое сообщение без обёртки-промпта">Заметка</button>
+          <button id="btnStop" class="btn danger hidden">Стоп</button>
+        </div>
+      </div>
+
+    </aside>
+  </div>
+
+  <!-- ======================= ЛОГ ======================= -->
+  <footer id="logbar">
+    <div class="log-head" id="logHead">
+      <span>Журнал</span>
+      <label class="clear-link" id="btnLogClear">очистить</label>
+    </div>
+    <div id="log" class="log"></div>
+  </footer>
+</div>
+
+<script src="/assets/app.js"></script>
+</body>
+</html>

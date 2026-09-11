@@ -1,0 +1,52 @@
+name: Build
+
+# Сервер-эпоха: никаких внешних зависимостей (ни vcpkg, ни curl, ни WebView2).
+on:
+  push:
+    branches: [main, "arena/**"]
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+      - name: Self-tests
+        run: ./build/deepseekide_tests
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: deepseekide-linux
+          path: |
+            build/deepseekide
+            assets/web
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        # Генератор не задаём жёстко: windows-latest = windows-2025 с VS 2026,
+        # а пользователи ставят что попало. cmake сам выберет новейший VS с C++.
+        run: cmake -S . -B build -A x64
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Self-tests
+        run: build\Release\deepseekide_tests.exe
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: deepseekide-windows
+          path: |
+            deepseekide.exe
+            assets/web
+          if-no-files-found: error
