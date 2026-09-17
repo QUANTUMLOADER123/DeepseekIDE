@@ -345,6 +345,7 @@
       if (el.__dsxBound) continue;
       el.__dsxBound = true;
       el.addEventListener('click', function () {
+        var origText = el.textContent;
         el.textContent = '⏳ Открываю выбор папки…';
         (async function () {
           try {
@@ -354,7 +355,7 @@
           } catch (e) {
             window.postMessage({ __dsidefs: 'event', ev: 'folderError',
               error: String((e && e.name) || '') + ': ' + (e && e.message ? e.message : e) }, '*');
-            el.textContent = '📂 Выбрать папку проекта';
+            el.textContent = origText;
           }
         })();
       }, true);
@@ -373,6 +374,17 @@
     try {
       if (m.op === 'pick') { reply({ ok: true, data: await pick() }); return; }
       if (m.op === 'ensure') { reply({ ok: true, data: await ensure() }); return; }
+      if (m.op === 'forget') {          // «Забыть папку» из настроек — без нужды в папке
+        dirHandle = null; dirName = '';
+        try {
+          await idb('readwrite', function (tx, res) {
+            tx.objectStore('kv').delete('dirHandle');
+            tx.oncomplete = res;
+          });
+        } catch (e) {}
+        reply({ ok: true, data: { forgotten: true } });
+        return;
+      }
       var st = await ensure();
       if (!st.ok) { reply({ ok: false, error: 'needPick' }); return; }
       if (OPS[m.op]) { reply({ ok: true, data: await OPS[m.op](m.args || {}) }); return; }
