@@ -50,3 +50,15 @@ jobs:
             deepseekide.exe
             assets/web
           if-no-files-found: error
+
+  extension-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: JS syntax (content scripts)
+        run: |
+          for f in extension/opp.js extension/fsbridge.js extension/ui.js extension/content.js; do
+            node --check "$f" || exit 1
+          done
+      - name: Unit tests (ops parser & line math)
+        run: node --test extension/test/parser.test.mjs
