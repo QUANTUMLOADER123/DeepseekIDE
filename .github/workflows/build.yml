@@ -57,7 +57,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: JS syntax (content scripts)
         run: |
-          for f in extension/opp.js extension/fsbridge.js extension/ui.js extension/content.js; do
+          for f in extension/opp.js extension/fsbridge.js extension/content.js; do
             node --check "$f" || exit 1
           done
       - name: Unit tests (ops parser & line math)

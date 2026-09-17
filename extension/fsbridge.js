@@ -331,6 +331,29 @@
     return { report: res.join('\n') };
   };
 
+  // ---------- жест: клик по пилюле «Авто-пилот» с data-dsx-needpick="1"
+  // открывает пикер/перевыпрашивает доступ прямо здесь, в MAIN-мире —
+  // у нас живой user activation: контент-скрипт сам пикер открыть не может.
+  function bindGesture() {
+    var el = document.querySelector('.dsx-pilot-tg');
+    if (!el || el.__dsxBound) return;
+    el.__dsxBound = true;
+    el.addEventListener('click', function () {
+      if (el.getAttribute('data-dsx-needpick') !== '1') return;
+      (async function () {
+        try {
+          var stt = await ensure();
+          if (!stt.ok) await pick();
+          window.postMessage({ __dsidefs: 'event', ev: 'folder', name: dirName }, '*');
+        } catch (e) {
+          window.postMessage({ __dsidefs: 'event', ev: 'folderError',
+            error: String((e && e.name) || '') + ': ' + (e && e.message ? e.message : e) }, '*');
+        }
+      })();
+    }, true);
+  }
+  setInterval(bindGesture, 1500);
+
   // ---------- диспетчер сообщений
   window.addEventListener('message', async function (ev) {
     var m = ev.data;

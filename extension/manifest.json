@@ -8,6 +8,6 @@
     { "matches": ["https://chat.deepseek.com/*"], "js": ["opp.js", "content.js"], "run_at": "document_idle" }
   ],
   "web_accessible_resources": [
-    { "resources": ["fsbridge.js", "ui.js", "ui.css", "opp.js"], "matches": ["https://chat.deepseek.com/*"] }
+    { "resources": ["fsbridge.js", "opp.js"], "matches": ["https://chat.deepseek.com/*"] }
   ]
 }

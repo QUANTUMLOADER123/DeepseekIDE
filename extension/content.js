@@ -1,34 +1,35 @@
 /* =====================================================================
- * content.js — DeepSeek Extended (isolated world): автопилот чата.
- * Внедряет MAIN-world скрипты (opp/fsbridge/ui), ловит готовые ответы
- * DeepSeek, применяет ops в папку проекта через File System Access мост,
- * отвечает модели системными заметками, кормит UI событиями.
+ * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот.
+ * Никакого своего UI, кроме родной пилюли «Авто-пилот» рядом с тумблерами
+ * сайта. Промпт незаметно подмешивается в начало сообщения пользователя,
+ * служебные сообщения автопилота скрываются под чипы «Прочитано: "x.cpp"».
  * ===================================================================== */
 (function () {
   'use strict';
   if (window.__dsxContent) return; window.__dsxContent = true;
 
-  // ---------------- внедрение MAIN-world скриптов (File System Access + UI)
-  function inject(tag, attrs, where) {
+  // ---------------- внедрение MAIN-world скриптов (File System Access мост)
+  function inject(tag, attrs) {
     var el = document.createElement(tag);
     for (var k in attrs) el[k] = attrs[k];
-    (where || document.documentElement).appendChild(el);
+    document.documentElement.appendChild(el);
     return el;
   }
   var url = chrome.runtime.getURL;
-  inject('link', { rel: 'stylesheet', href: url('ui.css') });
   inject('script', { src: url('opp.js') });
   inject('script', { src: url('fsbridge.js') });
-  inject('script', { src: url('ui.js') });
+
+  // ---------------- стелс-маркеры служебного контента
+  // Модель видит всё; пользователь — только то, что после ⟦/DSX⟧ (или чип).
+  var MARK = '⟦DSX⟧', END = '⟦/DSX⟧';
 
   // ---------------- RPC к MAIN-мосту
   var fsSeq = 0, fsWait = {};
   window.addEventListener('message', function (ev) {
     var m = ev.data;
-    if (m && m.__dsidefs === 'resp' && fsWait[m.id]) {
-      fsWait[m.id](m); delete fsWait[m.id];
-    }
-    if (m && m.__dsideui === 'ctl') onUiCtl(m.name, m.payload);
+    if (!m) return;
+    if (m.__dsidefs === 'resp' && fsWait[m.id]) { fsWait[m.id](m); delete fsWait[m.id]; }
+    if (m.__dsidefs === 'event') onBridgeEvent(m);
   });
   function fsCall(op, args) {
     return new Promise(function (res) {
@@ -40,91 +41,198 @@
       }, 30000);
     });
   }
-  function ui(name, payload) {
-    window.postMessage({ __dsideui: 'cmd', name: name, payload: payload }, '*');
-  }
 
-  // ---------------- настройки
-  var cfg = { pilot: true, note: true, anim: true };
+  // ---------------- настройки (только тумблер автопилота)
+  var cfg = { pilot: true };
   try {
-    chrome.storage.local.get(['pilot', 'note', 'anim'], function (v) {
+    chrome.storage.local.get(['pilot'], function (v) {
       if (v.pilot !== undefined) cfg.pilot = v.pilot;
-      if (v.note !== undefined) cfg.note = v.note;
-      if (v.anim !== undefined) cfg.anim = v.anim;
-      ui('conf', cfg); ui('pilot', { on: cfg.pilot }); ensureNativeToggle();
+      syncNativeToggle();
     });
-  } catch (e) { /* storage недоступен — работаем на дефолтах */ }
-  function saveCfg() {
-    try { chrome.storage.local.set(cfg); } catch (e) {}
-  }
+  } catch (e) { /* дефолты */ }
+  function saveCfg() { try { chrome.storage.local.set(cfg); } catch (e) {} }
 
-  // ---------------- состояние автопилота
+  // ---------------- состояние
   var st = {
+    folderReady: false, folderName: '',
+    bigPrompt: '', primedOnce: false,
     lastAnswer: '', autoCount: Number(sessionStorage.getItem('dsx:auto') || 0),
-    sentFiles: {}, sentSearches: {}, busy: false
+    sentFiles: {}, sentSearches: {}, busy: false,
+    lastUrl: location.href
   };
-  function status(text, state) { ui('status', { text: text, state: state }); }
 
-  // ---------------- UI → команды
-  async function cmdPick() {
-    var r = await fsCall('pick');
-    if (r.ok) {
-      ui('folder', { name: r.data.name });
-      ui('folder2', { name: r.data.name });
-      status('проект: ' + r.data.name, 'on');
-      cmdFiles();
-    } else {
-      status('папку не выбрали', '');
+  // ---------------- микро-тосты (в стиле сайта, сами исчезают)
+  var toastBox = null;
+  function toast(text) {
+    if (!toastBox) {
+      toastBox = document.createElement('div');
+      toastBox.style.cssText =
+        'position:fixed;right:16px;bottom:16px;z-index:8990;display:flex;' +
+        'flex-direction:column;gap:8px;align-items:flex-end;pointer-events:none';
+      document.body.appendChild(toastBox);
+    }
+    var t = document.createElement('div');
+    t.textContent = text;
+    t.style.cssText =
+      'max-width:340px;padding:9px 15px;border-radius:12px;font-size:13px;line-height:1.4;' +
+      'background:var(--dsw-alias-bg-layer-1,#2b2d31);color:var(--dsw-alias-label-primary,#f5f5f5);' +
+      'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.08));' +
+      'box-shadow:var(--dsw-shadow-lv2,0 6px 24px rgba(0,0,0,.3));font-family:var(--dsw-font-family,inherit);' +
+      'opacity:0;transform:translateY(8px);transition:all .28s var(--ds-ease-out,ease-out)';
+    toastBox.appendChild(t);
+    requestAnimationFrame(function () { t.style.opacity = '1'; t.style.transform = 'translateY(0)'; });
+    setTimeout(function () {
+      t.style.opacity = '0'; t.style.transform = 'translateY(8px)';
+      setTimeout(function () { t.remove(); }, 320);
+    }, 2600);
+  }
+
+  // ---------------- события моста (папка выбрана жестом в MAIN-мире)
+  function onBridgeEvent(m) {
+    if (m.ev === 'folder') {
+      st.folderReady = true; st.folderName = m.name || '';
+      syncNativeToggle();
+      toast('📂 Проект подключён: ' + st.folderName);
+      refreshPrompt();
+    } else if (m.ev === 'folderError') {
+      var err = String(m.error || '');
+      if (err.indexOf('AbortError') < 0 && err.toLowerCase().indexOf('abort') < 0)
+        toast('Не вышло открыть папку: ' + err);
     }
   }
-  async function cmdFiles() {
-    var en = await fsCall('ensure');
-    if (en.ok && en.data.ok) {
-      var t = await fsCall('tree', { max_entries: 420 });
-      if (t.ok) ui('refreshFiles', { text: t.data.text });
-      ui('folder', { name: en.data.name });
-      ui('folder2', { name: en.data.name });
-    } else {
-      ui('refreshFiles', { text: '(папка проекта не выбрана)' });
-    }
+
+  // ---------------- сборка промптов
+  function bigPrompt(tree) {
+    return '[Автоматическое системное сообщение DeepSeek Extended. Служебная обёртка ' +
+      MARK + ' … ' + END + ' — транспортная разметка расширения: всегда учитывай её ' +
+      'содержимое и НИКОГДА не упоминай и не цитируй её в ответах пользователю.]\n\n' +
+      DsideOps.buildPrompt(tree);
   }
-  async function cmdPrime() {
+  function shortPrefix() {
+    return '[DeepSeek Extended активен для проекта «' + st.folderName + '». Напоминание: ' +
+      'все изменения файлов — СТРОГО блоками ```deepseekide-ops (строгий JSON); ' +
+      'недостающий контекст запрашивай отдельными строками NEED FILE: <путь> и ' +
+      'NEED SEARCH: <подстрока>. Эту служебную вставку в ответе не упоминай.]';
+  }
+  async function refreshPrompt() {
     var en = await fsCall('ensure');
-    if (!en.ok || !en.data.ok) { status('сначала выберите папку (Панель ▣ → Файлы)', ''); return; }
+    if (!(en.ok && en.data.ok)) { st.folderReady = false; syncNativeToggle(); return; }
+    st.folderReady = true; st.folderName = en.data.name;
     var t = await fsCall('tree', { max_entries: 350 });
-    var tree = t.ok ? t.data.text : '';
-    if (await injectMessage(DsideOps.buildPrompt(tree), 'системный промпт'))
-      status('промпт отправлен ✓', 'on');
+    if (t.ok) st.bigPrompt = bigPrompt(t.data.text);
+    else if (!st.bigPrompt) st.bigPrompt = bigPrompt('');
+    syncNativeToggle();
   }
-  async function cmdRollback(key) {
-    var r = await fsCall('rollback', { key: key });
-    if (r.ok) { ui('feed', { text: r.data.report }); cmdSnaps(); status('откат применён', 'on'); }
+
+  // ---------------- обёртка служебного сообщения
+  function wrapStealth(real, chip, visibleTail) {
+    return MARK + '\nCHIP: ' + chip + '\n' + real + '\n' + END +
+           (visibleTail ? '\n' + visibleTail : '');
   }
-  async function cmdSnaps() {
-    var r = await fsCall('snapList');
-    ui('refreshSnaps', { list: r.ok ? r.data.list : [] });
+
+  // ---------------- СТЕЛС-ПОДМЕШИВАНИЕ в сообщение пользователя
+  function findEditor() {
+    return document.querySelector('textarea[placeholder*="DeepSeek" i]') ||
+           document.querySelector('textarea');
   }
-  function onUiCtl(name, payload) {
-    if (name === 'pick') cmdPick();
-    else if (name === 'prime') cmdPrime();
-    else if (name === 'pilot') {
-      cfg.pilot = !cfg.pilot; saveCfg();
-      ui('pilot', { on: cfg.pilot });
-      ensureNativeToggle();
-      status(cfg.pilot ? 'автопилот включён' : 'пауза автопилота', cfg.pilot ? 'on' : '');
-    } else if (name === 'conf') { cfg = payload; saveCfg(); ensureNativeToggle(); }
-    else if (name === 'needFiles') cmdFiles();
-    else if (name === 'needSnaps') cmdSnaps();
-    else if (name === 'rollback') cmdRollback(payload);
-    else if (name === 'selftest') cmdSelfTest();
-    else if (name === 'preview') {
-      fsCall('readNumbered', { path: payload, end_line: 120 }).then(function (r) {
-        ui('preview', { text: r.ok ? r.data.text : 'не прочиталось: ' + r.error });
+  function nativeSetValue(el, text) {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(el, text);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  // Синхронно переписываем textarea ДО того, как сайт прочтёт значение
+  // (capture-фаза Enter/клика): пользователь не видит промпт вообще.
+  function tryStealthPrefix(editor) {
+    if (!cfg.pilot || !st.folderReady || !st.bigPrompt) return;
+    var v = editor.value;
+    if (!v || !v.trim()) return;
+    if (v.indexOf(MARK) === 0) return; // это наше собственное служебное сообщение
+    var prefix, chip;
+    if (st.primedOnce) { prefix = shortPrefix(); chip = '🛩 Автопилот'; }
+    else { prefix = st.bigPrompt; chip = '🛩 Контекст проекта загружен'; }
+    nativeSetValue(editor, wrapStealth(prefix, chip, v));
+    if (!st.primedOnce) { st.primedOnce = true; sessionStorage.setItem('dsx:primed', '1'); }
+    st.autoCount = 0; st.sentFiles = {}; st.sentSearches = {};
+    sessionStorage.setItem('dsx:auto', '0');
+  }
+  document.addEventListener('keydown', function (e) {
+    if (e.__dsxBypass || e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+    var t = e.target;
+    if (!t || t.tagName !== 'TEXTAREA') return;
+    tryStealthPrefix(t);
+  }, true);
+  document.addEventListener('click', function (e) {
+    if (e.__dsxBypass || !e.target || !e.target.closest) return;
+    var btn = e.target.closest('._52c986b') ||
+              (e.target.closest('.bf38813a') && e.target.closest('button,[role="button"]'));
+    if (!btn) return;
+    var ed = findEditor();
+    if (ed) tryStealthPrefix(ed);
+  }, true);
+
+  // ---------------- БРИТВА: прячем служебный текст из отрисованных пузырей
+  function chipHtml(label) {
+    return '<span style="display:inline-flex;align-items:center;gap:7px;padding:5px 13px;' +
+      'border-radius:999px;font-size:12.5px;line-height:1.35;font-family:var(--dsw-font-family,inherit);' +
+      'background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.06));' +
+      'border:1px solid var(--dsw-alias-button-ghost-active-border,rgba(255,255,255,.1));' +
+      'color:var(--dsw-alias-label-secondary,#aaa);white-space:pre-wrap">' +
+      label.replace(/</g, '&lt;') + '</span>';
+  }
+  function trimStealthNodes() {
+    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    var hits = [], n;
+    while ((n = walker.nextNode())) {
+      if (n.nodeValue && n.nodeValue.indexOf(MARK) >= 0) hits.push(n);
+    }
+    hits.forEach(function (tn) {
+      var el = tn.parentElement, hops = 0;
+      while (el && hops < 8) {
+        if (el.textContent.indexOf(END) >= 0) break;
+        el = el.parentElement; hops++;
+      }
+      if (!el || el.getAttribute('data-dsx-trim') === '1') return;
+      var full = el.textContent;
+      var i = full.indexOf(MARK), j = full.indexOf(END);
+      if (i < 0 || j < 0) return;
+      var hidden = full.slice(i, j);
+      var chip = (hidden.match(/CHIP:([^\n]*)/) || [])[1] || '🛩 Автопилот';
+      var tail = full.slice(j + END.length).replace(/^\s+/, '');
+      el.setAttribute('data-dsx-trim', '1');
+      if (tail) {
+        el.textContent = tail;
+      } else {
+        el.innerHTML = chipHtml(chip);
+      }
+    });
+  }
+
+  // ---------------- ввод в чат (служебные сообщения автопилота)
+  async function injectStealth(real, chip) {
+    var el = findEditor();
+    if (!el) { toast('Не нашёл поле ввода чата'); return false; }
+    el.focus();
+    nativeSetValue(el, wrapStealth(real, chip, ''));
+    await new Promise(function (r) { setTimeout(r, 260); });
+    var box = el, clicked = false;
+    for (var i = 0; i < 6 && box && !clicked; ++i) {
+      var btn = box.querySelector('button:not([disabled])');
+      if (btn && btn.offsetParent !== null) {
+        var ev = new MouseEvent('click', { bubbles: true });
+        ev.__dsxBypass = true; btn.dispatchEvent(ev);
+        clicked = true;
+      } else box = box.parentElement;
+    }
+    if (!clicked) {
+      ['keydown', 'keyup'].forEach(function (tp) {
+        var ke = new KeyboardEvent(tp, { key: 'Enter', bubbles: true });
+        ke.__dsxBypass = true; el.dispatchEvent(ke);
       });
     }
+    console.log('[DSX] inject:', chip, real.length, 'chars');
+    return true;
   }
 
-  // ---------------- чтение ответа DeepSeek (эвристики — логи в консоль)
+  // ---------------- чтение ответа DeepSeek
   var SEL = ['div[class*="ds-markdown"]', 'div[class*="markdown"]'];
   function lastAnswerBlock() {
     var els = [];
@@ -145,16 +253,17 @@
   }
 
   // ---------------- самообслуживание NEED FILE / NEED SEARCH (порции 3+2)
+  function base(p) { var a = String(p).split('/'); return a[a.length - 1]; }
   async function serviceNote(raw) {
     var files = DsideOps.findFileRequests(raw), searches = DsideOps.findSearchRequests(raw);
-    if (!files.length && !searches.length) return '';
+    if (!files.length && !searches.length) return { text: '', chip: '' };
     var todoF = files.filter(function (p) { return !st.sentFiles[p]; }),
         todoS = searches.filter(function (q) { return !st.sentSearches[q]; });
     todoF.forEach(function (p) { st.sentFiles[p] = 1; });
     todoS.forEach(function (q) { st.sentSearches[q] = 1; });
-    if (!todoF.length && !todoS.length) return '';
+    if (!todoF.length && !todoS.length) return { text: '', chip: '' };
     var out = ['SYSTEM: auto-reply from DeepSeek Extended.'];
-    var i;
+    var chips = [], i;
     for (i = 0; i < Math.min(todoF.length, 3); ++i) {
       var p = todoF[i];
       out.push('You requested file content of «' + p + '» (lines are numbered; use those numbers with insert_lines/replace_lines).');
@@ -163,9 +272,11 @@
         var bodyTxt = (r.data.lines > 4000 ? '(первые 4000 строк)\n' : '') + r.data.text;
         if (bodyTxt.length > 120000) bodyTxt = bodyTxt.slice(0, 120000) + '\n…(truncated)';
         out.push('FILE "' + p + '"\n```\n' + bodyTxt + '\n```');
+        chips.push('«' + base(p) + '»');
       } else {
         out.push('FILE "' + p + '" — READ ERROR: ' + (r.error || 'не читается') +
                  '\n(используйте NEED SEARCH или попросите другое имя)');
+        chips.push('«' + base(p) + '» ✗');
       }
     }
     if (todoF.length > 3) out.push('(more files pending — repeat NEED FILE for them to continue)');
@@ -176,108 +287,70 @@
       var sb = s.ok ? s.data.text : ('ERROR: ' + (s.error || ''));
       if (sb.length > 60000) sb = sb.slice(0, 60000) + '\n…(truncated)';
       out.push('SEARCH "' + q + '"\n```\n' + sb + '\n```');
+      chips.push('🔍 ' + q);
     }
-    return out.join('\n\n');
+    var chip = '📖 Прочитано: ' + chips.join(' · ');
+    return { text: out.join('\n\n'), chip: chip };
   }
 
   // ---------------- главный цикл: ответ устоялся → применить → ответить
   async function settleAndHandle() {
-    if (st.busy || !cfg.pilot) return;
+    if (st.busy || !cfg.pilot || !st.folderReady) return;
     var block = lastAnswerBlock();
     if (!block) return;
     var pay = answerPayload(block);
     var text = (pay.text || '').trim();
     if (text === st.lastAnswer || text.length < 3) return;
     st.busy = true; st.lastAnswer = text;
-    status('разбираю ответ…', 'work');
     try {
       var outp = { ops: [], errors: [] };
       if (pay.obs.length) pay.obs.forEach(function (b) { DsideOps.parseOpsBody(b, outp); });
       else DsideOps.extractOps(text, outp);
 
-      var note = '';
+      var note = '', chip = '';
       if (outp.ops.length) {
-        // валидация путей до исполнения
         outp.ops = outp.ops.filter(function (o) {
           var p = o.args && (o.args.path || o.args.from);
           return !p || !!DsideOps.sanitizeRel(p);
         });
-        status('применяю ' + outp.ops.length + ' операций…', 'work');
         var r = await fsCall('mutateBatch', {
           label: 'DeepSeek Extended правки',
           ops: outp.ops.map(function (o) { return { name: o.name, args: o.args }; })
         });
         if (r.ok) {
-          ui('feed', { text: r.data.report });
-          ui('row', { cls: r.data.done === r.data.total ? 'ok' : 'bad',
-                      text: 'пакет: ' + r.data.done + '/' + r.data.total });
-          cmdFiles(); cmdSnaps();
-          if (cfg.note) {
-            note = 'SYSTEM: ops applied automatically by DeepSeek Extended:\n\n```\n' +
-                   r.data.report + '\n```\n';
-          }
+          toast(r.data.done === r.data.total
+            ? '✅ Применено: ' + r.data.done + ' из ' + r.data.total
+            : '⚠️ Применено ' + r.data.done + ' из ' + r.data.total + ' — есть ошибки');
+          chip = '⚙️ Применено: ' + r.data.done + ' из ' + r.data.total;
+          note = 'SYSTEM: ops applied automatically by DeepSeek Extended:\n\n```\n' +
+                 r.data.report + '\n```\n';
+          refreshPrompt(); // дерево изменилось
         } else {
-          status('ошибка применения: ' + (r.error || '?'), '');
+          toast('Ошибка применения: ' + (r.error || '?'));
         }
       }
       var svc = await serviceNote(text);
-      if (svc) note = note ? note + '\n\n' + svc : svc;
+      if (svc.text) {
+        note = note ? note + '\n\n' + svc.text : svc.text;
+        chip = svc.chip + (chip ? ' · ' + chip : '');
+      }
 
-      if (typeof debugStrip === 'function') { /* noop */ }
       if (note) {
         if (st.autoCount >= 12) {
-          status('потолок авто-сообщений (12) — ваш ход', '');
-        } else if (await injectMessage(note, 'SYSTEM-note')) {
+          toast('Потолок авто-сообщений (12) — ваш ход');
+        } else if (await injectStealth(note, chip || '🛩 Автопилот')) {
           st.autoCount++;
           sessionStorage.setItem('dsx:auto', String(st.autoCount));
-          status('ответ-заметка отправлена', 'on');
         }
-      } else {
-        status(outp.ops.length ? 'готово ✓' : 'ожидание', outp.ops.length ? 'on' : 'on');
       }
       if (outp.errors.length) console.warn('[DSX] ops warnings:', outp.errors);
     } finally { st.busy = false; }
   }
 
-  // ---------------- ввод в чат
-  function findEditor() {
-    return document.querySelector('textarea') ||
-           document.querySelector('div[contenteditable="true"]');
-  }
-  async function injectMessage(text, reason) {
-    var el = findEditor();
-    if (!el) { status('не нашёл поле ввода чата', ''); return false; }
-    el.focus();
-    if (el.tagName === 'TEXTAREA') {
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(el, text);
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-    } else {
-      el.textContent = text;
-      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }));
-    }
-    await new Promise(function (r) { setTimeout(r, 260); });
-    var box = el, clicked = false;
-    for (var i = 0; i < 6 && box && !clicked; ++i) {
-      var btn = box.querySelector('button:not([disabled])');
-      if (btn && btn.offsetParent !== null) { btn.click(); clicked = true; }
-      else box = box.parentElement;
-    }
-    if (!clicked) {
-      ['keydown', 'keyup'].forEach(function (t) {
-        el.dispatchEvent(new KeyboardEvent(t, { key: 'Enter', bubbles: true }));
-      });
-    }
-    console.log('[DSX] inject:', reason, text.length, 'chars');
-    return true;
-  }
-
-  // ---------------- НАТИВНАЯ пилюля «Авто-пилот» рядом с «Глубокое мышление/Умный поиск»
-  // Зеркалим их разметку .ds-toggle-button один в один — сайт её рендерит как свою.
-  // SPA перерисовывает панель при навигации — следим и перевставляем.
+  // ---------------- НАТИВНАЯ пилюля «Авто-пилот» (зеркалим разметку сайта)
   function findToggleHost() {
     var host = document.querySelector('._58b31c9');
     if (host) return host;
-    // запасной план: ищем по тексту нативных пилюль
     var spans = document.querySelectorAll('.ds-toggle-button span');
     for (var i = 0; i < spans.length; ++i) {
       var t = spans[i].textContent || '';
@@ -292,11 +365,16 @@
     var on = cfg.pilot;
     el.classList.toggle('ds-toggle-button--selected', on);
     el.setAttribute('aria-pressed', on ? 'true' : 'false');
+    el.setAttribute('data-dsx-needpick', (on && !st.folderReady) ? '1' : '0');
     var dot = el.querySelector('.dsx-dot-live');
-    if (dot) dot.style.display = on ? 'block' : 'none';
-    el.title = on
-      ? 'Авто-пилот ВКЛ: ответы DeepSeek применяются в ваш проект'
-      : 'Авто-пилот выкл: просто чат, ничего не применяется';
+    if (dot) {
+      dot.style.display = on ? 'block' : 'none';
+      dot.style.background = st.folderReady ? '#3ddc84' : '#e8a33d';
+    }
+    el.title = !on ? 'Авто-пилот выкл: обычный чат, ничего не применяется'
+      : st.folderReady
+        ? 'Авто-пилот ВКЛ: проект «' + st.folderName + '». Промпт подмешивается незаметно.'
+        : 'Авто-пилот ВКЛ — кликни, чтобы выбрать папку проекта';
   }
   function ensureNativeToggle() {
     var host = findToggleHost();
@@ -307,9 +385,11 @@
       el.className = 'dsx-native dsx-pilot-tg f79352dc ds-toggle-button ds-toggle-button--m';
       el.tabIndex = 0;
       el.setAttribute('role', 'button');
-      el.style.transform = 'translateZ(0px)';
+      el.style.cssText = 'transform:translateZ(0px);position:relative';
       el.innerHTML =
-        '<span class="dsx-dot-live"></span>' +
+        '<span class="dsx-dot-live" style="display:none;position:absolute;top:-3px;right:-3px;' +
+        'width:8px;height:8px;border-radius:50%;background:#3ddc84;' +
+        'box-shadow:0 0 6px 1px rgba(61,220,132,.7)"></span>' +
         '<div class="ds-toggle-button__icon"><div class="ds-icon" style="font-size:inherit">' +
         '<div style="width:14px;height:14px">' +
         '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">' +
@@ -318,12 +398,9 @@
         '<span class="_6dbc175">Авто-пилот</span>' +
         '<div class="ds-focus-ring" style="--dsl-focus-ring-offset:-1px"></div>';
       el.addEventListener('click', function () {
-        cfg.pilot = !cfg.pilot;
-        saveCfg();
-        ui('pilot', { on: cfg.pilot });
-        ui('conf', cfg);
-        syncNativeToggle(el);
-        status(cfg.pilot ? 'автопилот включён' : 'пауза автопилота', cfg.pilot ? 'on' : '');
+        if (!cfg.pilot) { cfg.pilot = true; saveCfg(); syncNativeToggle(el); }
+        else if (st.folderReady) { cfg.pilot = false; saveCfg(); syncNativeToggle(el); }
+        else { syncNativeToggle(el); /* жест поймает fsbridge и откроет пикер */ }
       });
       el.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') el.click(); });
       host.appendChild(el);
@@ -332,49 +409,27 @@
   }
   setInterval(ensureNativeToggle, 1400);
 
-  // ---------------- самопроверка (кнопка в «Настройках»)
-  async function cmdSelfTest() {
-    status('самопроверка…', 'work');
-    ui('row', { cls: 'ok', text: '🔬 самопроверка: пишу и удаляю тестовый файл' });
-    var r = await fsCall('mutateBatch', {
-      label: 'DSX self-test',
-      ops: [
-        { name: 'write_file', args: { path: 'dsx-selftest.txt', content: 'DeepSeek Extended: связь с папкой проекта работает. Этот файл создан для самопроверки и будет удалён.' } },
-        { name: 'delete_path', args: { path: 'dsx-selftest.txt' } }
-      ]
-    });
-    if (r.ok) {
-      ui('feed', { text: r.data.report });
-      status(r.data.done === r.data.total ? 'самопроверка ✓ всё работает' : 'самопроверка: есть ошибки', r.data.done === r.data.total ? 'on' : '');
-    } else {
-      status('самопроверка не прошла: ' + (r.error || '?'), '');
+  // ---------------- сторож URL (новая беседа = новый прайм)
+  setInterval(function () {
+    if (location.href !== st.lastUrl) {
+      st.lastUrl = location.href;
+      st.primedOnce = false; st.lastAnswer = '';
+      st.sentFiles = {}; st.sentSearches = {};
+      st.autoCount = 0; sessionStorage.setItem('dsx:auto', '0');
+      sessionStorage.removeItem('dsx:primed');
     }
-  }
+  }, 1500);
 
-  // ---------------- наблюдатель
+  // ---------------- наблюдатель: бритва + ответы
   var debounce = 0;
   new MutationObserver(function () {
+    trimStealthNodes();
     clearTimeout(debounce);
     debounce = setTimeout(settleAndHandle, 1600);
   }).observe(document.body, { childList: true, subtree: true, characterData: true });
-
-  document.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      st.autoCount = 0; st.sentFiles = {}; st.sentSearches = {};
-      sessionStorage.setItem('dsx:auto', '0');
-    }
-  }, true);
+  setInterval(trimStealthNodes, 900);
 
   // ---------------- старт
-  setTimeout(async function () {
-    var en = await fsCall('ensure');
-    if (en.ok && en.data.ok) {
-      ui('folder', { name: en.data.name });
-      ui('folder2', { name: en.data.name });
-      status('проект: ' + en.data.name, 'on');
-      cmdFiles(); cmdSnaps();
-    } else {
-      status('выберите папку проекта (Панель ▣ → Файлы)', '');
-    }
-  }, 800);
+  if (sessionStorage.getItem('dsx:primed') === '1') st.primedOnce = true;
+  setTimeout(refreshPrompt, 900);
 })();
