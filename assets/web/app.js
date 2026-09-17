@@ -558,6 +558,38 @@ async function openSession(id) {
   pollSessions();
   pollLog();
   pollEventsSmart();
+  // Карточка расширения: статус пульсом + кнопка установки
+  (function initExtCard() {
+    const btn = $('btnExtInstall'), stEl = $('extStatus'), hint = $('extHint');
+    if (!btn) return;
+    btn.onclick = async () => {
+      btn.disabled = true;
+      hint.textContent = 'Записываю файлы расширения и запускаю браузер…';
+      const r = await api('/api/ext/install', { method: 'POST', json: {} });
+      btn.disabled = false;
+      if (r.ok) {
+        hint.textContent = r.launched
+          ? 'Готово: браузер открыт с расширением. Войдите в DeepSeek и работайте в чате.'
+          : 'Файлы записаны (' + r.dir + '). Браузер не запустился автоматически: ' +
+            (r.launchError || 'unknown') + ' — добавьте расширение вручную через chrome://extensions (режим разработчика → «Загрузить распакованное»).';
+        sysMsg('Расширение автопилота установлено: ' + (r.launched ? 'браузер запущен.' : 'нужна ручная установка из ' + r.dir));
+      } else {
+        hint.textContent = 'Ошибка: ' + (r.error || 'unknown');
+      }
+    };
+    async function pulse() {
+      const r = await api('/api/ext/state');
+      if (r && r.ok) {
+        stEl.classList.toggle('on', !!r.online);
+        stEl.textContent = r.online
+          ? 'на странице (авто: ' + (r.autopilot ? 'вкл' : 'пауза') + ', ops: ' + r.opsApplied + ')'
+          : 'не подключено';
+      }
+    }
+    pulse();
+    setInterval(pulse, 5000);
+  })();
+
   // Тумблер «терминал агенту»: читаем/пишем /api/settings
   (function initShellToggle() {
     const chk = document.getElementById('chkShell');

@@ -15,6 +15,8 @@
 #include "core/ProjectManager.h"
 #include "core/SnapshotManager.h"
 
+class ExtBridge;
+
 class ToolRegistry;
 
 // Локальный HTTP-сервер DeepSeekIDE: статика (фронтенд) + JSON-API
@@ -33,6 +35,7 @@ public:
     std::filesystem::path webRoot;   // папка assets/web рядом с exe (index.html внутри)
     std::string token;               // доступ к API
     std::function<void(const std::string& projectPath)> onOpenProject;
+    ExtBridge* ext = nullptr;   // мост браузерного расширения (может быть nullptr)
     // Настройки (тумблер shell и т.п.): чтение/запись со стороны владельца (main).
     std::function<nlohmann::json()> onGetSettings;
     std::function<nlohmann::json(const nlohmann::json& patch)> onSetSettings;

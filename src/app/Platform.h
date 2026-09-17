@@ -47,7 +47,12 @@ CommandResult RunCommandCapture(const std::string& command,
 
 
 // --- Браузер для CDP-автоматизации ---
-bool FindChromiumBrowser(std::string& exeOut, std::string& errOut);   // chrome → edge → chromium
+bool FindChromiumBrowser(std::string& exeOut, std::string& errOut);
+
+// Запускает браузер (exe из FindChromiumBrowser) с заданной строкой аргументов
+// (UTF-8) и URL. Процесс отвязывается от нас. Empty-nop вне Windows.
+bool LaunchBrowserWithArgs(const std::string& exe, const std::string& argsUtf8,
+                           std::string& errOut);   // chrome → edge → chromium
 bool LaunchDetached(const std::string& exe, const std::string& argsUtf8, std::string& errOut);
 int FindFreeTcpPort(int from, int to);                                 // 0 = не нашли
 bool OpenInBrowser(const std::string& url);                            // системный браузер

@@ -294,6 +294,40 @@ bool AppendTextFile(const std::filesystem::path& p, const std::string& data) {
 
 // ===================== Браузер для CDP-автоматизации =====================
 
+bool LaunchBrowserWithArgs(const std::string& exe, const std::string& argsUtf8,
+                            std::string& errOut) {
+#if defined(_WIN32)
+  // Полная командная строка: "exe" args — CreateProcess любит именно так.
+  std::string cmd = "\"" + exe + "\" " + argsUtf8;
+  std::wstring wcmd(cmd.begin(), cmd.end());  // ASCII-состав путей/флагов
+  // URL/пути могут быть UTF-8 — перегоняем корректно.
+  {
+    int n = MultiByteToWideChar(CP_UTF8, 0, cmd.c_str(), -1, nullptr, 0);
+    if (n > 0) {
+      std::wstring tmp(n - 1, L'\0');
+      MultiByteToWideChar(CP_UTF8, 0, cmd.c_str(), -1, tmp.data(), n);
+      wcmd = std::move(tmp);
+      wcmd.push_back(L'\0');
+    }
+  }
+  STARTUPINFOW si{};
+  si.cb = sizeof(si);
+  PROCESS_INFORMATION pi{};
+  if (!CreateProcessW(nullptr, wcmd.data(), nullptr, nullptr, FALSE,
+                      CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS, nullptr, nullptr, &si, &pi)) {
+    errOut = "CreateProcess failed: " + std::to_string(GetLastError());
+    return false;
+  }
+  CloseHandle(pi.hProcess);
+  CloseHandle(pi.hThread);
+  return true;
+#else
+  (void)exe; (void)argsUtf8;
+  errOut = "запуск браузера с расширением поддерживается только на Windows";
+  return false;
+#endif
+}
+
 bool FindChromiumBrowser(std::string& exeOut, std::string& errOut) {
 #if defined(_WIN32)
   // 1) Реестр: App Paths

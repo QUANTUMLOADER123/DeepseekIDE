@@ -38,12 +38,15 @@ set(SOURCES
   src/core/SnapshotManager.cpp
   src/core/Settings.cpp
   src/ai/OpsParser.cpp
+  src/ai/Prompt.cpp
+  src/ai/AutoNote.cpp
   src/ai/ToolRegistry.cpp
   src/net/HttpClient.cpp
   src/util/Utf8.cpp
   src/util/TextStitch.cpp
   src/app/Platform.cpp
-  src/server/OpsApply.cpp)
+  src/server/OpsApply.cpp
+  src/server/ExtBridge.cpp)
 
 add_executable(deepseekide
   ${SOURCES}
@@ -52,6 +55,7 @@ add_executable(deepseekide
   src/chat/ChatDriver.cpp
   src/server/IdeServer.cpp
   src/server/OpsApply.cpp
+  src/server/ExtAssets.cpp
   src/main.cpp)
 
 target_include_directories(deepseekide PRIVATE

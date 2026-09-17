@@ -12,6 +12,7 @@
 #include <string>
 
 #include "ai/OpsParser.h"
+#include "server/ExtBridge.h"
 #include "server/OpsApply.h"
 #include "ai/ToolRegistry.h"
 #include "util/TextStitch.h"
@@ -368,6 +369,80 @@ static void TestOpsParser() {
     for (char c : body)
       if (c != '\r') flat.push_back(c);
     CHECK(flat == "hello\nworld", "файл действительно записан (CRLF-переносы нормализованы)");
+    fs::remove_all(root);
+  }
+
+  // --- v14: мост расширения (ExtBridge) ---
+  {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / "dside_extbridge_test";
+    fs::remove_all(root);
+    fs::create_directories(root);
+    ProjectManager pm;
+    pm.SetRoot(root);
+    pm.Refresh();
+    SnapshotManager sm;
+    ToolContext tctx;
+    tctx.project = &pm;
+    tctx.snapshots = &sm;
+    tctx.allowShell = [] { return false; };
+    ToolRegistry tools(tctx);
+    // файл, который модель попросит через NEED FILE
+    tools.Execute("write_file", {{"path", "src/a.py"}, {"content", "print(1)\n"}});
+
+    ExtBridge br;
+    br.Init({&tools, &sm, &pm, 8080});
+
+    nlohmann::json cfg = br.StateJson();
+    CHECK(cfg.value("autopilot", false), "мост: автопилот включён по умолчанию");
+
+    nlohmann::json pr = br.PromptJson();
+    const std::string prompt = pr.value("prompt", "");
+    CHECK(prompt.find("run_command") != std::string::npos &&
+              prompt.find("NEED FILE:") != std::string::npos &&
+              prompt.find("priming brief") != std::string::npos,
+          "мост: промпт-праймер содержит инструменты и правила самообслуживания");
+
+    // ответ с ops (DOM-путь, без заборов) + NEED FILE — как присылает content.js
+    nlohmann::json body;
+    body["text"] = "Пишу модуль.\nNEED FILE: src/a.py\n(ответ)";
+    body["obs"] = nlohmann::json::array(
+        {"[{\"name\":\"write_file\",\"args\":{\"path\":\"src/b.py\",\"content\":\"x = 1\"}}]"});
+    nlohmann::json r1 = br.HandleAnswer(body);
+    CHECK(r1.value("ops", 0) == 1, "мост: одна операция распознана из obs");
+    CHECK(r1.value("applied", 0) == 1, "мост: операция применена автоматически");
+    {
+      std::ifstream f(root / "src" / "b.py", std::ios::binary);
+      std::string cb((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+      f.close();
+      CHECK(cb == "x = 1", "мост: файл b.py создан в проекте");
+    }
+    const std::string note1 = r1.value("note", "");
+    CHECK(note1.find("ops applied automatically") != std::string::npos &&
+              note1.find("print(1)") != std::string::npos,
+          "мост: заметка = отчёт о применении + содержимое запрошенного файла");
+
+    // повторный тот же ответ: NEED FILE-дедуп не должен дублировать файл,
+    // но ops (в чужой ответственности вызывающего) безопасны повторно
+    nlohmann::json r2 = br.HandleAnswer(body);
+    const std::string note2 = r2.value("note", "");
+    CHECK(note2.find("print(1)") == std::string::npos,
+          "мост: повторный NEED FILE не дублируется (поштучный дедуп)");
+
+    // пауза: авто-применение выключается, note пустая
+    br.SetAutopilot({{"enabled", false}});
+    nlohmann::json r3 = br.HandleAnswer(body);
+    CHECK(r3.value("applied", 0) == 0 && r3.value("note", "").empty(),
+          "мост: на паузе ничего не применяется и не шлётся");
+
+    // ResetDialog сбрасывает поштучный дедуп — повторный NEED FILE снова отдаёт файл.
+    // (Пауза запрещает только МУТАЦИИ; чтение по запросу модели безвредно и остаётся.)
+    br.SetAutopilot({{"enabled", true}});
+    br.ResetDialog();
+    nlohmann::json r4 = br.HandleAnswer(body);
+    CHECK(r4.value("note", "").find("print(1)") != std::string::npos,
+          "мост: reset сбрасывает дедуп — файл снова отправляется по NEED FILE");
+    pm.Clear();
     fs::remove_all(root);
   }
 

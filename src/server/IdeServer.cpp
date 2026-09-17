@@ -1,6 +1,8 @@
 #include "server/IdeServer.h"
 
 #include "server/OpsApply.h"
+#include "server/ExtAssets.h"
+#include "server/ExtBridge.h"
 
 #include <chrono>
 #include <cstring>
@@ -335,6 +337,81 @@ bool IdeServer::Start(const Cfg& cfg, int port, std::string& errOut) {
       return mCfg.onSetSettings(body);
     });
   });
+
+  // --- мост браузерного расширения (основной режим автопилота) ---
+  if (mCfg.ext) {
+    ExtBridge* ext = mCfg.ext;
+    srv.Get("/api/ext/state", [this, api, ext](const httplib::Request& req, httplib::Response& res) {
+      api(req, res, [ext](const nlohmann::json&) { return ext->StateJson(); });
+    });
+    srv.Get("/api/ext/prompt", [this, api, ext](const httplib::Request& req, httplib::Response& res) {
+      api(req, res, [ext](const nlohmann::json&) { return ext->PromptJson(); });
+    });
+    srv.Get("/api/ext/home", [this, api, ext](const httplib::Request& req, httplib::Response& res) {
+      api(req, res, [ext](const nlohmann::json&) { return ext->HomeJson(); });
+    });
+    srv.Post("/api/ext/answer", [this, api, ext](const httplib::Request& req, httplib::Response& res) {
+      api(req, res, [this, ext](const nlohmann::json& body) {
+        nlohmann::json r = ext->HandleAnswer(body);
+        if (r.value("ok", false)) {
+          std::ostringstream lg;
+          lg << "расширение: ответ разобран — операций " << r.value("ops", 0)
+             << ", применено " << r.value("applied", 0);
+          if (r.value("errors", 0) > 0) lg << ", предупреждений " << r.value("errors", 0);
+          if (!r.value("report", std::string()).empty())
+            lg << "\n" << r.value("report", std::string());
+          Log("agent", lg.str());
+        }
+        return r;
+      });
+    });
+    srv.Post("/api/ext/autopilot", [this, api, ext](const httplib::Request& req, httplib::Response& res) {
+      api(req, res, [this, ext](const nlohmann::json& body) {
+        nlohmann::json r = ext->SetAutopilot(body);
+        Log("agent", std::string("расширение: автопилот ") +
+                         (r.value("autopilot", false) ? "ВКЛЮЧЁН" : "на паузе"));
+        return r;
+      });
+    });
+    srv.Post("/api/ext/reset", [api, ext](const httplib::Request& req, httplib::Response& res) {
+      api(req, res, [ext](const nlohmann::json&) { return ext->ResetDialog(); });
+    });
+    srv.Post("/api/ext/log", [this, api](const httplib::Request& req, httplib::Response& res) {
+      api(req, res, [this](const nlohmann::json& body) {
+        Log(body.value("level", "info"), "расширение: " + body.value("msg", ""));
+        return nlohmann::json{{"ok", true}};
+      });
+    });
+    srv.Post("/api/ext/install", [this, api](const httplib::Request& req, httplib::Response& res) {
+      api(req, res, [this](const nlohmann::json&) {
+        std::string err;
+        const auto dir = platform::ConfigDir() / "extension";
+        if (!WriteExtensionAssets(dir, mPort, mCfg.token, err))
+          return nlohmann::json{{"error", err}};
+        Log("agent", "расширение записано: " + platform::PathToStr(dir));
+        std::string exe, lerr;
+        bool launched = false;
+        if (platform::FindChromiumBrowser(exe, lerr)) {
+          const std::string args =
+              "--user-data-dir=\"" + platform::PathToStr(platform::ConfigDir() / "browser-profile") +
+              "\" --load-extension=\"" + platform::PathToStr(dir) +
+              "\" --no-first-run --new-window https://chat.deepseek.com/";
+          launched = platform::LaunchBrowserWithArgs(exe, args, lerr);
+          if (launched)
+            Log("agent", "браузер запущен с расширением: " + exe);
+          else
+            Log("warn", "не смог запустить браузер: " + lerr);
+        } else {
+          Log("warn", lerr);
+        }
+        return nlohmann::json{{"ok", true},
+                              {"dir", platform::PathToStr(dir)},
+                              {"browser", exe},
+                              {"launched", launched},
+                              {"launchError", lerr}};
+      });
+    });
+  }
 
   // --- чат ---
   srv.Post("/api/chat/connect", [this, api](const httplib::Request& req, httplib::Response& res) {

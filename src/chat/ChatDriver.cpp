@@ -1,5 +1,8 @@
 #include "chat/ChatDriver.h"
 
+#include "ai/AutoNote.h"
+#include "ai/Prompt.h"
+
 #include <chrono>
 #include <sstream>
 
@@ -268,67 +271,7 @@ std::string ChatDriver::BuildPrompt(const std::string& task) {
   // чистим до того, как строка уедет в JsVar/CDP.
   tree = utf8::Sanitize(tree);
 
-  std::ostringstream p;
-  p << "You are DeepSeekIDE Agent — an autonomous senior software engineer running INSIDE the "
-       "user's IDE on their own machine. You ACT on the project; you do not merely chat. "
-       "Answer in Russian by default (the user is Russian-speaking) unless they write English.\n\n"
-
-       "# HOW TO CHANGE FILES (mandatory format)\n"
-       "Emit every change ONLY inside fenced blocks:\n"
-       "```deepseekide-ops\n"
-       "[{\"name\":\"write_file\",\"args\":{\"path\":\"src/main.py\",\"content\":\"full file text\"}}]\n"
-       "```\n"
-       "- Multiple blocks per reply are allowed; they execute top-to-bottom AUTOMATICALLY and "
-       "immediately, with no user confirmation.\n"
-       "- Inside a block: STRICT JSON ONLY — one object {\"name\": ..., \"args\": {...}} or an array "
-       "of such objects. No comments, no prose, no trailing commas.\n"
-       "- Escape newlines inside JSON strings as \\n. Triple backticks are fine INSIDE string "
-       "values (they are data, not block delimiters).\n"
-       "- Code shown OUTSIDE an ops block is never applied — it is merely chat text.\n\n"
-
-       "# TOOLBOX (use freely — autonomy is expected)\n"
-       "- write_file {path, content} — create / FULLY rewrite a file. Always complete files, "
-       "never \"// rest unchanged\" placeholders.\n"
-       "- edit_file {path, old_string, new_string, replace_all?} — replace an EXACT fragment "
-       "(byte-for-byte, including indentation).\n"
-       "- append_file {path, content} — append at end of file.\n"
-       "- insert_lines {path, line, content} — insert BEFORE given 1-based line "
-       "(line = lineCount+1 appends at end).\n"
-       "- replace_lines {path, start_line, end_line, content} — replace line range "
-       "(empty content deletes lines).\n"
-       "- make_dir {path} — create directory.  delete_path {path, recursive?} — delete "
-       "(folders need recursive:true).  copy_file {from, to}.  move_file {from, to}.\n"
-       "- run_command {command, timeout_sec?} — run a shell command in the project root: build, "
-       "test, install deps, run scripts, git… Its stdout/stderr IS SENT BACK TO YOU as the next "
-       "message, so verify results and iterate until green. Requires the user's shell permission; "
-       "if the command reports that shell is disabled, fall back to file edits and tell the user "
-       "how to enable it in Settings.\n\n"
-
-       "# GETTING CONTEXT (self-service, zero user involvement)\n"
-       "Need an existing file's content? Put this on ITS OWN LINE (outside ops blocks):\n"
-       "NEED FILE: <project-relative path>\n"
-       "The IDE automatically replies with its numbered content — use the numbers for "
-       "insert_lines/replace_lines.\n"
-       "Need to find where something is defined/used? Put on its own line:\n"
-       "NEED SEARCH: <substring>\n"
-       "The IDE replies with file:line matches.\n\n"
-
-       "# WORK STYLE (contract)\n"
-       "- ACT, DON'T ASK. Ops apply instantly; pick sensible defaults and mention them instead of "
-       "asking permission. Only ask when truly blocked.\n"
-       "- When a task implies building/testing, finish with a run_command op and iterate on "
-       "failures until it is green.\n"
-       "- Stay strictly inside the project root shown below. Never touch system paths, never run "
-       "destructive commands (no rm -rf /, no drive formatting, no wiping of the project itself).\n"
-       "- After the ops blocks, add a short human summary (few lines) of what was done — in plain "
-       "text, outside blocks.\n"
-       "- Keep prose tight. Prefer one well-planned change over three sloppy ones.\n\n"
-
-       "# PROJECT STRUCTURE\n"
-       << tree << "\n\n"
-        "# TASK\n"
-        << task;
-  return p.str();
+  return dside::BuildAgentPrompt(tree, task);
 }
 
 // ---------------------------------------------------------------------------
@@ -933,61 +876,11 @@ void ChatDriver::ThreadBody() {
             // промпта присылаем содержимое следующим сообщением. Раньше эту
             // просьбу никто не выполнял, и диалог с файлами зависал.
             if (mCfg.tools) {
-              const auto wants = dside::FindFileRequests(raw);
-              const auto searches = dside::FindSearchRequests(raw);
-              if (!wants.empty() || !searches.empty()) {
-                // Поштучный дедуп: отсылаем только то, чего модель ещё не видела.
-                // Раньше дедуп был по сигнатуре всей пачки целиком — при пачке >3
-                // файлов повторный запрос блокировался, и хвост терялся навсегда.
-                std::vector<std::string> todoFiles, todoSearches;
-                for (const auto& w : wants)
-                  if (mSentFileReqs.insert(w).second) todoFiles.push_back(w);
-                for (const auto& q : searches)
-                  if (mSentSearchReqs.insert(q).second) todoSearches.push_back(q);
-                if (todoFiles.empty() && todoSearches.empty()) {
-                  mCfg.log("agent",
-                           "Модель ждёт файлы/поиск, которые уже отправлены — не дублирую.");
-                } else {
-                  std::ostringstream note;
-                  note << "SYSTEM: auto-reply from DeepSeekIDE.\n\n";
-                  int sent = 0;
-                  size_t fsent = 0;
-                  for (const auto& w : todoFiles) {
-                    if (++sent > 3) {
-                      note << "(more files pending — repeat NEED FILE for them to continue)\n";
-                      break;
-                    }
-                    note << "You requested file content of «" << w << "» (lines are numbered; "
-                            "use those numbers with insert_lines/replace_lines).\n";
-                    ToolRunResult fr = mCfg.tools->Execute("read_file", {{"path", w}});
-                    std::string body = utf8::Sanitize(fr.output);
-                    if (body.size() > 120000)
-                      body = utf8::Truncate(body, 120000) +
-                             "\n…(truncated — first 120000 chars shown)\n";
-                    note << "FILE \"" << w << "\"" << (fr.ok ? "" : " — READ ERROR: ")
-                         << "\n```\n" << body << "\n```\n\n";
-                    ++fsent;
-                  }
-                  int ssent = 0;
-                  for (const auto& q : todoSearches) {
-                    if (++ssent > 2) {
-                      note << "(more searches pending — repeat NEED SEARCH for them)\n";
-                      break;
-                    }
-                    note << "You searched the project for «" << q << "». Matches (file:line: text):\n";
-                    ToolRunResult sr = mCfg.tools->Execute("search_files", {{"query", q}});
-                    std::string body = utf8::Sanitize(sr.output);
-                    if (body.size() > 60000)
-                      body = utf8::Truncate(body, 60000) + "\n…(truncated)\n";
-                    note << "SEARCH \"" << q << "\"" << (sr.ok ? "" : " — ERROR: ")
-                         << "\n```\n" << body << "\n```\n\n";
-                  }
-                  mQueue.push_back(Queued{false, note.str()});
-                  mCfg.log("agent", "Модель попросила " + std::to_string(todoFiles.size()) +
-                                    " файл(ов), " + std::to_string(todoSearches.size()) +
-                                    " поиск(ов) — отправляю автоматически в чат.");
-                }
-              }
+              std::string logInfo;
+              const std::string noteTxt = dside::CollectServiceNote(
+                  mCfg.tools, raw, mSentFileReqs, mSentSearchReqs, logInfo);
+              if (!logInfo.empty()) mCfg.log("agent", logInfo);
+              if (!noteTxt.empty()) mQueue.push_back(Queued{false, noteTxt});
             }
             mBaseline = -1;
             return;

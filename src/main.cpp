@@ -29,6 +29,7 @@
 
 #include "core/Settings.h"
 #include "core/SnapshotManager.h"
+#include "server/ExtBridge.h"
 #include "server/IdeServer.h"
 #include "server/OpsApply.h"
 
@@ -184,6 +185,11 @@ int Run(int argc, char* argv[]) {
   srvCfg.onOpenProject = doOpenProject;
   // Настройки из веб-морды (тумблер «терминал агенту» и т.п.) — читают/пишут
   // ту же Settings-структуру, которую слушают гейтинги инструментов.
+  // Мост расширения — основной режим автопилота (chat.deepseek.com + content-script).
+  ExtBridge extBridge;
+  extBridge.Init({&tools, &snaps, &project, port});
+  srvCfg.ext = &extBridge;
+
   srvCfg.onGetSettings = [&] {
     return nlohmann::json{{"allow_shell", settings.allowShell},
                           {"shell_timeout", settings.shellTimeout}};
