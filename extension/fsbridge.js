@@ -43,15 +43,19 @@
     });
   }
   function idbAll(store) {
-    return idb('readonly', function (tx, res) {
+    return idb('readonly', function (tx, res, rej) {
       var g = tx.objectStore(store).getAll();
       var k = tx.objectStore(store).getAllKeys();
-      var out = [];
-      g.onsuccess = function () {
+      var done = 0, out = [];      // ждём УСПЕХ ОБОИХ запросов
+      function fin() {
+        if (++done < 2) return;
         var keys = k.result, vals = g.result;
         for (var i = 0; i < vals.length; ++i) out.push({ key: keys[i], val: vals[i] });
         res(out);
-      };
+      }
+      g.onsuccess = fin; k.onsuccess = fin;
+      g.onerror = function () { rej(g.error); };
+      k.onerror = function () { rej(k.error); };
     });
   }
 
@@ -331,28 +335,32 @@
     return { report: res.join('\n') };
   };
 
-  // ---------- жест: клик по пилюле «Авто-пилот» с data-dsx-needpick="1"
-  // открывает пикер/перевыпрашивает доступ прямо здесь, в MAIN-мире —
-  // у нас живой user activation: контент-скрипт сам пикер открыть не может.
+  // ---------- жест: кнопка «📂 Выбрать папку» в оверлейной модалке.
+  // Клик по ней ловим ЗДЕСЬ, в MAIN-мире — user activation живой,
+  // showDirectoryPicker/requestPermission откроются без проблем.
   function bindGesture() {
-    var el = document.querySelector('.dsx-pilot-tg');
-    if (!el || el.__dsxBound) return;
-    el.__dsxBound = true;
-    el.addEventListener('click', function () {
-      if (el.getAttribute('data-dsx-needpick') !== '1') return;
-      (async function () {
-        try {
-          var stt = await ensure();
-          if (!stt.ok) await pick();
-          window.postMessage({ __dsidefs: 'event', ev: 'folder', name: dirName }, '*');
-        } catch (e) {
-          window.postMessage({ __dsidefs: 'event', ev: 'folderError',
-            error: String((e && e.name) || '') + ': ' + (e && e.message ? e.message : e) }, '*');
-        }
-      })();
-    }, true);
+    var btns = document.querySelectorAll('.dsx-modal-pick');
+    for (var i = 0; i < btns.length; ++i) {
+      var el = btns[i];
+      if (el.__dsxBound) continue;
+      el.__dsxBound = true;
+      el.addEventListener('click', function () {
+        el.textContent = '⏳ Открываю выбор папки…';
+        (async function () {
+          try {
+            var stt = await ensure();
+            if (!stt.ok) await pick();
+            window.postMessage({ __dsidefs: 'event', ev: 'folder', name: dirName }, '*');
+          } catch (e) {
+            window.postMessage({ __dsidefs: 'event', ev: 'folderError',
+              error: String((e && e.name) || '') + ': ' + (e && e.message ? e.message : e) }, '*');
+            el.textContent = '📂 Выбрать папку проекта';
+          }
+        })();
+      }, true);
+    }
   }
-  setInterval(bindGesture, 1500);
+  setInterval(bindGesture, 700);
 
   // ---------- диспетчер сообщений
   window.addEventListener('message', async function (ev) {

@@ -43,10 +43,15 @@
   }
 
   // ---------------- настройки (только тумблер автопилота)
-  var cfg = { pilot: true };
+  var cfg = { pilot: false };
   try {
-    chrome.storage.local.get(['pilot'], function (v) {
-      if (v.pilot !== undefined) cfg.pilot = v.pilot;
+    chrome.storage.local.get(['pilot', 'v'], function (v) {
+      if (v.v !== 18) {
+        cfg.pilot = false;                       // свежая установка/обнова: выключен
+        try { chrome.storage.local.set({ pilot: false, v: 18 }); } catch (e) {}
+      } else if (v.pilot !== undefined) {
+        cfg.pilot = v.pilot;
+      }
       syncNativeToggle();
     });
   } catch (e) { /* дефолты */ }
@@ -87,10 +92,66 @@
     }, 2600);
   }
 
+  // ---------------- модалка «Подключение автопилота» (стиль ds-modal сайта)
+  var dsxModal = null;
+  function closeFolderModal() {
+    if (dsxModal) { dsxModal.remove(); dsxModal = null; }
+  }
+  function showFolderModal() {
+    closeFolderModal();
+    var ov = document.createElement('div');
+    ov.className = 'dsx-modal-ov';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:1030;background:rgba(0,0,0,.6);' +
+      'display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .22s';
+    ov.innerHTML =
+      '<div class="ds-elevated" style="width:420px;max-width:calc(100vw - 48px);border-radius:16px;' +
+      'background:var(--dsw-alias-bg-layer-1,#2b2d31);border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.08));' +
+      'box-shadow:var(--dsw-shadow-lv3,0 16px 48px rgba(0,0,0,.45));font-family:var(--dsw-font-family,inherit);' +
+      'color:var(--dsw-alias-label-primary,#f5f5f5);transform:scale(.94);transition:transform .22s var(--ds-ease-out,ease-out)">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;padding:18px 20px 4px">' +
+          '<div style="font-size:17px;font-weight:600">🛩 Авто-пилот</div>' +
+          '<div class="dsx-modal-x" role="button" tabindex="0" style="cursor:pointer;padding:6px;border-radius:8px;' +
+          'color:var(--dsw-alias-label-secondary,#aaa)" title="Закрыть">✕</div>' +
+        '</div>' +
+        '<div style="padding:8px 20px 0;font-size:13.5px;line-height:1.55;color:var(--dsw-alias-label-secondary,#aaa)">' +
+          'DeepSeek станет агентом твоего проекта: правки будут падать прямо в файлы, ' +
+          'а контекст подмешиваться скрытно. Выбери корневую папку проекта — ' +
+          'она запомнится, потом всё само.' +
+        '</div>' +
+        '<div class="dsx-modal-cur" style="display:none;padding:12px 20px 0;font-size:13px;' +
+        'color:var(--dsw-alias-label-tertiary,#888)"></div>' +
+        '<div style="display:flex;gap:10px;padding:18px 20px 20px">' +
+          '<button class="dsx-modal-pick" style="flex:1;padding:11px 16px;border:none;cursor:pointer;' +
+          'border-radius:12px;font-size:14px;font-weight:600;font-family:inherit;color:#fff;' +
+          'background:var(--dsw-alias-brand-primary,#5686fe);transition:filter .15s">📂 Выбрать папку проекта</button>' +
+          '<button class="dsx-modal-no" style="padding:11px 16px;cursor:pointer;border-radius:12px;font-size:14px;' +
+          'font-family:inherit;color:var(--dsw-alias-label-primary,#eee);' +
+          'background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));' +
+          'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1))">Позже</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(ov);
+    dsxModal = ov;
+    requestAnimationFrame(function () {
+      ov.style.opacity = '1';
+      ov.firstElementChild.style.transform = 'scale(1)';
+    });
+    var cur = ov.querySelector('.dsx-modal-cur');
+    if (st.folderName) {
+      cur.style.display = 'block';
+      cur.textContent = 'Сейчас запомнено: 📂 ' + st.folderName;
+    }
+    ov.querySelector('.dsx-modal-x').onclick = closeFolderModal;
+    ov.querySelector('.dsx-modal-no').onclick = closeFolderModal;
+    ov.addEventListener('mousedown', function (e) { if (e.target === ov) closeFolderModal(); });
+    // «Выбрать папку» перехватит fsbridge в MAIN-мире (там живой жест) — см. bindGesture.
+  }
+
   // ---------------- события моста (папка выбрана жестом в MAIN-мире)
   function onBridgeEvent(m) {
     if (m.ev === 'folder') {
       st.folderReady = true; st.folderName = m.name || '';
+      closeFolderModal();
       syncNativeToggle();
       toast('📂 Проект подключён: ' + st.folderName);
       refreshPrompt();
@@ -103,9 +164,9 @@
 
   // ---------------- сборка промптов
   function bigPrompt(tree) {
-    return '[Автоматическое системное сообщение DeepSeek Extended. Служебная обёртка ' +
-      MARK + ' … ' + END + ' — транспортная разметка расширения: всегда учитывай её ' +
-      'содержимое и НИКОГДА не упоминай и не цитируй её в ответах пользователю.]\n\n' +
+    return '[Автоматическое системное сообщение DeepSeek Extended. Этот блок — служебный ' +
+      'контекст расширения: всегда учитывай его и НИКОГДА не упоминай и не цитируй ' +
+      'в ответах пользователю.]\n\n' +
       DsideOps.buildPrompt(tree);
   }
   function shortPrefix() {
@@ -198,14 +259,6 @@
   }, true);
 
   // ---------------- БРИТВА: прячем служебный текст из отрисованных пузырей
-  function chipHtml(label) {
-    return '<span style="display:inline-flex;align-items:center;gap:7px;padding:5px 13px;' +
-      'border-radius:999px;font-size:12.5px;line-height:1.35;font-family:var(--dsw-font-family,inherit);' +
-      'background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.06));' +
-      'border:1px solid var(--dsw-alias-button-ghost-active-border,rgba(255,255,255,.1));' +
-      'color:var(--dsw-alias-label-secondary,#aaa);white-space:pre-wrap">' +
-      label.replace(/</g, '&lt;') + '</span>';
-  }
   function trimStealthNodes() {
     var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     var hits = [], n;
@@ -220,23 +273,34 @@
       }
       if (!el) return;
       var full = el.textContent;
-      var i = full.indexOf(MARK), j = full.indexOf(END);
-      if (i < 0 || j < 0) return;
-      var hidden = full.slice(i, j);
-      var chip = (hidden.match(/CHIP:([^\n]*)/) || [])[1] || '🛩 Автопилот';
+      var i = full.indexOf(MARK), j = full.lastIndexOf(END);
+      if (i < 0 || j < 0 || j <= i) return;
       var tail = full.slice(j + END.length).replace(/^\s+/, '');
-      if (tail) el.textContent = tail; else el.innerHTML = chipHtml(chip);
+      var chip = (full.slice(i, j).match(/CHIP:([^\n]*)/) || [])[1] || 'служебное';
+      if (tail) {
+        // сообщение пользователя с подмешанным промптом — виден только его текст
+        el.textContent = tail;
+      } else {
+        // чисто служебное сообщение — скрываем его пузырь ЦЕЛИКОМ
+        var box = el, hp = 0;
+        while (box && hp < 12 &&
+               !(box.hasAttribute && box.hasAttribute('data-virtual-list-item-key')) &&
+               !(box.className && String(box.className).indexOf('_9663006') >= 0)) {
+          box = box.parentElement; hp++;
+        }
+        (box || el).style.display = 'none';
+      }
       st.lastTrimAt = Date.now();
       console.log('[DSX] скрыт служебный сегмент:', chip);
     });
   }
 
   // ---------------- ввод в чат (служебные сообщения автопилота)
-  async function injectStealth(real, chip) {
+  async function injectStealth(real, logTag) {
     var el = findEditor();
     if (!el) { toast('Не нашёл поле ввода чата'); return false; }
     el.focus();
-    nativeSetValue(el, wrapStealth(real, chip, ''));
+    nativeSetValue(el, wrapStealth(real, logTag, ''));
     await new Promise(function (r) { setTimeout(r, 260); });
     var box = el, clicked = false;
     for (var i = 0; i < 6 && box && !clicked; ++i) {
@@ -253,7 +317,7 @@
         ke.__dsxBypass = true; el.dispatchEvent(ke);
       });
     }
-    console.log('[DSX] inject:', chip, real.length, 'chars');
+    console.log('[DSX] inject:', logTag, real.length, 'chars');
     return true;
   }
 
@@ -281,14 +345,14 @@
   function base(p) { var a = String(p).split('/'); return a[a.length - 1]; }
   async function serviceNote(raw) {
     var files = DsideOps.findFileRequests(raw), searches = DsideOps.findSearchRequests(raw);
-    if (!files.length && !searches.length) return { text: '', chip: '' };
+    if (!files.length && !searches.length) return { text: '', rows: [] };
     var todoF = files.filter(function (p) { return !st.sentFiles[p]; }),
         todoS = searches.filter(function (q) { return !st.sentSearches[q]; });
     todoF.forEach(function (p) { st.sentFiles[p] = 1; });
     todoS.forEach(function (q) { st.sentSearches[q] = 1; });
-    if (!todoF.length && !todoS.length) return { text: '', chip: '' };
+    if (!todoF.length && !todoS.length) return { text: '', rows: [] };
     var out = ['SYSTEM: auto-reply from DeepSeek Extended.'];
-    var chips = [], i;
+    var rows = [], i;
     for (i = 0; i < Math.min(todoF.length, 3); ++i) {
       var p = todoF[i];
       out.push('You requested file content of «' + p + '» (lines are numbered; use those numbers with insert_lines/replace_lines).');
@@ -297,11 +361,11 @@
         var bodyTxt = (r.data.lines > 4000 ? '(первые 4000 строк)\n' : '') + r.data.text;
         if (bodyTxt.length > 120000) bodyTxt = bodyTxt.slice(0, 120000) + '\n…(truncated)';
         out.push('FILE "' + p + '"\n```\n' + bodyTxt + '\n```');
-        chips.push('«' + base(p) + '»');
+        rows.push('📖 Прочитано: ' + base(p));
       } else {
         out.push('FILE "' + p + '" — READ ERROR: ' + (r.error || 'не читается') +
                  '\n(используйте NEED SEARCH или попросите другое имя)');
-        chips.push('«' + base(p) + '» ✗');
+        rows.push('📖 Не удалось прочитать: ' + base(p));
       }
     }
     if (todoF.length > 3) out.push('(more files pending — repeat NEED FILE for them to continue)');
@@ -312,13 +376,24 @@
       var sb = s.ok ? s.data.text : ('ERROR: ' + (s.error || ''));
       if (sb.length > 60000) sb = sb.slice(0, 60000) + '\n…(truncated)';
       out.push('SEARCH "' + q + '"\n```\n' + sb + '\n```');
-      chips.push('🔍 ' + q);
+      rows.push('🔍 Поиск «' + q + '»' + (s.ok ? ': ' + s.data.matches + ' совпадений' : ' — ошибка'));
     }
-    var chip = '📖 Прочитано: ' + chips.join(' · ');
-    return { text: out.join('\n\n'), chip: chip };
+    return { text: out.join('\n\n'), rows: rows };
   }
 
   // ---------------- главный цикл: ответ устоялся → применить → ответить
+  function appendAssistantRows(block, rows) {
+    if (!block || !block.isConnected) return;
+    rows.forEach(function (t) {
+      var p = document.createElement('p');
+      p.className = 'dsx-row-line';
+      p.textContent = t;
+      p.style.cssText = 'margin:2px 0;font-size:13px;line-height:1.5;' +
+        'color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary,#999));' +
+        'font-family:var(--dsw-font-family,inherit)';
+      block.appendChild(p);
+    });
+  }
   async function settleAndHandle() {
     if (st.busy || !cfg.pilot || !st.folderReady) return;
     var block = lastAnswerBlock();
@@ -332,7 +407,7 @@
       if (pay.obs.length) pay.obs.forEach(function (b) { DsideOps.parseOpsBody(b, outp); });
       else DsideOps.extractOps(text, outp);
 
-      var note = '', chip = '';
+      var note = '', rows = [];
       if (outp.ops.length) {
         outp.ops = outp.ops.filter(function (o) {
           var p = o.args && (o.args.path || o.args.from);
@@ -343,31 +418,34 @@
           ops: outp.ops.map(function (o) { return { name: o.name, args: o.args }; })
         });
         if (r.ok) {
-          toast(r.data.done === r.data.total
-            ? '✅ Применено: ' + r.data.done + ' из ' + r.data.total
-            : '⚠️ Применено ' + r.data.done + ' из ' + r.data.total + ' — есть ошибки');
-          chip = '⚙️ Применено: ' + r.data.done + ' из ' + r.data.total;
+          var sum = r.data.done === r.data.total
+            ? '✅ Применено: ' + r.data.done + ' из ' + r.data.total + ' операций'
+            : '⚠️ Применено ' + r.data.done + ' из ' + r.data.total + ' — есть ошибки';
+          toast(sum);
+          rows.push(sum);
           note = 'SYSTEM: ops applied automatically by DeepSeek Extended:\n\n```\n' +
                  r.data.report + '\n```\n';
           refreshPrompt(); // дерево изменилось
         } else {
           toast('Ошибка применения: ' + (r.error || '?'));
+          rows.push('⚠️ Ошибка применения правок');
         }
       }
       var svc = await serviceNote(text);
       if (svc.text) {
         note = note ? note + '\n\n' + svc.text : svc.text;
-        chip = svc.chip + (chip ? ' · ' + chip : '');
+        rows = svc.rows.concat(rows);
       }
 
       if (note) {
         if (st.autoCount >= 12) {
           toast('Потолок авто-сообщений (12) — ваш ход');
-        } else if (await injectStealth(note, chip || '🛩 Автопилот')) {
+        } else if (await injectStealth(note, 'служебное')) {
           st.autoCount++;
           sessionStorage.setItem('dsx:auto', String(st.autoCount));
         }
       }
+      if (rows.length) appendAssistantRows(block, rows);
       if (outp.errors.length) console.warn('[DSX] ops warnings:', outp.errors);
     } finally { st.busy = false; }
   }
@@ -390,16 +468,10 @@
     var on = cfg.pilot;
     el.classList.toggle('ds-toggle-button--selected', on);
     el.setAttribute('aria-pressed', on ? 'true' : 'false');
-    el.setAttribute('data-dsx-needpick', (on && !st.folderReady) ? '1' : '0');
-    var dot = el.querySelector('.dsx-dot-live');
-    if (dot) {
-      dot.style.display = on ? 'block' : 'none';
-      dot.style.background = st.folderReady ? '#3ddc84' : '#e8a33d';
-    }
-    el.title = !on ? 'Авто-пилот выкл: обычный чат, ничего не применяется'
+    el.title = !on ? 'Авто-пилот выкл: обычный чат. Включи — подключишь папку проекта.'
       : st.folderReady
         ? 'Авто-пилот ВКЛ: проект «' + st.folderName + '». Промпт подмешивается незаметно.'
-        : 'Авто-пилот ВКЛ — кликни, чтобы выбрать папку проекта';
+        : 'Авто-пилот ВКЛ — ожидает выбор папки проекта';
   }
   function ensureNativeToggle() {
     var host = findToggleHost();
@@ -412,9 +484,6 @@
       el.setAttribute('role', 'button');
       el.style.cssText = 'transform:translateZ(0px);position:relative';
       el.innerHTML =
-        '<span class="dsx-dot-live" style="display:none;position:absolute;top:-3px;right:-3px;' +
-        'width:8px;height:8px;border-radius:50%;background:#3ddc84;' +
-        'box-shadow:0 0 6px 1px rgba(61,220,132,.7)"></span>' +
         '<div class="ds-toggle-button__icon"><div class="ds-icon" style="font-size:inherit">' +
         '<div style="width:14px;height:14px">' +
         '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">' +
@@ -423,12 +492,11 @@
         '<span class="_6dbc175">Авто-пилот</span>' +
         '<div class="ds-focus-ring" style="--dsl-focus-ring-offset:-1px"></div>';
       el.addEventListener('click', function () {
-        if (!cfg.pilot) { cfg.pilot = true; saveCfg(); syncNativeToggle(el); }
-        else if (st.folderReady) { cfg.pilot = false; saveCfg(); syncNativeToggle(el); }
-        else {
-          syncNativeToggle(el);
-          toast('📂 Выбери папку проекта в диалоге…');
-          /* жест поймает fsbridge (MAIN-мир) и откроет пикер */
+        if (!cfg.pilot) {
+          cfg.pilot = true; saveCfg(); syncNativeToggle(el);
+          if (!st.folderReady) showFolderModal();
+        } else {
+          cfg.pilot = false; saveCfg(); syncNativeToggle(el);
         }
       });
       el.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') el.click(); });
