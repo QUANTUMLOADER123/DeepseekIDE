@@ -1,5 +1,5 @@
 /* =====================================================================
- * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v20.
+ * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v21.
  * Никакого своего UI, кроме: (1) родной пилюли «Авто-пилот» рядом с
  * тумблерами сайта, (2) шестерёнки настроек вплотную слева от скрепки
  * (icon-кнопка без аутлайна).
@@ -54,7 +54,7 @@
   }
 
   // ---------------- настройки (тумблер + правила + мелочи)
-  var CFG_VERSION = 20;
+  var CFG_VERSION = 21;
   var cfg = { pilot: false, rules: '', statusRows: true };
   try {
     chrome.storage.local.get(['pilot', 'rules', 'statusRows', 'v'], function (v) {
@@ -85,6 +85,7 @@
     lastAnswer: '', opsHash: sessionStorage.getItem('dsx:opsh') || '',
     autoCount: Number(sessionStorage.getItem('dsx:auto') || 0),
     sentFiles: {}, sentSearches: {}, busy: false,
+    waitingAnswer: sessionStorage.getItem('dsx:wait') === '1',
     lastUrl: location.href, lastTrimAt: 0, watchdog: 0, reloadHint: 0
   };
 
@@ -224,7 +225,7 @@
       '</div>' +
       // --- футер
       '<div style="display:flex;align-items:center;gap:10px;padding:18px 20px 20px">' +
-        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.3.0</div>' +
+        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.3.1</div>' +
         '<button class="dsx-set-cancel" style="padding:10px 16px;cursor:pointer;border-radius:12px;font-size:14px;' +
         'font-family:inherit;color:var(--dsw-alias-label-primary,#eee);' +
         'background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));' +
@@ -441,12 +442,25 @@
     }
   }
 
-  // ---------------- сторожок композера: если что-то прячет textarea,
-  // возвращаем её (бритва композер не трогает, но мало ли — страхуемся)
+  // ---------------- сторожок композера + залежалые следы старых версий:
+  // снимаем display:none с textarea и input[type=file] (ломало вложения),
+  // чистим «📖»-строки и линию статус-боксов от v19–v20.
   setInterval(function () {
     try {
-      var ta = document.querySelector('textarea[placeholder*="DeepSeek" i]');
+      document.querySelectorAll('.dsx-row-line').forEach(function (p) {
+        var t = p.textContent || '';
+        if (/[📖🔍✅⚠]/.test(t)) p.textContent = t.replace(/[📖🔍✅⚠]\s*/g, '');
+      });
+    } catch (e) {}
+  }, 1500);
+  setInterval(function () {
+    try {
+      var box = document.querySelector('._871cbca') || document;
+      var ta = box.querySelector('textarea[placeholder*="DeepSeek" i], textarea');
       if (ta && ta.style && ta.style.display === 'none') ta.style.removeProperty('display');
+      box.querySelectorAll('input[type="file"]').forEach(function (f) {
+        if (f.style && f.style.display === 'none') f.style.removeProperty('display');
+      });
     } catch (e) {}
   }, 1000);
 
@@ -534,6 +548,11 @@
   sentLoad();
   function base(p) { var a = String(p).split('/'); return a[a.length - 1]; }
   async function serviceNote(raw) {
+    // LLM иногда пересказывает прошлые NEED-строки в ответе («я запросил
+    // README.md…») — отрезаем этот эпилог, запросы ниже списка не ловим.
+    var cut = raw.search(/\n\s*(Теперь|Итак|Отлично|Готово|Хорошо,? вот|Вот что|Давай(те)?|Кстати)/);
+    if (cut > 0) raw = raw.slice(0, cut);
+    // скобки с путём не бывают запросами — только голые строки
     var files = DsideOps.findFileRequests(raw), searches = DsideOps.findSearchRequests(raw);
     if (!files.length && !searches.length) return { text: '', rows: [] };
     var todoF = files.filter(function (p) { return !st.sentFiles[p]; }),
@@ -559,6 +578,10 @@
         rows.push('Не удалось прочитать: ' + base(p));
       }
     }
+    if (txt.indexOf('NEED FILE:') < 0 && txt.indexOf('NEED SEARCH:') < 0) return [];
+    // отрезаем всё после LLM-эпилога (он пересказывает наши строки)
+    var cut = txt.search(/\n(Теперь|Итак|Отлично|Вот |Хорошо|Готово|Далее[,:])/);
+    if (cut > 0) txt = txt.slice(0, cut);
     if (todoF.length > 3) out.push('(more files pending — repeat NEED FILE for them to continue)');
     for (i = 0; i < Math.min(todoS.length, 2); ++i) {
       var q = todoS[i];
@@ -584,9 +607,9 @@
       if (!box) {
         box = document.createElement('div');
         box.className = 'dsx-status-box';
-        box.style.cssText = 'margin-top:6px';
         host.appendChild(box);
       }
+      box.style.cssText = 'margin-top:6px'; // перебиваем стили старых боксов (была линия)
       rows.forEach(function (t) {
         var p = document.createElement('p');
         p.className = 'dsx-row-line';
@@ -605,6 +628,16 @@
     for (var i = 0; i < s.length; ++i) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
     return (h >>> 0).toString(36) + '.' + s.length;
   }
+  // ожил ответ модели: снимаем гейт
+  function noteAnswerArrived(text) {
+    if (st.waitingAnswer) {
+      st.waitingAnswer = false;
+      sessionStorage.removeItem('dsx:wait');
+      console.log('[DSX] пришёл ответ модели — гейт снят');
+    }
+    st.lastAnswer = text;
+    try { sessionStorage.setItem('dsx:last', text); } catch (e) {}
+  }
   async function settleAndHandle() {
     try {
       if (st.busy || !cfg.pilot || !st.folderReady) return;
@@ -612,8 +645,9 @@
       if (!block) return;
       var pay = answerPayload(block);
       var text = (pay.text || '').trim();
-      if (text === st.lastAnswer || text.length < 3) return;
-      st.busy = true; st.lastAnswer = text;
+      if (text.length > 80 && text === (st.lastAnswer || '').trim()) return; // дедуп
+      st.busy = true;
+      noteAnswerArrived(text);
       try {
         var answHash = hashStr(text);
         var tail = isTailAssistant(block);
@@ -664,7 +698,19 @@
             toast('Потолок авто-сообщений (12) — ваш ход');
           } else if (await injectStealth(note, 'служебное')) {
             st.autoCount++;
+            // служебная ушла на сервер: отсюда и до ответа модели любые
+            // копии этого NEED-дождя больше не слушаем (иначе повторная
+            // отправка при нашем же пузыре внизу ленты)
+            st.waitingAnswer = true;
+            sessionStorage.setItem('dsx:wait', '1');
             sessionStorage.setItem('dsx:auto', String(st.autoCount));
+            if (!st.reloadHint) { // сторожок: вдруг вкладку заглушили
+              st.reloadHint = setTimeout(function () {
+                if (st.waitingAnswer) {
+                  console.log('[DSX] ответа нет давно — можно «продолжи»');
+                }
+              }, 300000);
+            }
           }
         }
         if (rows.length) appendAssistantRows(block, rows);
@@ -832,7 +878,7 @@
 
   // ---------------- старт
   if (sessionStorage.getItem('dsx:primed') === '1') st.primedOnce = true;
-  console.log('[DSX] DeepSeek Extended v20 стелс: загружено. pilot=' + cfg.pilot);
+  console.log('[DSX] DeepSeek Extended v21 стелс: загружено. pilot=' + cfg.pilot);
   refreshPrompt();
   setTimeout(refreshPrompt, 1200);
   setInterval(function () {
