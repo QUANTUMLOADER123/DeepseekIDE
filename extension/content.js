@@ -58,7 +58,7 @@
     bigPrompt: '', primedOnce: false,
     lastAnswer: '', autoCount: Number(sessionStorage.getItem('dsx:auto') || 0),
     sentFiles: {}, sentSearches: {}, busy: false,
-    lastUrl: location.href
+    lastUrl: location.href, lastTrimAt: 0, watchdog: 0
   };
 
   // ---------------- микро-тосты (в стиле сайта, сами исчезают)
@@ -121,6 +121,8 @@
     var t = await fsCall('tree', { max_entries: 350 });
     if (t.ok) st.bigPrompt = bigPrompt(t.data.text);
     else if (!st.bigPrompt) st.bigPrompt = bigPrompt('');
+    console.log('[DSX] refresh: папка="' + st.folderName + '", промпт=' +
+      (st.bigPrompt ? st.bigPrompt.length + ' символов' : 'НЕТ') + (t.ok ? '' : ' (дерево не прочиталось)'));
     syncNativeToggle();
   }
 
@@ -141,18 +143,44 @@
   }
   // Синхронно переписываем textarea ДО того, как сайт прочтёт значение
   // (capture-фаза Enter/клика): пользователь не видит промпт вообще.
+  var lastFolderToast = 0;
   function tryStealthPrefix(editor) {
-    if (!cfg.pilot || !st.folderReady || !st.bigPrompt) return;
-    var v = editor.value;
+    var v = editor ? editor.value : '';
     if (!v || !v.trim()) return;
     if (v.indexOf(MARK) === 0) return; // это наше собственное служебное сообщение
+    if (!cfg.pilot) { console.log('[DSX] пропуск: автопилот выкл'); return; }
+    if (!st.folderReady) {
+      // Chrome после перезапуска требует ЖЕСТ для возврата доступа к папке —
+      // подскажем, что делать, и попробуем тихо восстановить в фоне.
+      if (Date.now() - lastFolderToast > 15000) {
+        lastFolderToast = Date.now();
+        toast('📂 Кликни по «🛩 Авто-пилот» — нужен доступ к папке проекта');
+      }
+      console.log('[DSX] пропуск: папка не подключена (folderReady=false)');
+      fsCall('ensure').then(function (en) {
+        if (en.ok && en.data.ok) refreshPrompt();
+      });
+      return;
+    }
     var prefix, chip;
     if (st.primedOnce) { prefix = shortPrefix(); chip = '🛩 Автопилот'; }
-    else { prefix = st.bigPrompt; chip = '🛩 Контекст проекта загружен'; }
-    nativeSetValue(editor, wrapStealth(prefix, chip, v));
-    if (!st.primedOnce) { st.primedOnce = true; sessionStorage.setItem('dsx:primed', '1'); }
+    else if (st.bigPrompt) { prefix = st.bigPrompt; chip = '🛩 Контекст проекта загружен'; }
+    else { prefix = shortPrefix(); chip = '🛩 Автопилот'; }
+    nativeSetValue(editor, wrapStealth(prefix, chip, v.replace(/^\s+/, '')));
+    if (!st.primedOnce && st.bigPrompt) {
+      st.primedOnce = true; sessionStorage.setItem('dsx:primed', '1');
+      toast('🛩 Контекст проекта подшит к первому сообщению');
+    }
     st.autoCount = 0; st.sentFiles = {}; st.sentSearches = {};
     sessionStorage.setItem('dsx:auto', '0');
+    console.log('[DSX] промпт подшит к сообщению:', (prefix === st.bigPrompt ? 'БОЛЬШОЙ' : 'короткий'),
+      '| итого символов:', editor.value.length);
+    // сторожок: если через 2с ни один пузырь не обрезался — сайт мог уйти от этих классов
+    clearTimeout(st.watchdog);
+    st.watchdog = setTimeout(function () {
+      if (Date.now() - st.lastTrimAt > 1900)
+        console.warn('[DSX] ВНИМАНИЕ: пузырь с промптом не найден — возможно, сайт сменил вёрстку. Скинь этот лог разработчику.');
+    }, 2000);
   }
   document.addEventListener('keydown', function (e) {
     if (e.__dsxBypass || e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
@@ -190,19 +218,16 @@
         if (el.textContent.indexOf(END) >= 0) break;
         el = el.parentElement; hops++;
       }
-      if (!el || el.getAttribute('data-dsx-trim') === '1') return;
+      if (!el) return;
       var full = el.textContent;
       var i = full.indexOf(MARK), j = full.indexOf(END);
       if (i < 0 || j < 0) return;
       var hidden = full.slice(i, j);
       var chip = (hidden.match(/CHIP:([^\n]*)/) || [])[1] || '🛩 Автопилот';
       var tail = full.slice(j + END.length).replace(/^\s+/, '');
-      el.setAttribute('data-dsx-trim', '1');
-      if (tail) {
-        el.textContent = tail;
-      } else {
-        el.innerHTML = chipHtml(chip);
-      }
+      if (tail) el.textContent = tail; else el.innerHTML = chipHtml(chip);
+      st.lastTrimAt = Date.now();
+      console.log('[DSX] скрыт служебный сегмент:', chip);
     });
   }
 
@@ -400,7 +425,11 @@
       el.addEventListener('click', function () {
         if (!cfg.pilot) { cfg.pilot = true; saveCfg(); syncNativeToggle(el); }
         else if (st.folderReady) { cfg.pilot = false; saveCfg(); syncNativeToggle(el); }
-        else { syncNativeToggle(el); /* жест поймает fsbridge и откроет пикер */ }
+        else {
+          syncNativeToggle(el);
+          toast('📂 Выбери папку проекта в диалоге…');
+          /* жест поймает fsbridge (MAIN-мир) и откроет пикер */
+        }
       });
       el.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') el.click(); });
       host.appendChild(el);
@@ -431,5 +460,10 @@
 
   // ---------------- старт
   if (sessionStorage.getItem('dsx:primed') === '1') st.primedOnce = true;
-  setTimeout(refreshPrompt, 900);
+  console.log('[DSX] DeepSeek Extended v17 стелс: загружено. pilot=' + cfg.pilot);
+  refreshPrompt();
+  setTimeout(refreshPrompt, 1200);
+  setInterval(function () {
+    if (!st.bigPrompt || !st.folderReady) refreshPrompt();
+  }, 6000);
 })();
