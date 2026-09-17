@@ -51,7 +51,7 @@
       if (v.pilot !== undefined) cfg.pilot = v.pilot;
       if (v.note !== undefined) cfg.note = v.note;
       if (v.anim !== undefined) cfg.anim = v.anim;
-      ui('conf', cfg); ui('pilot', { on: cfg.pilot });
+      ui('conf', cfg); ui('pilot', { on: cfg.pilot }); ensureNativeToggle();
     });
   } catch (e) { /* storage недоступен — работаем на дефолтах */ }
   function saveCfg() {
@@ -110,11 +110,13 @@
     else if (name === 'pilot') {
       cfg.pilot = !cfg.pilot; saveCfg();
       ui('pilot', { on: cfg.pilot });
+      ensureNativeToggle();
       status(cfg.pilot ? 'автопилот включён' : 'пауза автопилота', cfg.pilot ? 'on' : '');
-    } else if (name === 'conf') { cfg = payload; saveCfg(); }
+    } else if (name === 'conf') { cfg = payload; saveCfg(); ensureNativeToggle(); }
     else if (name === 'needFiles') cmdFiles();
     else if (name === 'needSnaps') cmdSnaps();
     else if (name === 'rollback') cmdRollback(payload);
+    else if (name === 'selftest') cmdSelfTest();
     else if (name === 'preview') {
       fsCall('readNumbered', { path: payload, end_line: 120 }).then(function (r) {
         ui('preview', { text: r.ok ? r.data.text : 'не прочиталось: ' + r.error });
@@ -267,6 +269,86 @@
     }
     console.log('[DSX] inject:', reason, text.length, 'chars');
     return true;
+  }
+
+  // ---------------- НАТИВНАЯ пилюля «Авто-пилот» рядом с «Глубокое мышление/Умный поиск»
+  // Зеркалим их разметку .ds-toggle-button один в один — сайт её рендерит как свою.
+  // SPA перерисовывает панель при навигации — следим и перевставляем.
+  function findToggleHost() {
+    var host = document.querySelector('._58b31c9');
+    if (host) return host;
+    // запасной план: ищем по тексту нативных пилюль
+    var spans = document.querySelectorAll('.ds-toggle-button span');
+    for (var i = 0; i < spans.length; ++i) {
+      var t = spans[i].textContent || '';
+      if (t.indexOf('Умный поиск') >= 0 || t.indexOf('Глубокое мышление') >= 0)
+        return spans[i].closest('.ds-toggle-button').parentElement;
+    }
+    return null;
+  }
+  function syncNativeToggle(el) {
+    el = el || document.querySelector('.dsx-pilot-tg');
+    if (!el) return;
+    var on = cfg.pilot;
+    el.classList.toggle('ds-toggle-button--selected', on);
+    el.setAttribute('aria-pressed', on ? 'true' : 'false');
+    var dot = el.querySelector('.dsx-dot-live');
+    if (dot) dot.style.display = on ? 'block' : 'none';
+    el.title = on
+      ? 'Авто-пилот ВКЛ: ответы DeepSeek применяются в ваш проект'
+      : 'Авто-пилот выкл: просто чат, ничего не применяется';
+  }
+  function ensureNativeToggle() {
+    var host = findToggleHost();
+    if (!host) return;
+    var el = host.querySelector('.dsx-pilot-tg');
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'dsx-native dsx-pilot-tg f79352dc ds-toggle-button ds-toggle-button--m';
+      el.tabIndex = 0;
+      el.setAttribute('role', 'button');
+      el.style.transform = 'translateZ(0px)';
+      el.innerHTML =
+        '<span class="dsx-dot-live"></span>' +
+        '<div class="ds-toggle-button__icon"><div class="ds-icon" style="font-size:inherit">' +
+        '<div style="width:14px;height:14px">' +
+        '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+        '<path d="M8 1.6c.9 0 1.6.7 1.6 1.6 0 .5-.2.9-.6 1.2l2.2 4.4c.5-.3.6-.2.9-.1 1.7.9 1.9 3 .9 4.2-1 1.1-2.7 1-3.8-.1l-2.7-1.3-2.7 1.3c-1.1 1.1-2.8 1.2-3.8.1-1-1.2-.8-3.3.9-4.2.3-.1.5-.2.9.1L4.6 4.6c-.4-.3-.6-.7-.6-1.2C4 2.3 4.6 1.6 5.5 1.6c.7 0 1.3.4 1.5 1 .2-.1.5-.2 1-.2Z" fill="currentColor"/>' +
+        '</svg></div></div></div>' +
+        '<span class="_6dbc175">Авто-пилот</span>' +
+        '<div class="ds-focus-ring" style="--dsl-focus-ring-offset:-1px"></div>';
+      el.addEventListener('click', function () {
+        cfg.pilot = !cfg.pilot;
+        saveCfg();
+        ui('pilot', { on: cfg.pilot });
+        ui('conf', cfg);
+        syncNativeToggle(el);
+        status(cfg.pilot ? 'автопилот включён' : 'пауза автопилота', cfg.pilot ? 'on' : '');
+      });
+      el.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') el.click(); });
+      host.appendChild(el);
+    }
+    syncNativeToggle(el);
+  }
+  setInterval(ensureNativeToggle, 1400);
+
+  // ---------------- самопроверка (кнопка в «Настройках»)
+  async function cmdSelfTest() {
+    status('самопроверка…', 'work');
+    ui('row', { cls: 'ok', text: '🔬 самопроверка: пишу и удаляю тестовый файл' });
+    var r = await fsCall('mutateBatch', {
+      label: 'DSX self-test',
+      ops: [
+        { name: 'write_file', args: { path: 'dsx-selftest.txt', content: 'DeepSeek Extended: связь с папкой проекта работает. Этот файл создан для самопроверки и будет удалён.' } },
+        { name: 'delete_path', args: { path: 'dsx-selftest.txt' } }
+      ]
+    });
+    if (r.ok) {
+      ui('feed', { text: r.data.report });
+      status(r.data.done === r.data.total ? 'самопроверка ✓ всё работает' : 'самопроверка: есть ошибки', r.data.done === r.data.total ? 'on' : '');
+    } else {
+      status('самопроверка не прошла: ' + (r.error || '?'), '');
+    }
   }
 
   // ---------------- наблюдатель

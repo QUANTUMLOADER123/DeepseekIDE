@@ -208,11 +208,14 @@
       '<span class="sw"></span><span>Анимации интерфейса</span></label>' +
       '<div class="dsx-note" style="margin:10px 0">Папка: <span id="dsx-c-folder">не выбрана</span></div>' +
       '<button class="dsx-btn" id="dsx-b-pick2">📂 Выбрать папку проекта…</button>' +
+      '<div style="margin-top:12px;display:flex;gap:8px">' +
+      '<button class="dsx-btn ghost" id="dsx-b-selftest">🔬 Проверить применение</button></div>' +
       '<div class="dsx-note" style="margin-top:14px">' +
       'DeepSeek Extended v1.0. Терминал в браузерной песочнице недоступен — ' +
       'команды сборки модель просто напишет вам текстом, всё остальное делает сама.</div>';
     cf.__folderEl = cf.querySelector('#dsx-c-folder');
     cf.querySelector('#dsx-b-pick2').onclick = function () { emit('pick'); };
+    cf.querySelector('#dsx-b-selftest').onclick = function () { emit('selftest'); };
     cf.querySelectorAll('input').forEach(function (inp) {
       inp.onchange = function () {
         emit('conf', { pilot: cf.querySelector('#dsx-c-pilot').checked,
