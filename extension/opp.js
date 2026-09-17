@@ -158,6 +158,48 @@
     }, function (v) { return v.length > 0 && v.length <= 200; }, 4);
   }
 
+  // ----- СКОБОЧНЫЕ запросы v22: [<{NEED FILE: путь}>] и др.
+  // «<{» не трактуется HTML-токенайзером как тег (после < идёт {), поэтому
+  // разметка доживает до DOM-текста нетронутой и видна пользователю.
+  // Маркеры внутри ```-ограждённого кода игнорируются (это могут быть примеры).
+  var BRACKET_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE)\s*:\s*([^<>]*?)\s*\}>\]/gi;
+  function findBracketRequests(answer) {
+    var out = [], inFence = false;
+    var lines = String(answer).split('\n');
+    for (var li = 0; li < lines.length && out.length < 12; ++li) {
+      var line = lines[li];
+      if (line.slice(0, 3) === '```') { inFence = !inFence; continue; }
+      if (inFence) continue;
+      var m; BRACKET_RE.lastIndex = 0;
+      while ((m = BRACKET_RE.exec(line)) !== null && out.length < 12) {
+        var kind = m[1].toUpperCase(), key;
+        var val = unescapeHtml(String(m[2])).trim();
+        if (kind === 'NEED FILE' || kind === 'FILE INFO') {
+          val = cleanPath(val);
+          if (!looksLikePath(val)) continue;
+        } else if (kind === 'READ RANGE') {
+          var rm = val.match(/^(.+?)\s*[:\u003a]\s*(\d+)\s*[-–—]\s*(\d+)$/);
+          if (!rm) continue;
+          var pth = cleanPath(rm[1]);
+          if (!looksLikePath(pth)) continue;
+          var f = parseInt(rm[2], 10) || 1, t = parseInt(rm[3], 10) || f;
+          if (f < 1) f = 1;
+          if (t < f) t = f;
+          if (t - f > 1199) t = f + 1199; // потолок фрагмента: 1200 строк
+          val = pth + ':' + f + '-' + t;
+        } else { // NEED SEARCH
+          val = val.slice(0, 200);
+          if (!val) continue;
+        }
+        key = kind + '|' + val.toLowerCase();
+        var dup = false;
+        for (var k = 0; k < out.length; ++k) if (out[k].key === key) { dup = true; break; }
+        if (!dup) out.push({ kind: kind, arg: val, key: key, bracket: true });
+      }
+    }
+    return out;
+  }
+
   // ----- безопасный относительный путь (sandbox — против ../ и абсолюта)
   var PROTECTED = ['.git', '.deepseekide'];
   function sanitizeRel(rel) {
@@ -216,12 +258,22 @@
 "- make_dir {path}. delete_path {path, recursive?}. copy_file {from, to}. move_file {from, to}.",
 "(There is NO terminal in this edition — the browser sandbox cannot run commands. Deliver build/run instructions in text instead.)",
 "",
-"# GETTING CONTEXT (self-service)",
-"Need a file's content? Put this on ITS OWN LINE (outside ops blocks):",
-"NEED FILE: <project-relative path>",
-"You automatically receive its numbered content next message (format: \"    1 | line\").",
-"Need to find something? On its own line:",
-"NEED SEARCH: <substring>  — you get file:line matches.",
+"# GETTING CONTEXT (self-service, automatic — never ask the human for file contents)",
+"Missing information? Emit requests INSIDE the special bracket marker, ONE per line, OUTSIDE ops blocks and code fences. The extension answers them automatically within seconds and shows the user an inline status chip; the answer arrives as a hidden SYSTEM message and your flow continues automatically.",
+"Syntax (copy EXACTLY, including the brackets):",
+"[<{FILE INFO: <project-relative path>}>]          -> file size in bytes + total line count.",
+"[<{READ RANGE: <project-relative path>:<from>-<to>}>] -> numbered lines from..to (1-based, inclusive, up to 1200 lines at once).",
+"[<{NEED FILE: <project-relative path>}>]         -> WHOLE file with line numbers (hard cap ~4000 lines / 120k chars; the rest is TRUNCATED).",
+"[<{NEED SEARCH: <substring>}>]                   -> matches across ALL text files of the project in the form file:line: text.",
+"Example:",
+"[<{FILE INFO: src/main.cpp}>]",
+"[<{READ RANGE: src/main.cpp:1-300}>]",
+"[<{NEED SEARCH: handleLogin}>]",
+"STRICT RULES:",
+"- If unsure about a file's size, ask FILE INFO FIRST. For files over ~600 lines ALWAYS read them chunk-by-chunk with READ RANGE (e.g. :1-400, then :401-800) instead of NEED FILE — full dumps get truncated and waste context.",
+"- NEED SEARCH scans the ENTIRE project, not only files you have already received. Use it to locate symbols before asking for files.",
+"- Batch all requests you need into ONE message, then wait — do not narrate them.",
+"- NEVER repeat a request that was already answered in this chat: re-use what you already received. Repeating wastes a whole round-trip and is treated as an error.",
 "# PROJECT STRUCTURE",
 tree || '(структура недоступна — спросите через NEED SEARCH/NEED FILE)',
 "",
@@ -240,6 +292,7 @@ tree || '(структура недоступна — спросите чере�
     extractOps: extractOps,
     findFileRequests: findFileRequests,
     findSearchRequests: findSearchRequests,
+    findBracketRequests: findBracketRequests,
     sanitizeRel: sanitizeRel,
     insertLines: insertLines,
     replaceLines: replaceLines,

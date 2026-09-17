@@ -1,5 +1,5 @@
 /* =====================================================================
- * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v21.
+ * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v22.
  * Никакого своего UI, кроме: (1) родной пилюли «Авто-пилот» рядом с
  * тумблерами сайта, (2) шестерёнки настроек вплотную слева от скрепки
  * (icon-кнопка без аутлайна).
@@ -54,7 +54,7 @@
   }
 
   // ---------------- настройки (тумблер + правила + мелочи)
-  var CFG_VERSION = 21;
+  var CFG_VERSION = 22;
   var cfg = { pilot: false, rules: '', statusRows: true };
   try {
     chrome.storage.local.get(['pilot', 'rules', 'statusRows', 'v'], function (v) {
@@ -84,7 +84,7 @@
     bigPrompt: '', primedOnce: false,
     lastAnswer: '', opsHash: sessionStorage.getItem('dsx:opsh') || '',
     autoCount: Number(sessionStorage.getItem('dsx:auto') || 0),
-    sentFiles: {}, sentSearches: {}, busy: false,
+    sentFiles: {}, sentSearches: {}, sentInfos: {}, sentRanges: {}, busy: false,
     waitingAnswer: sessionStorage.getItem('dsx:wait') === '1',
     lastUrl: location.href, lastTrimAt: 0, watchdog: 0, reloadHint: 0
   };
@@ -225,7 +225,7 @@
       '</div>' +
       // --- футер
       '<div style="display:flex;align-items:center;gap:10px;padding:18px 20px 20px">' +
-        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.3.1</div>' +
+        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.4.0</div>' +
         '<button class="dsx-set-cancel" style="padding:10px 16px;cursor:pointer;border-radius:12px;font-size:14px;' +
         'font-family:inherit;color:var(--dsw-alias-label-primary,#eee);' +
         'background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));' +
@@ -289,8 +289,9 @@
   function shortPrefix() {
     return '[DeepSeek Extended активен для проекта «' + st.folderName + '». Напоминание: ' +
       'все изменения файлов — СТРОГО блоками ```deepseekide-ops (строгий JSON); ' +
-      'недостающий контекст запрашивай отдельными строками NEED FILE: <путь> и ' +
-      'NEED SEARCH: <подстрока>. Эту служебную вставку в ответе не упоминай.]' + rulesBlock();
+      'недостающий контекст запрашивай маркерами [<{NEED FILE: путь}>], [<{NEED SEARCH: подстрока}>], ' +
+      '[<{FILE INFO: путь}>], [<{READ RANGE: путь:с-по}>] (каждый с новой строки, без примера в коде). ' +
+      'Эту служебную вставку в ответе не упоминай.]' + rulesBlock();
   }
   async function refreshPrompt() {
     var en = await fsCall('ensure');
@@ -355,7 +356,7 @@
       toast('Контекст проекта подшит к первому сообщению');
     }
     // новое сообщение юзера = новый цикл: дедуп NEED сбрасываем (в т.ч. на диске)
-    st.autoCount = 0; st.sentFiles = {}; st.sentSearches = {}; sentSave();
+    st.autoCount = 0; st.sentFiles = {}; st.sentSearches = {}; st.sentInfos = {}; st.sentRanges = {}; sentSave();
     sessionStorage.setItem('dsx:auto', '0');
     console.log('[DSX] промпт подшит к сообщению:', (prefix === st.bigPrompt ? 'БОЛЬШОЙ' : 'короткий'),
       '| итого символов:', editor.value.length);
@@ -527,7 +528,7 @@
     } catch (e) { return true; }
   }
 
-  // ---------------- самообслуживание NEED FILE / NEED SEARCH (порции 3+2)
+  // ---------------- самообслуживание: скобочные запросы [<{...}>] + легаси NEED FILE
   // Дедуп ПОСТОЯННЫЙ: переживает перезагрузку страницы (sessionStorage,
   // отдельно на каждую беседу по URL). Сбрасывается только когда юзер
   // шлёт новое своё сообщение (см. tryStealthPrefix).
@@ -538,61 +539,179 @@
       if (!raw) return;
       var d = JSON.parse(raw);
       st.sentFiles = d.f || {}; st.sentSearches = d.s || {};
+      st.sentInfos = d.i || {}; st.sentRanges = d.r || {};
     } catch (e) {}
   }
   function sentSave() {
     try {
-      sessionStorage.setItem(sentKey(), JSON.stringify({ f: st.sentFiles, s: st.sentSearches }));
+      sessionStorage.setItem(sentKey(), JSON.stringify({ f: st.sentFiles, s: st.sentSearches, i: st.sentInfos, r: st.sentRanges }));
     } catch (e) {}
   }
   sentLoad();
   function base(p) { var a = String(p).split('/'); return a[a.length - 1]; }
+
   async function serviceNote(raw) {
+    if (raw.length > 60000) raw = raw.slice(0, 60000);
     // LLM иногда пересказывает прошлые NEED-строки в ответе («я запросил
     // README.md…») — отрезаем этот эпилог, запросы ниже списка не ловим.
     var cut = raw.search(/\n\s*(Теперь|Итак|Отлично|Готово|Хорошо,? вот|Вот что|Давай(те)?|Кстати)/);
     if (cut > 0) raw = raw.slice(0, cut);
-    // скобки с путём не бывают запросами — только голые строки
-    var files = DsideOps.findFileRequests(raw), searches = DsideOps.findSearchRequests(raw);
-    if (!files.length && !searches.length) return { text: '', rows: [] };
-    var todoF = files.filter(function (p) { return !st.sentFiles[p]; }),
-        todoS = searches.filter(function (q) { return !st.sentSearches[q]; });
-    todoF.forEach(function (p) { st.sentFiles[p] = 1; });
-    todoS.forEach(function (q) { st.sentSearches[q] = 1; });
-    sentSave();
-    if (!todoF.length && !todoS.length) return { text: '', rows: [] };
-    var out = ['SYSTEM: auto-reply from DeepSeek Extended.'];
-    var rows = [], i;
-    for (i = 0; i < Math.min(todoF.length, 3); ++i) {
-      var p = todoF[i];
-      out.push('You requested file content of «' + p + '» (lines are numbered; use those numbers with insert_lines/replace_lines).');
-      var r = await fsCall('readNumbered', { path: p });
-      if (r.ok) {
-        var bodyTxt = (r.data.lines > 4000 ? '(первые 4000 строк)\n' : '') + r.data.text;
-        if (bodyTxt.length > 120000) bodyTxt = bodyTxt.slice(0, 120000) + '\n…(truncated)';
-        out.push('FILE "' + p + '"\n```\n' + bodyTxt + '\n```');
-        rows.push('Прочитано: ' + base(p));
-      } else {
-        out.push('FILE "' + p + '" — READ ERROR: ' + (r.error || 'не читается') +
-                 '\n(используйте NEED SEARCH или попросите другое имя)');
-        rows.push('Не удалось прочитать: ' + base(p));
+
+    var reqs = DsideOps.findBracketRequests(raw);
+    DsideOps.findFileRequests(raw).forEach(function (p) {
+      reqs.push({ kind: 'NEED FILE', arg: p, key: 'NEED FILE|' + p.toLowerCase(), bracket: false });
+    });
+    DsideOps.findSearchRequests(raw).forEach(function (q) {
+      reqs.push({ kind: 'NEED SEARCH', arg: q, key: 'NEED SEARCH|' + q.toLowerCase().slice(0, 200), bracket: false });
+    });
+    // дедуп внутри одного ответа
+    var seen = {}, uniq = [];
+    reqs.forEach(function (r) { if (!seen[r.key]) { seen[r.key] = 1; uniq.push(r); } });
+    if (!uniq.length) return { text: '', rows: [] };
+
+    var out = ['SYSTEM: auto-reply from DeepSeek Extended.'], rows = [];
+    var done = 0, i;
+    for (i = 0; i < uniq.length; ++i) {
+      var rq = uniq[i];
+      if (done >= 6) { // потолок хода: 6 операций самообслуживания
+        out.push('(more requests pending — emit them again in your next message, they will be served)');
+        break;
+      }
+      if (rq.kind === 'NEED FILE') {
+        var p = rq.arg;
+        if (st.sentFiles[p]) continue;
+        st.sentFiles[p] = 1;
+        var r = await fsCall('readNumbered', { path: p });
+        if (r.ok) {
+          var bodyTxt = (r.data.lines > 4000 ? '(показаны первые 4000 строк из ' + r.data.lines +
+              '; для продолжения используйте [<{READ RANGE: ' + p + ':4001-4800}>])\n' : '') + r.data.text;
+          if (bodyTxt.length > 120000) {
+            var cutLn = (bodyTxt.slice(0, 120000).match(/\n/g) || []).length;
+            bodyTxt = bodyTxt.slice(0, 120000) + '\n…(обрезано на ~строке ' + cutLn +
+              ' из ' + r.data.lines + '; продолжайте через [<{READ RANGE: ' + p + ':' + (cutLn + 1) + '-' + (cutLn + 400) + '>}])';
+          }
+          out.push('You requested file content of «' + p + '» (lines are numbered; use those numbers with insert_lines/replace_lines).');
+          out.push('FILE "' + p + '"\n```\n' + bodyTxt + '\n```');
+          if (!rq.bracket) rows.push('Прочитано: ' + base(p));
+        } else {
+          out.push('FILE "' + p + '" — READ ERROR: ' + (r.error || 'не читается') +
+                   '\n(проверьте имя через [<{NEED SEARCH: часть имени}>])');
+          if (!rq.bracket) rows.push('Не удалось прочитать: ' + base(p));
+        }
+        done++;
+      } else if (rq.kind === 'FILE INFO') {
+        var ip = rq.arg;
+        if (st.sentInfos[ip]) continue;
+        st.sentInfos[ip] = 1;
+        var inf = await fsCall('fileInfo', { path: ip });
+        if (inf.ok) {
+          var lns = inf.data.lines >= 0 ? String(inf.data.lines) : 'очень много (>3 МБ, не считались)';
+          out.push('INFO "' + ip + '": ' + inf.data.bytes + ' bytes, ' + lns + ' lines, modified ' + inf.data.modified + '.' +
+                   (inf.data.lines > 600 || inf.data.lines < 0
+                     ? ' Large file — read it chunk-by-chunk via [<{READ RANGE: ' + ip + ':1-400}>], [<{READ RANGE: ' + ip + ':401-800}>] etc.'
+                     : ''));
+          if (!rq.bracket) rows.push('Размер: ' + base(ip) + ' — ' + lns + ' строк');
+        } else {
+          out.push('INFO "' + ip + '" — ERROR: ' + (inf.error || 'не читается'));
+          if (!rq.bracket) rows.push('Не удалось осмотреть: ' + base(ip));
+        }
+        done++;
+      } else if (rq.kind === 'READ RANGE') {
+        var rm = rq.arg.match(/^(.+):(\d+)-(\d+)$/);
+        if (!rm) continue;
+        var rp = rm[1], rf = +rm[2], rt = +rm[3];
+        if (st.sentRanges[rq.key]) continue;
+        st.sentRanges[rq.key] = 1;
+        var rr = await fsCall('readNumbered', { path: rp, start_line: rf, end_line: rt });
+        if (rr.ok) {
+          var bt = rr.data.text;
+          if (bt.length > 60000) bt = bt.slice(0, 60000) + '\n…(truncated at 60k chars)';
+          out.push('RANGE "' + rp + '" — lines ' + rf + '-' + rt + ' of ' + rr.data.lines + ' total:\n```\n' + bt + '\n```');
+          if (!rq.bracket) rows.push('Прочитано: ' + base(rp) + ' (' + rf + '–' + rt + ')');
+        } else {
+          out.push('RANGE "' + rp + '" — READ ERROR: ' + (rr.error || 'не читается'));
+          if (!rq.bracket) rows.push('Не удалось прочитать: ' + base(rp));
+        }
+        done++;
+      } else { // NEED SEARCH
+        var q = rq.arg;
+        if (st.sentSearches[q]) continue;
+        st.sentSearches[q] = 1;
+        var s = await fsCall('search', { query: q });
+        var sb = s.ok ? s.data.text : ('ERROR: ' + (s.error || ''));
+        if (sb.length > 60000) sb = sb.slice(0, 60000) + '\n…(truncated)';
+        out.push('SEARCH "' + q + '" — substring matches over ALL text files of the project (file:line: text):\n```\n' + sb + '\n```');
+        if (!rq.bracket) rows.push('Поиск «' + q + '»' + (s.ok ? ': ' + s.data.matches + ' совпадений' : ' — ошибка'));
+        done++;
       }
     }
-    if (txt.indexOf('NEED FILE:') < 0 && txt.indexOf('NEED SEARCH:') < 0) return [];
-    // отрезаем всё после LLM-эпилога (он пересказывает наши строки)
-    var cut = txt.search(/\n(Теперь|Итак|Отлично|Вот |Хорошо|Готово|Далее[,:])/);
-    if (cut > 0) txt = txt.slice(0, cut);
-    if (todoF.length > 3) out.push('(more files pending — repeat NEED FILE for them to continue)');
-    for (i = 0; i < Math.min(todoS.length, 2); ++i) {
-      var q = todoS[i];
-      out.push('You searched the project for «' + q + '». Matches (file:line: text):');
-      var s = await fsCall('search', { query: q });
-      var sb = s.ok ? s.data.text : ('ERROR: ' + (s.error || ''));
-      if (sb.length > 60000) sb = sb.slice(0, 60000) + '\n…(truncated)';
-      out.push('SEARCH "' + q + '"\n```\n' + sb + '\n```');
-      rows.push('Поиск «' + q + '»' + (s.ok ? ': ' + s.data.matches + ' совпадений' : ' — ошибка'));
+    sentSave();
+    if (!done) {
+      // ВСЁ запрошенное уже отправлялось раньше: молчать НЕЛЬЗЯ (модель ждёт
+      // ответ и встаёт навсегда) — шлём короткое напоминание.
+      out.push('REMINDER: everything you just requested was ALREADY sent earlier in this chat (look above in the hidden SYSTEM messages).');
+      out.push('Do NOT repeat the same requests — re-use that content. If you need a DIFFERENT slice of a big file, ask ' +
+               '[<{READ RANGE: <path>:<other-from>-<other-to>}>]; for size, [<{FILE INFO: <path>}>].');
+      return { text: out.join('\n\n'), rows: [] };
     }
     return { text: out.join('\n\n'), rows: rows };
+  }
+
+  // ---------------- бейджи: [<{…}>] в ответе модели превращаем в строки-статусы
+  // Меняем ТОЛЬКО nodeValue текстовых узлов (React не заметит — дерево то же).
+  var BADGE_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE)\s*:\s*([^<>]*?)\s*\}>\]/gi;
+  function badgeText(kind, arg, pending) {
+    var K = kind.toUpperCase(), tail = pending ? '…' : '';
+    if (K === 'NEED FILE')    return (pending ? 'Чтение: '        : 'Прочитано: ')      + base(arg) + tail;
+    if (K === 'FILE INFO')    return (pending ? 'Осмотр: '        : 'Размер получен: ') + base(arg) + tail;
+    if (K === 'READ RANGE') {
+      var m = String(arg).match(/^(.+?)\s*:\s*(\d+)\s*[-–—]\s*(\d+)$/);
+      var nm = m ? base(m[1]) + ' (' + m[2] + '–' + m[3] + ')' : base(arg);
+      return (pending ? 'Чтение: ' : 'Прочитано: ') + nm + tail;
+    }
+    return (pending ? 'Поиск: ' : 'Найдено: ') + String(arg).trim() + tail; // NEED SEARCH
+  }
+  function eachTextNode(root, fn) {
+    var w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    var n; while ((n = w.nextNode())) fn(n);
+  }
+  // сразу после остановки ответа: маркеры → «Чтение: x…»
+  function renderBadges(block) {
+    try {
+      eachTextNode(block, function (n) {
+        if (n.nodeValue && n.nodeValue.indexOf('[<{') >= 0 && BADGE_RE.test(n.nodeValue)) {
+          BADGE_RE.lastIndex = 0;
+          n.nodeValue = n.nodeValue.replace(BADGE_RE, function (mm, k, a) { return badgeText(k, a, true); });
+        }
+      });
+    } catch (e) {}
+  }
+  // после того, как служебное ушло: «Чтение: x…» → «Прочитано: x»
+  function finalizeBadges(block) {
+    var swaps = [
+      [/Чтение: ([^…\n]+)…/g,        'Прочитано: $1'],
+      [/Осмотр: ([^…\n]+)…/g,        'Размер получен: $1'],
+      [/Поиск: ([^…\n]+)…/g,         'Найдено: $1']
+    ];
+    try {
+      eachTextNode(block, function (n) {
+        if (!n.nodeValue || n.nodeValue.indexOf('…') < 0) return;
+        var v = n.nodeValue;
+        for (var i = 0; i < swaps.length; ++i) v = v.replace(swaps[i][0], swaps[i][1]);
+        if (v !== n.nodeValue) n.nodeValue = v;
+      });
+    } catch (e) {}
+  }
+  // у сообщения-запроса прячем экшн-бар (копировать/регенер/лайки…) — выглядит
+  // как единое служебное сообщение без мусора внизу
+  function hideActionBar(block) {
+    try {
+      var host = block.closest('._4f9bf79');
+      if (!host || host.getAttribute('data-dsx-hid')) return;
+      host.setAttribute('data-dsx-hid', '1');
+      var bar = host.querySelector('.ds-flex._0a3d93b');
+      if (bar) bar.style.display = 'none';
+    } catch (e) {}
   }
 
   // ---------------- строки статуса под ответом DeepSeek
@@ -683,11 +802,15 @@
             rows.push('Ошибка применения правок');
           }
         }
-        // --- NEED FILE / NEED SEARCH: обслуживаем, только если ответ — ХВОСТ
-        // беседы (иначе файлы уже отправлены раньше и лежат в истории сервера)
+        // --- запросы контекста ([<{...}>] и легаси NEED FILE/SEARCH): обслуживаем,
+        // только если ответ — ХВОСТ беседы (иначе файлы уже отправлены раньше
+        // и лежат в истории сервера)
+        var svcReq = false;
         if (tail) {
+          renderBadges(block); // маркеры сразу превращаем в «Чтение: x…»
           var svc = await serviceNote(text);
           if (svc.text) {
+            svcReq = true;
             note = note ? note + '\n\n' + svc.text : svc.text;
             rows = svc.rows.concat(rows);
           }
@@ -697,6 +820,7 @@
           if (st.autoCount >= 12) {
             toast('Потолок авто-сообщений (12) — ваш ход');
           } else if (await injectStealth(note, 'служебное')) {
+            if (svcReq) { finalizeBadges(block); hideActionBar(block); }
             st.autoCount++;
             // служебная ушла на сервер: отсюда и до ответа модели любые
             // копии этого NEED-дождя больше не слушаем (иначе повторная
@@ -811,7 +935,7 @@
     if (location.href !== st.lastUrl) {
       st.lastUrl = location.href;
       st.primedOnce = false; st.lastAnswer = ''; st.opsHash = '';
-      st.sentFiles = {}; st.sentSearches = {}; sentLoad(); // дедуп новой беседы
+      st.sentFiles = {}; st.sentSearches = {}; st.sentInfos = {}; st.sentRanges = {}; sentLoad(); // дедуп новой беседы
       st.autoCount = 0; sessionStorage.setItem('dsx:auto', '0');
       sessionStorage.removeItem('dsx:primed');
       sessionStorage.removeItem('dsx:opsh');
@@ -878,7 +1002,7 @@
 
   // ---------------- старт
   if (sessionStorage.getItem('dsx:primed') === '1') st.primedOnce = true;
-  console.log('[DSX] DeepSeek Extended v21 стелс: загружено. pilot=' + cfg.pilot);
+  console.log('[DSX] DeepSeek Extended v22 стелс: загружено. pilot=' + cfg.pilot);
   refreshPrompt();
   setTimeout(refreshPrompt, 1200);
   setInterval(function () {

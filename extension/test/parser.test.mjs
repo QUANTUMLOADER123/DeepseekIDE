@@ -69,3 +69,29 @@ test('промпт Extended: есть toolbox и NEED-протоколы и НЕ
   // в тексте описан запрет терминала, но самой операции run_command нет
   assert.equal(/"run_command"/.test(p), false);
 });
+
+test('скобочные запросы [<{...}>] v22: виды, диапазон, фенсы, дедуп', () => {
+  const ans = [
+    'Сейчас посмотрю.',
+    '[<{FILE INFO: FTAP ROBLOX.lua}>]',
+    '[<{read range: src/main.cpp:10-50}>]',
+    '[<{NEED SEARCH: handleLogin}>]',
+    '[<{NEED FILE: docs/README.md}>]',
+    '[<{NEED FILE: docs/README.md}>]', // дубль — игнор
+    '```',
+    '[<{NEED FILE: fake/example.js}>]', // в фенсе — пример, игнор
+    '```',
+    '[<{READ RANGE: big.lua:5000-9999}>]' // кап диапазона 1200
+  ].join('\n');
+  const r = Ops.findBracketRequests(ans);
+  assert.equal(r.length, 5, 'ровно 5 уникальных запроса');
+  assert.equal(r[0].kind, 'FILE INFO');
+  assert.equal(r[1].kind, 'READ RANGE');
+  assert.equal(r[1].arg, 'src/main.cpp:10-50');
+  assert.equal(r[2].kind, 'NEED SEARCH');
+  assert.equal(r[2].arg, 'handleLogin');
+  assert.equal(r[3].kind, 'NEED FILE');
+  assert.equal(r[4].arg, 'big.lua:5000-6199', 'диапазон обрезан до 1200 строк');
+  // не наша скобка — мимо
+  assert.equal(Ops.findBracketRequests('просто текст без маркеров').length, 0);
+});

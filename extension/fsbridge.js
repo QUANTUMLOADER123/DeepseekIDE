@@ -131,6 +131,18 @@
       return { text: out.join('\n'), lines: lines.length, bytes: text.length };
     },
 
+    fileInfo: async function (args) {
+      var d = await parentOf(args.path, false);
+      var fh = await d.getFileHandle(leaf(args.path));
+      var f = await fh.getFile();
+      var lines = -1;
+      if (f.size <= 3 * 1024 * 1024) { // до ~3 МБ честно считаем строки
+        var text = await readText(args.path);
+        lines = text.split('\n').length;
+      }
+      return { bytes: f.size, lines: lines, modified: new Date(f.lastModified).toISOString() };
+    },
+
     tree: async function (args) {
       var max = (args && args.max_entries) || 400, out = [], count = 0;
       var SKIP = { '.git': 1, 'node_modules': 1, '.deepseekide': 1 };
