@@ -140,7 +140,7 @@
           if (count >= max) return;
           if (SKIP[e.name]) continue;
           ++count;
-          out.push(prefix + (e.kind === 'directory' ? '📁 ' : '📄 ') + e.name);
+          out.push(prefix + (e.kind === 'directory' ? '[папка] ' : '        ') + e.name);
           if (e.kind === 'directory') await walk(e, prefix + '  ', depth + 1);
         }
       }
@@ -335,7 +335,7 @@
     return { report: res.join('\n') };
   };
 
-  // ---------- жест: кнопка «📂 Выбрать папку» в оверлейной модалке.
+  // ---------- жест: кнопка «Выбрать папку» в оверлейной модалке.
   // Клик по ней ловим ЗДЕСЬ, в MAIN-мире — user activation живой,
   // showDirectoryPicker/requestPermission откроются без проблем.
   function bindGesture() {
@@ -346,7 +346,7 @@
       el.__dsxBound = true;
       el.addEventListener('click', function () {
         var origText = el.textContent;
-        el.textContent = '⏳ Открываю выбор папки…';
+        el.textContent = 'Открываю выбор папки…';
         (async function () {
           try {
             var stt = await ensure();

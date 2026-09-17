@@ -1,10 +1,11 @@
 /* =====================================================================
- * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v19.
+ * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v20.
  * Никакого своего UI, кроме: (1) родной пилюли «Авто-пилот» рядом с
- * тумблерами сайта, (2) шестерёнки настроек левее скрепки.
+ * тумблерами сайта, (2) шестерёнки настроек вплотную слева от скрепки
+ * (icon-кнопка без аутлайна).
  * Промпт незаметно подмешивается в сообщение пользователя, служебные
- * сообщения скрываются, статусы («📖 Прочитано», «✅ Применено»)
- * дописываются тихими строками под ответ DeepSeek.
+ * сообщения скрываются, статусы («Прочитано», «Применено»)
+ * дописываются тихими строками под ответ DeepSeek. БЕЗ эмодзи.
  *
  * ГЛАВНОЕ ПРАВИЛО ВЫЖИВАНИЯ: НИКОГДА не удалять/не заменять DOM-узлы,
  * созданные React (никаких el.textContent=..., remove(), innerHTML=...).
@@ -53,7 +54,7 @@
   }
 
   // ---------------- настройки (тумблер + правила + мелочи)
-  var CFG_VERSION = 19;
+  var CFG_VERSION = 20;
   var cfg = { pilot: false, rules: '', statusRows: true };
   try {
     chrome.storage.local.get(['pilot', 'rules', 'statusRows', 'v'], function (v) {
@@ -114,8 +115,7 @@
   }
 
   // ---------------- каркас модалок (стиль ds-modal сайта)
-  function overlayBase(width) {
-    var ov = document.createElement('div');
+  function overlayBase(width) {    var ov = document.createElement('div');
     ov.className = 'dsx-modal-ov';
     ov.style.cssText = 'position:fixed;inset:0;z-index:1030;background:rgba(0,0,0,.6);' +
       'display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .22s';
@@ -147,7 +147,7 @@
   }
   function syncFolderLabels() {
     document.querySelectorAll('.dsx-cur-folder').forEach(function (el) {
-      el.textContent = st.folderName ? '📂 ' + st.folderName : '— папка не выбрана —';
+      el.textContent = st.folderName ? st.folderName : '— папка не выбрана —';
     });
   }
 
@@ -156,7 +156,7 @@
     closeModals();
     var card = overlayBase(420);
     card.innerHTML =
-      modalHeader('🛩 Авто-пилот') +
+      modalHeader('Авто-пилот') +
       '<div style="padding:8px 20px 0;font-size:13.5px;line-height:1.55;color:var(--dsw-alias-label-secondary,#aaa)">' +
         'DeepSeek станет агентом твоего проекта: правки будут падать прямо в файлы, ' +
         'а контекст подмешиваться скрытно. Выбери корневую папку проекта — ' +
@@ -168,7 +168,7 @@
       '<div style="display:flex;gap:10px;padding:18px 20px 20px">' +
         '<button class="dsx-modal-pick" style="flex:1;padding:11px 16px;border:none;cursor:pointer;' +
         'border-radius:12px;font-size:14px;font-weight:600;font-family:inherit;color:#fff;' +
-        'background:var(--dsw-alias-brand-primary,#5686fe);transition:filter .15s">📂 Выбрать папку проекта</button>' +
+        'background:var(--dsw-alias-brand-primary,#5686fe);transition:filter .15s">Выбрать папку проекта</button>' +
         '<button class="dsx-modal-no" style="padding:11px 16px;cursor:pointer;border-radius:12px;font-size:14px;' +
         'font-family:inherit;color:var(--dsw-alias-label-primary,#eee);' +
         'background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));' +
@@ -185,10 +185,10 @@
     closeModals();
     var card = overlayBase(480);
     card.innerHTML =
-      modalHeader('⚙️ DeepSeek Extended — настройки') +
+      modalHeader('DeepSeek Extended — настройки') +
       // --- раздел: папка проекта
       '<div style="padding:14px 20px 0">' +
-        '<div style="font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#eee)">📂 Папка проекта</div>' +
+        '<div style="font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#eee)">Папка проекта</div>' +
         '<div style="display:flex;align-items:center;gap:10px;margin-top:8px">' +
           '<div class="dsx-cur-folder" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' +
           'font-size:13px;color:var(--dsw-alias-label-secondary,#aaa)"></div>' +
@@ -203,7 +203,7 @@
       '</div>' +
       // --- раздел: начальный промпт
       '<div style="padding:18px 20px 0">' +
-        '<div style="font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#eee)">📝 Начальный промпт (правила для ИИ)</div>' +
+        '<div style="font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#eee)">Начальный промпт (правила для ИИ)</div>' +
         '<div style="margin-top:4px;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-tertiary,#888)">' +
           'Уходит скрытно с каждым сообщением при включённом автопилоте: стиль кода, язык, запреты. ' +
           'Например: «Отвечай коротко. Код — C++17, комментарии на русском, отступы 4 пробела».' +
@@ -219,12 +219,12 @@
         '<label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;' +
         'color:var(--dsw-alias-label-secondary,#aaa)">' +
           '<input type="checkbox" class="dsx-set-rows" style="width:15px;height:15px;accent-color:#5686fe">' +
-          ' Показывать строки статуса под ответом DeepSeek (📖 Прочитано, ✅ Применено)' +
+          ' Показывать строки статуса под ответом DeepSeek («Прочитано», «Применено»)' +
         '</label>' +
       '</div>' +
       // --- футер
       '<div style="display:flex;align-items:center;gap:10px;padding:18px 20px 20px">' +
-        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.2.0</div>' +
+        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.3.0</div>' +
         '<button class="dsx-set-cancel" style="padding:10px 16px;cursor:pointer;border-radius:12px;font-size:14px;' +
         'font-family:inherit;color:var(--dsw-alias-label-primary,#eee);' +
         'background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));' +
@@ -244,7 +244,7 @@
       cfg.rules = ta.value.slice(0, 4000);
       cfg.statusRows = !!cb.checked;
       saveCfg(); closeModals();
-      toast('⚙️ Настройки сохранены');
+      toast('Настройки сохранены');
       refreshPrompt(); // пересобрать промпт с новыми правилами
     };
     card.querySelector('.dsx-set-forget').onclick = function () {
@@ -252,7 +252,7 @@
         st.folderReady = false; st.folderName = ''; st.bigPrompt = ''; st.primedOnce = false;
         sessionStorage.removeItem('dsx:primed');
         syncNativeToggle(); syncFolderLabels();
-        toast('📂 Папка забыта');
+        toast('Папка забыта');
       });
     };
     // «Сменить…» перехватит fsbridge в MAIN-мире (.dsx-modal-pick).
@@ -264,7 +264,7 @@
       st.folderReady = true; st.folderName = m.name || '';
       // закрываем только приветственную модалку; в настройках просто обновим подпись
       syncNativeToggle(); syncFolderLabels();
-      toast('📂 Проект подключён: ' + st.folderName);
+      toast('Проект подключён: ' + st.folderName);
       refreshPrompt();
     } else if (m.ev === 'folderError') {
       var err = String(m.error || '');
@@ -336,7 +336,7 @@
       // подскажем, что делать, и попробуем тихо восстановить в фоне.
       if (Date.now() - lastFolderToast > 15000) {
         lastFolderToast = Date.now();
-        toast('📂 Кликни по «🛩 Авто-пилот» — нужен доступ к папке проекта');
+        toast('Кликни по «Авто-пилот» — нужен доступ к папке проекта');
       }
       console.log('[DSX] пропуск: папка не подключена (folderReady=false)');
       fsCall('ensure').then(function (en) {
@@ -345,15 +345,16 @@
       return;
     }
     var prefix, chip;
-    if (st.primedOnce) { prefix = shortPrefix(); chip = '🛩 Автопилот'; }
-    else if (st.bigPrompt) { prefix = st.bigPrompt; chip = '🛩 Контекст проекта загружен'; }
-    else { prefix = shortPrefix(); chip = '🛩 Автопилот'; }
+    if (st.primedOnce) { prefix = shortPrefix(); chip = 'Автопилот'; }
+    else if (st.bigPrompt) { prefix = st.bigPrompt; chip = 'Контекст проекта загружен'; }
+    else { prefix = shortPrefix(); chip = 'Автопилот'; }
     nativeSetValue(editor, wrapStealth(prefix, chip, v.replace(/^\s+/, '')));
     if (!st.primedOnce && st.bigPrompt) {
       st.primedOnce = true; sessionStorage.setItem('dsx:primed', '1');
-      toast('🛩 Контекст проекта подшит к первому сообщению');
+      toast('Контекст проекта подшит к первому сообщению');
     }
-    st.autoCount = 0; st.sentFiles = {}; st.sentSearches = {};
+    // новое сообщение юзера = новый цикл: дедуп NEED сбрасываем (в т.ч. на диске)
+    st.autoCount = 0; st.sentFiles = {}; st.sentSearches = {}; sentSave();
     sessionStorage.setItem('dsx:auto', '0');
     console.log('[DSX] промпт подшит к сообщению:', (prefix === st.bigPrompt ? 'БОЛЬШОЙ' : 'короткий'),
       '| итого символов:', editor.value.length);
@@ -379,10 +380,10 @@
     if (ed) tryStealthPrefix(ed);
   }, true);
 
-  // ---------------- БРИТВА v2: прячем служебный текст БЕЗ удаления узлов.
-  // Меняем ТОЛЬКО nodeValue существующих текстовых узлов и style.display
-  // контейнеров — React при своих перерисовках не падает (узлы на месте),
-  // а если он перезапишет текст обратно — бритва просто сработает ещё раз.
+  // ---------------- БРИТВА v3: прячем служебный текст БЕЗ удаления узлов.
+  // Только nodeValue in-place и style.display. КОМПОЗЕР (нижняя панель
+  // ._871cbca с textarea и её скрытым дублём-измерителем) — ЗАПРЕТНАЯ ЗОНА:
+  // там маркеры тоже живут (сайт копирует ввод), но трогать их = ломать ввод.
   function softSetText(el, newText) {
     var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     var nodes = [], n;
@@ -390,6 +391,14 @@
     if (!nodes.length) return;
     nodes[0].nodeValue = newText;                    // хвост — в первый узел
     for (var i = 1; i < nodes.length; ++i) nodes[i].nodeValue = ''; // остальные пустеют, но ЖИВЫ
+  }
+  function markerCarrier(tn) {
+    var el = tn.parentElement, hops = 0;
+    while (el && hops < 8) {
+      if (el.textContent.indexOf(END) >= 0) return el;
+      el = el.parentElement; hops++;
+    }
+    return null;
   }
   function trimStealthNodes() {
     var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -399,29 +408,47 @@
     }
     for (var k = 0; k < hits.length; ++k) {
       var tn = hits[k];
-      var el = tn.parentElement, hops = 0;
-      while (el && hops < 8) {
-        if (el.textContent.indexOf(END) >= 0) break;
-        el = el.parentElement; hops++;
-      }
+      var pe = tn.parentElement;
+      if (!pe || !pe.closest) continue;
+      if (pe.closest('._871cbca')) continue;           // КОМПОЗЕР — не трогаем никогда
+      var el = markerCarrier(tn);
       if (!el) continue;
       var full = el.textContent;
       var i = full.indexOf(MARK), j = full.lastIndexOf(END);
       if (i < 0 || j < 0 || j <= i) continue;
       var tail = full.slice(j + END.length).replace(/^\s+/, '');
-      if (tail) {
-        // сообщение пользователя: виден только его текст
-        softSetText(el, tail);
-      } else {
-        // чисто служебное: гасим текст и прячем пузырь целиком (только стиль!)
-        softSetText(el, '');
-        var row = el.closest ? el.closest('._9663006,[data-virtual-list-item-key]') : null;
-        var box = row || el;
-        if (box.style) box.style.display = 'none';
+      // строка главного списка сообщений (у рядов есть data-virtual-list-item-key)
+      var row = pe.closest('._9663006[data-virtual-list-item-key], ._4f9bf79[data-virtual-list-item-key]');
+      if (row) {
+        if (tail) {
+          softSetText(el, tail);                       // сообщение юзера — только его текст
+        } else if (String(row.className).indexOf('_9663006') >= 0) {
+          softSetText(el, '');                         // служебное — гасим и прячем пузырь
+          row.style.display = 'none';
+        }
+        st.lastTrimAt = Date.now();
+        continue;
       }
-      st.lastTrimAt = Date.now();
+      // правый сайдбар-навигатор сообщений: зеркалит юзер-сообщения — прячем карточку
+      var navItem = pe.closest('._81e7b5e');
+      if (navItem) {
+        if (tail) softSetText(el, tail);
+        else { softSetText(el, ''); navItem.style.display = 'none'; }
+        continue;
+      }
+      // прочие места: только гасим текст
+      softSetText(el, tail);
     }
   }
+
+  // ---------------- сторожок композера: если что-то прячет textarea,
+  // возвращаем её (бритва композер не трогает, но мало ли — страхуемся)
+  setInterval(function () {
+    try {
+      var ta = document.querySelector('textarea[placeholder*="DeepSeek" i]');
+      if (ta && ta.style && ta.style.display === 'none') ta.style.removeProperty('display');
+    } catch (e) {}
+  }, 1000);
 
   // ---------------- ввод в чат (служебные сообщения автопилота — настоящие
   // отправки на сервер, чтобы после перезагрузки модель их видела)
@@ -487,6 +514,24 @@
   }
 
   // ---------------- самообслуживание NEED FILE / NEED SEARCH (порции 3+2)
+  // Дедуп ПОСТОЯННЫЙ: переживает перезагрузку страницы (sessionStorage,
+  // отдельно на каждую беседу по URL). Сбрасывается только когда юзер
+  // шлёт новое своё сообщение (см. tryStealthPrefix).
+  function sentKey() { return 'dsx:sent:' + location.pathname; }
+  function sentLoad() {
+    try {
+      var raw = sessionStorage.getItem(sentKey());
+      if (!raw) return;
+      var d = JSON.parse(raw);
+      st.sentFiles = d.f || {}; st.sentSearches = d.s || {};
+    } catch (e) {}
+  }
+  function sentSave() {
+    try {
+      sessionStorage.setItem(sentKey(), JSON.stringify({ f: st.sentFiles, s: st.sentSearches }));
+    } catch (e) {}
+  }
+  sentLoad();
   function base(p) { var a = String(p).split('/'); return a[a.length - 1]; }
   async function serviceNote(raw) {
     var files = DsideOps.findFileRequests(raw), searches = DsideOps.findSearchRequests(raw);
@@ -495,6 +540,7 @@
         todoS = searches.filter(function (q) { return !st.sentSearches[q]; });
     todoF.forEach(function (p) { st.sentFiles[p] = 1; });
     todoS.forEach(function (q) { st.sentSearches[q] = 1; });
+    sentSave();
     if (!todoF.length && !todoS.length) return { text: '', rows: [] };
     var out = ['SYSTEM: auto-reply from DeepSeek Extended.'];
     var rows = [], i;
@@ -506,11 +552,11 @@
         var bodyTxt = (r.data.lines > 4000 ? '(первые 4000 строк)\n' : '') + r.data.text;
         if (bodyTxt.length > 120000) bodyTxt = bodyTxt.slice(0, 120000) + '\n…(truncated)';
         out.push('FILE "' + p + '"\n```\n' + bodyTxt + '\n```');
-        rows.push('📖 Прочитано: ' + base(p));
+        rows.push('Прочитано: ' + base(p));
       } else {
         out.push('FILE "' + p + '" — READ ERROR: ' + (r.error || 'не читается') +
                  '\n(используйте NEED SEARCH или попросите другое имя)');
-        rows.push('📖 Не удалось прочитать: ' + base(p));
+        rows.push('Не удалось прочитать: ' + base(p));
       }
     }
     if (todoF.length > 3) out.push('(more files pending — repeat NEED FILE for them to continue)');
@@ -521,7 +567,7 @@
       var sb = s.ok ? s.data.text : ('ERROR: ' + (s.error || ''));
       if (sb.length > 60000) sb = sb.slice(0, 60000) + '\n…(truncated)';
       out.push('SEARCH "' + q + '"\n```\n' + sb + '\n```');
-      rows.push('🔍 Поиск «' + q + '»' + (s.ok ? ': ' + s.data.matches + ' совпадений' : ' — ошибка'));
+      rows.push('Поиск «' + q + '»' + (s.ok ? ': ' + s.data.matches + ' совпадений' : ' — ошибка'));
     }
     return { text: out.join('\n\n'), rows: rows };
   }
@@ -538,7 +584,7 @@
       if (!box) {
         box = document.createElement('div');
         box.className = 'dsx-status-box';
-        box.style.cssText = 'margin-top:8px;border-top:1px dashed var(--dsw-alias-border-l2,rgba(255,255,255,.08));padding-top:6px';
+        box.style.cssText = 'margin-top:6px';
         host.appendChild(box);
       }
       rows.forEach(function (t) {
@@ -591,8 +637,8 @@
           });
           if (r.ok) {
             var sum = r.data.done === r.data.total
-              ? '✅ Применено: ' + r.data.done + ' из ' + r.data.total + ' операций'
-              : '⚠️ Применено ' + r.data.done + ' из ' + r.data.total + ' — есть ошибки';
+              ? 'Применено: ' + r.data.done + ' из ' + r.data.total + ' операций'
+              : 'Применено ' + r.data.done + ' из ' + r.data.total + ' — есть ошибки';
             toast(sum);
             rows.push(sum);
             note = 'SYSTEM: ops applied automatically by DeepSeek Extended:\n\n```\n' +
@@ -600,7 +646,7 @@
             refreshPrompt(); // дерево изменилось
           } else {
             toast('Ошибка применения: ' + (r.error || '?'));
-            rows.push('⚠️ Ошибка применения правок');
+            rows.push('Ошибка применения правок');
           }
         }
         // --- NEED FILE / NEED SEARCH: обслуживаем, только если ответ — ХВОСТ
@@ -684,28 +730,33 @@
     }
     syncNativeToggle(el);
   }
-  // шестерёнка — ПЕРВЫМ элементом того же ряда (левее скрепки)
+  // шестерёнка — В ПРАВОМ кластере (.bf38813a), непосредственно слева от
+  // скрепки (attacher). Точная копия разметки icon-кнопки сайта: Никакого
+  // аутлайна-пилюли, обычный значок, как у кнопки аттача.
   function ensureGearButton() {
-    var host = findToggleHost();
-    if (!host) return;
-    if (host.querySelector('.dsx-gear-btn')) return;
+    var cluster = document.querySelector('.bf38813a');
+    // миграция: если старая шестерёнка осталась в левом ряду — сносим
+    document.querySelectorAll('._58b31c9 .dsx-gear-btn').forEach(function (n) { n.remove(); });
+    if (!cluster) return;
+    if (cluster.querySelector('.dsx-gear-btn')) return;
     var g = document.createElement('div');
-    g.className = 'dsx-native dsx-gear-btn f79352dc ds-toggle-button ds-toggle-button--m';
-    g.tabIndex = 0;
     g.setAttribute('role', 'button');
-    g.title = 'DeepSeek Extended — настройки (папка, начальный промпт)';
-    g.style.cssText = 'transform:translateZ(0px);position:relative';
+    g.className = 'ds-button ds-button--iconLabelPrimary ds-button--icon ds-button--capsule ' +
+                  'ds-button--s ds-button--icon-relative-m dsx-gear-btn';
+    g.tabIndex = 0;
+    g.title = 'DeepSeek Extended — настройки';
+    g.style.cssText = '--dsl-button-height: 34px;';
     g.innerHTML =
-      '<div class="ds-toggle-button__icon"><div class="ds-icon" style="font-size:inherit">' +
-      '<div style="width:14px;height:14px">' +
-      '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+      '<div class="ds-button__background"></div>' +
+      '<div class="ds-button__icon ds-button__icon--last-child">' +
+      '<div class="ds-icon" style="font-size: inherit;">' +
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
       '<path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 0 0-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 0 0-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 0 0-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 0 0-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 0 0 1.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>' +
       '<path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>' +
-      '</svg></div></div></div>' +
-      '<div class="ds-focus-ring" style="--dsl-focus-ring-offset:-1px"></div>';
+      '</svg></div></div>';
     g.addEventListener('click', showSettingsModal);
     g.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') g.click(); });
-    host.insertBefore(g, host.firstChild);
+    cluster.insertBefore(g, cluster.firstChild); // левее скрепки
   }
   setInterval(function () { ensureNativeToggle(); ensureGearButton(); }, 1400);
 
@@ -714,10 +765,11 @@
     if (location.href !== st.lastUrl) {
       st.lastUrl = location.href;
       st.primedOnce = false; st.lastAnswer = ''; st.opsHash = '';
-      st.sentFiles = {}; st.sentSearches = {};
+      st.sentFiles = {}; st.sentSearches = {}; sentLoad(); // дедуп новой беседы
       st.autoCount = 0; sessionStorage.setItem('dsx:auto', '0');
       sessionStorage.removeItem('dsx:primed');
       sessionStorage.removeItem('dsx:opsh');
+      armReloadResume(); // история новой беседы дорисуется — проверить хвост
     }
   }, 1500);
 
@@ -742,17 +794,23 @@
   // Если хвост беседы — необслуженный ответ модели (она просила файлы,
   // а страница рухнула/перезагрузилась) — цикл подхватит settleAndHandle.
   // Если хвост — НАШЕ служебное сообщение без ответа — тихая подсказка.
+  // ВНИМАНИЕ: запускать ТОЛЬКО когда виртуальный список дорисовал историю
+  // (число строк стабильно ~2 сек), иначе хвостом может оказаться СТАРЫЙ
+  // ответ с NEED FILE и уедет дубль служебного сообщения.
   function reloadResume() {
     if (!cfg.pilot) return;
     try {
-      var msgs = document.querySelectorAll('._9663006, ._4f9bf79');
+      var msgs = document.querySelectorAll('[data-virtual-list-item-key]');
       if (!msgs.length) return;
       var last = msgs[msgs.length - 1];
       var isUserTail = String(last.className).indexOf('_9663006') >= 0;
+      if (!isUserTail) {
+        if (last.querySelector('._9663006')) return; // ассистент-блок содержит юзера? страховка
+      }
       if (isUserTail) {
         if (!st.reloadHint) {
           st.reloadHint = 1;
-          toast('🛩 Ответ модели оборвался — напиши «продолжи»');
+          toast('Ответ модели оборвался — напиши «продолжи»');
           console.log('[DSX] хвост беседы — сообщение без ответа (после перезагрузки)');
         }
       } else if (st.folderReady) {
@@ -761,14 +819,23 @@
       }
     } catch (e) {}
   }
+  // сторожок стабильности истории: ждём, пока ds-virtual-list перестанет
+  // догружаться (счётчик строк не меняется две проверки подряд), потом — один раз.
+  var rrPrev = -1, rrSame = 0, rrTicks = 0, rrArmed = true;
+  function armReloadResume() { rrPrev = -1; rrSame = 0; rrTicks = 0; rrArmed = true; }
+  setInterval(function () {
+    if (!rrArmed) return;
+    var n = document.querySelectorAll('[data-virtual-list-item-key]').length;
+    if (n > 0 && n === rrPrev) rrSame++; else { rrSame = 0; rrPrev = n; }
+    if (++rrTicks > 25 || rrSame >= 2) { rrArmed = false; reloadResume(); }
+  }, 1000);
 
   // ---------------- старт
   if (sessionStorage.getItem('dsx:primed') === '1') st.primedOnce = true;
-  console.log('[DSX] DeepSeek Extended v19 стелс: загружено. pilot=' + cfg.pilot);
+  console.log('[DSX] DeepSeek Extended v20 стелс: загружено. pilot=' + cfg.pilot);
   refreshPrompt();
   setTimeout(refreshPrompt, 1200);
   setInterval(function () {
     if (!st.bigPrompt || !st.folderReady) refreshPrompt();
   }, 6000);
-  setTimeout(reloadResume, 3200);
 })();
