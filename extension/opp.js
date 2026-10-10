@@ -280,8 +280,13 @@ tree || '(структура недоступна — спросите чере�
 "# WORK STYLE",
 "- ACT, DON'T ASK. Choose sensible defaults; mention them instead of asking.",
 "- Stay strictly inside the project root above. Never aim outside it.",
-"- After the ops blocks add a short human summary (plain text, few lines).",
-"- Prefer one well-planned change over three sloppy ones."
+"- Prefer one well-planned change over three sloppy ones.",
+"",
+"# TURN DISCIPLINE (critical)",
+"- A message containing ops blocks or [<{...}>] requests is a WORK message: end it right after the last block. NO summary, NO conclusion, NO 'Готово' in it.",
+"- The automatic SYSTEM reply (ops report or requested data) comes right after. Only your NEXT message — after reading that reply — may contain the short human summary (few lines, plain text).",
+"- If the SYSTEM reply reports an ERROR (e.g. old_string not found): briefly diagnose, re-read the exact fragment with READ RANGE if needed, and retry with a CORRECTED payload ONCE. Never resend an identical payload — that creates an infinite error loop.",
+"- Never claim the result before the SYSTEM reply arrived: you have NOT applied anything until the ops report confirms it."
     ].join('\n');
   }
 

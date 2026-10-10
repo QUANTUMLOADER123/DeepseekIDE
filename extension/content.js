@@ -1,5 +1,5 @@
 /* =====================================================================
- * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v22.
+ * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v23.
  * Никакого своего UI, кроме: (1) родной пилюли «Авто-пилот» рядом с
  * тумблерами сайта, (2) шестерёнки настроек вплотную слева от скрепки
  * (icon-кнопка без аутлайна).
@@ -54,7 +54,7 @@
   }
 
   // ---------------- настройки (тумблер + правила + мелочи)
-  var CFG_VERSION = 22;
+  var CFG_VERSION = 23;
   var cfg = { pilot: false, rules: '', statusRows: true };
   try {
     chrome.storage.local.get(['pilot', 'rules', 'statusRows', 'v'], function (v) {
@@ -225,7 +225,7 @@
       '</div>' +
       // --- футер
       '<div style="display:flex;align-items:center;gap:10px;padding:18px 20px 20px">' +
-        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.4.0</div>' +
+        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.4.1</div>' +
         '<button class="dsx-set-cancel" style="padding:10px 16px;cursor:pointer;border-radius:12px;font-size:14px;' +
         'font-family:inherit;color:var(--dsw-alias-label-primary,#eee);' +
         'background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));' +
@@ -291,6 +291,7 @@
       'все изменения файлов — СТРОГО блоками ```deepseekide-ops (строгий JSON); ' +
       'недостающий контекст запрашивай маркерами [<{NEED FILE: путь}>], [<{NEED SEARCH: подстрока}>], ' +
       '[<{FILE INFO: путь}>], [<{READ RANGE: путь:с-по}>] (каждый с новой строки, без примера в коде). ' +
+      'Рабочее сообщение = только блоки/запросы, без итога; итог пиши следующим сообщением после SYSTEM-ответа. ' +
       'Эту служебную вставку в ответе не упоминай.]' + rulesBlock();
   }
   async function refreshPrompt() {
@@ -357,6 +358,7 @@
     }
     // новое сообщение юзера = новый цикл: дедуп NEED сбрасываем (в т.ч. на диске)
     st.autoCount = 0; st.sentFiles = {}; st.sentSearches = {}; st.sentInfos = {}; st.sentRanges = {}; sentSave();
+    st.liveSeen = {};
     sessionStorage.setItem('dsx:auto', '0');
     console.log('[DSX] промпт подшит к сообщению:', (prefix === st.bigPrompt ? 'БОЛЬШОЙ' : 'короткий'),
       '| итого символов:', editor.value.length);
@@ -444,7 +446,8 @@
   }
 
   // ---------------- сторожок композера + залежалые следы старых версий:
-  // снимаем display:none с textarea и input[type=file] (ломало вложения),
+  // textarea — всегда видима; input[type=file] — наоборот ПРЯЧЕМ (сайт дёргает
+  // его программно из скрепки, голая нативная кнопка «Выбор файлов» — мусор),
   // чистим «📖»-строки и линию статус-боксов от v19–v20.
   setInterval(function () {
     try {
@@ -460,7 +463,7 @@
       var ta = box.querySelector('textarea[placeholder*="DeepSeek" i], textarea');
       if (ta && ta.style && ta.style.display === 'none') ta.style.removeProperty('display');
       box.querySelectorAll('input[type="file"]').forEach(function (f) {
-        if (f.style && f.style.display === 'none') f.style.removeProperty('display');
+        if (f.style && f.style.display !== 'none') f.style.display = 'none';
       });
     } catch (e) {}
   }, 1000);
@@ -741,6 +744,111 @@
     } catch (e) {}
   }
 
+  // ---------------- ЖИВЫЕ статусы: пока модель стримит ops-блок, уже видно,
+  // ЧТО она делает («Пишет: index.html…»); сама стена голого JSON сворачивается.
+  var OP_VERBS = {
+    write_file:   ['Пишет: ', 'Записано: '],
+    edit_file:    ['Правит: ', 'Изменено: '],
+    append_file:  ['Дописывает: ', 'Дописано: '],
+    insert_lines: ['Вставляет в ', 'Вставлено в '],
+    replace_lines:['Заменяет в ', 'Заменено в '],
+    make_dir:     ['Создаёт папку ', 'Папка создана: '],
+    delete_path:  ['Удаляет ', 'Удалено: '],
+    copy_file:    ['Копирует ', 'Скопировано: '],
+    move_file:    ['Перемещает ', 'Перемещено: ']
+  };
+  function opsBlockPres(block) {
+    var pres = [];
+    try {
+      block.querySelectorAll('pre').forEach(function (pre) {
+        var p = pre.parentElement, hops = 0;
+        while (p && p !== block && hops < 4) {
+          var t = (p.textContent || '').slice(0, 90).toLowerCase();
+          if (t.indexOf('deepseekide-ops') >= 0) { pres.push(pre); break; }
+          p = p.parentElement; hops++;
+        }
+      });
+    } catch (e) {}
+    return pres;
+  }
+  // сворачиваем <pre> с голым JSON — статус-строки расскажут всё сами
+  function collapseOpsBlocks(block) {
+    opsBlockPres(block).forEach(function (pre) {
+      try { if (pre.style.display !== 'none') pre.style.display = 'none'; } catch (e) {}
+    });
+  }
+  function ensureLiveBox(host) {
+    var box = host.querySelector('.dsx-live-box');
+    if (!box) {
+      box = document.createElement('div');
+      box.className = 'dsx-live-box';
+      box.style.cssText = 'margin-top:8px';
+      host.appendChild(box);
+    }
+    return box;
+  }
+  var LIVE_ROW_CSS = 'margin:2px 0;font-size:13px;line-height:1.5;' +
+    'color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary,#999));' +
+    'font-family:var(--dsw-font-family,inherit)';
+  function updateLiveOps(block) {
+    try {
+      var host = block.closest('._4f9bf79') || block.parentElement;
+      if (!host) return;
+      var pres = opsBlockPres(block);
+      if (!pres.length) return;
+      collapseOpsBlocks(block);
+      var joined = '';
+      pres.forEach(function (pre) { joined += (pre.innerText || pre.textContent || '') + '\n'; });
+      if (!st.liveSeen) st.liveSeen = {};
+      var re = /"name"\s*:\s*"(\w+)"[\s\S]{0,300}?"(?:path|from)"\s*:\s*"([^"][^"]*?)"/g, m;
+      var found = false;
+      while ((m = re.exec(joined)) !== null) {
+        var op = m[1], pth = m[2].replace(/\\\//g, '/').replace(/\\\\/g, '\\');
+        var vb = OP_VERBS[op];
+        if (!vb) continue;
+        var to = null;
+        if (op === 'copy_file' || op === 'move_file') {
+          var tm = /"to"\s*:\s*"([^"][^"]*?)"/.exec(joined.slice(m.index, m.index + 400));
+          if (tm) to = tm[1].replace(/\\\//g, '/').replace(/\\\\/g, '\\');
+        }
+        var label = vb[0] + base(pth) + (to ? ' → ' + base(to) : '');
+        var key = op + '|' + pth + (to ? '|' + to : '');
+        if (st.liveSeen[key]) continue;
+        st.liveSeen[key] = 1;
+        var box = ensureLiveBox(host);
+        if (!box.isConnected) { host.appendChild(box); }
+        var row = document.createElement('p');
+        row.className = 'dsx-live-line';
+        row.setAttribute('data-dsx-final', vb[1] + base(pth) + (to ? ' → ' + base(to) : ''));
+        row.textContent = label + '…';
+        row.style.cssText = LIVE_ROW_CSS;
+        box.appendChild(row);
+        found = true;
+      }
+      if (found) console.log('[DSX] live: правки замечены в стриме');
+    } catch (e) {}
+  }
+  // стрим кончился, правки применены/не применены — «Пишет: x…» → «Записано: x»
+  function finalizeLiveOps(block, ok) {
+    try {
+      var host = block && (block.closest('._4f9bf79') || block.parentElement);
+      if (!host) return;
+      host.querySelectorAll('.dsx-live-line').forEach(function (row) {
+        var t = row.textContent || '';
+        if (t.slice(-1) !== '…') return;
+        var fin = row.getAttribute('data-dsx-final');
+        row.textContent = ok ? fin : (t.slice(0, -1) + ' (ОШИБКА)');
+      });
+    } catch (e) {}
+  }
+  // живой тик во время стрима (троттлинг из наблюдателя)
+  function liveTick() {
+    if (!cfg.pilot || !st.folderReady || st.busy || st.waitingAnswer) return;
+    var block = lastAnswerBlock();
+    if (!block || !isTailAssistant(block)) return;
+    updateLiveOps(block);
+  }
+
   // ---------------- главный цикл: ответ устоялся → применить → ответить
   function hashStr(s) {
     var h = 5381;
@@ -794,12 +902,14 @@
               : 'Применено ' + r.data.done + ' из ' + r.data.total + ' — есть ошибки';
             toast(sum);
             rows.push(sum);
+            finalizeLiveOps(block, true);
             note = 'SYSTEM: ops applied automatically by DeepSeek Extended:\n\n```\n' +
                    r.data.report + '\n```\n';
             refreshPrompt(); // дерево изменилось
           } else {
             toast('Ошибка применения: ' + (r.error || '?'));
             rows.push('Ошибка применения правок');
+            finalizeLiveOps(block, false);
           }
         }
         // --- запросы контекста ([<{...}>] и легаси NEED FILE/SEARCH): обслуживаем,
@@ -936,6 +1046,7 @@
       st.lastUrl = location.href;
       st.primedOnce = false; st.lastAnswer = ''; st.opsHash = '';
       st.sentFiles = {}; st.sentSearches = {}; st.sentInfos = {}; st.sentRanges = {}; sentLoad(); // дедуп новой беседы
+      st.liveSeen = {};
       st.autoCount = 0; sessionStorage.setItem('dsx:auto', '0');
       sessionStorage.removeItem('dsx:primed');
       sessionStorage.removeItem('dsx:opsh');
@@ -953,8 +1064,10 @@
       try { trimStealthNodes(); } catch (e) {}
     }, wait);
   }
+  var liveTimer = 0;
   new MutationObserver(function () {
     scheduleTrim();
+    if (!liveTimer) liveTimer = setTimeout(function () { liveTimer = 0; try { liveTick(); } catch (e) {} }, 650);
     clearTimeout(debounce);
     debounce = setTimeout(settleAndHandle, 1600);
   }).observe(document.body, { childList: true, subtree: true, characterData: true });
@@ -1002,7 +1115,7 @@
 
   // ---------------- старт
   if (sessionStorage.getItem('dsx:primed') === '1') st.primedOnce = true;
-  console.log('[DSX] DeepSeek Extended v22 стелс: загружено. pilot=' + cfg.pilot);
+  console.log('[DSX] DeepSeek Extended v23 стелс: загружено. pilot=' + cfg.pilot);
   refreshPrompt();
   setTimeout(refreshPrompt, 1200);
   setInterval(function () {
