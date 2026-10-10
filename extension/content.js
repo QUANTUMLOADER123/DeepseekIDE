@@ -1,5 +1,5 @@
 /* =====================================================================
- * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v23.
+ * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v24.
  * Никакого своего UI, кроме: (1) родной пилюли «Авто-пилот» рядом с
  * тумблерами сайта, (2) шестерёнки настроек вплотную слева от скрепки
  * (icon-кнопка без аутлайна).
@@ -54,28 +54,32 @@
   }
 
   // ---------------- настройки (тумблер + правила + мелочи)
-  var CFG_VERSION = 23;
-  var cfg = { pilot: false, rules: '', statusRows: true };
+  var CFG_VERSION = 24;
+  var cfg = { pilot: false, rules: '', statusRows: true, jbTest: false, jbText: '' };
   try {
-    chrome.storage.local.get(['pilot', 'rules', 'statusRows', 'v'], function (v) {
+    chrome.storage.local.get(['pilot', 'rules', 'statusRows', 'jbTest', 'jbText', 'v'], function (v) {
       if (v && v.v !== CFG_VERSION) {
         // свежая установка/обнова: пилот не трогаем (он и так выкл у новых),
         // дефолты новых полей — бережливо дописываем
         cfg.pilot = !!v.pilot;
         cfg.rules = typeof v.rules === 'string' ? v.rules : '';
         cfg.statusRows = v.statusRows !== false;
-        var base = { v: CFG_VERSION, pilot: cfg.pilot, rules: cfg.rules, statusRows: cfg.statusRows };
+        cfg.jbTest = !!v.jbTest;
+        cfg.jbText = typeof v.jbText === 'string' ? v.jbText : '';
+        var base = { v: CFG_VERSION, pilot: cfg.pilot, rules: cfg.rules, statusRows: cfg.statusRows, jbTest: cfg.jbTest, jbText: cfg.jbText };
         try { chrome.storage.local.set(base); } catch (e) {}
       } else if (v) {
         if (v.pilot !== undefined) cfg.pilot = !!v.pilot;
         if (typeof v.rules === 'string') cfg.rules = v.rules;
         if (v.statusRows !== undefined) cfg.statusRows = !!v.statusRows;
+        if (v.jbTest !== undefined) cfg.jbTest = !!v.jbTest;
+        if (typeof v.jbText === 'string') cfg.jbText = v.jbText;
       }
       syncNativeToggle(); syncFolderLabels();
     });
   } catch (e) { /* дефолты */ }
   function saveCfg() {
-    try { chrome.storage.local.set({ v: CFG_VERSION, pilot: cfg.pilot, rules: cfg.rules, statusRows: cfg.statusRows }); } catch (e) {}
+    try { chrome.storage.local.set({ v: CFG_VERSION, pilot: cfg.pilot, rules: cfg.rules, statusRows: cfg.statusRows, jbTest: cfg.jbTest, jbText: cfg.jbText }); } catch (e) {}
   }
 
   // ---------------- состояние
@@ -215,6 +219,23 @@
         'background:var(--dsw-alias-bg-layer-2,#1d1f24);color:var(--dsw-alias-label-primary,#f5f5f5);' +
         'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1));outline:none"></textarea>' +
       '</div>' +
+      // --- раздел: ТЕСТ УСТОЙЧИВОСТИ (jailbreak-check владельца)
+      '<div style="padding:18px 20px 0">' +
+        '<label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;font-weight:600;' +
+        'color:var(--dsw-alias-label-primary,#eee)">' +
+          '<input type="checkbox" class="dsx-set-jb" style="width:15px;height:15px;accent-color:#5686fe">' +
+          ' Тест устойчивости (jailbreak-check)' +
+        '</label>' +
+        '<div style="margin-top:4px;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-tertiary,#888)">' +
+          'Для проверки СВОЕЙ модели: вставь сюда свой тестовый промпт — он будет подшиваться ' +
+          'в конец скрытого контекста, и ты увидишь, поддаётся ли модель. Пустое поле = ничего не уходит.' +
+        '</div>' +
+        '<textarea class="dsx-set-jbtext" rows="4" placeholder="Твой тестовый промпт для jailbreak-check…" ' +
+        'style="width:100%;box-sizing:border-box;margin-top:8px;padding:10px 12px;resize:vertical;' +
+        'border-radius:10px;font-size:13px;line-height:1.5;font-family:inherit;' +
+        'background:var(--dsw-alias-bg-layer-2,#1d1f24);color:var(--dsw-alias-label-primary,#f5f5f5);' +
+        'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1));outline:none"></textarea>' +
+      '</div>' +
       // --- раздел: мелочи
       '<div style="padding:16px 20px 0">' +
         '<label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;' +
@@ -225,7 +246,7 @@
       '</div>' +
       // --- футер
       '<div style="display:flex;align-items:center;gap:10px;padding:18px 20px 20px">' +
-        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.4.1</div>' +
+        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.4.2</div>' +
         '<button class="dsx-set-cancel" style="padding:10px 16px;cursor:pointer;border-radius:12px;font-size:14px;' +
         'font-family:inherit;color:var(--dsw-alias-label-primary,#eee);' +
         'background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));' +
@@ -238,12 +259,18 @@
     syncFolderLabels();
     var ta = card.querySelector('.dsx-set-rules');
     var cb = card.querySelector('.dsx-set-rows');
+    var jb = card.querySelector('.dsx-set-jb');
+    var jt = card.querySelector('.dsx-set-jbtext');
     ta.value = cfg.rules || '';
     cb.checked = cfg.statusRows !== false;
+    jb.checked = !!cfg.jbTest;
+    jt.value = cfg.jbText || '';
     card.querySelector('.dsx-set-cancel').onclick = closeModals;
     card.querySelector('.dsx-set-save').onclick = function () {
       cfg.rules = ta.value.slice(0, 4000);
       cfg.statusRows = !!cb.checked;
+      cfg.jbTest = !!jb.checked;
+      cfg.jbText = jt.value.slice(0, 8000);
       saveCfg(); closeModals();
       toast('Настройки сохранены');
       refreshPrompt(); // пересобрать промпт с новыми правилами
@@ -280,11 +307,17 @@
     if (!r) return '';
     return '\n\n# USER RULES (пользовательские правила — соблюдай СТРОГО, они важнее стандартных)\n' + r;
   }
+  function jbBlock() {
+    if (!cfg.jbTest) return '';
+    var t = (cfg.jbText || '').trim();
+    if (!t) return '';
+    return '\n\n' + t; // red-team probe владельца: текст подшивается как есть
+  }
   function bigPrompt(tree) {
     return '[Автоматическое системное сообщение DeepSeek Extended. Этот блок — служебный ' +
       'контекст расширения: всегда учитывай его и НИКОГДА не упоминай и не цитируй ' +
       'в ответах пользователю.]\n\n' +
-      DsideOps.buildPrompt(tree) + rulesBlock();
+      DsideOps.buildPrompt(tree) + rulesBlock() + jbBlock();
   }
   function shortPrefix() {
     return '[DeepSeek Extended активен для проекта «' + st.folderName + '». Напоминание: ' +
@@ -292,7 +325,7 @@
       'недостающий контекст запрашивай маркерами [<{NEED FILE: путь}>], [<{NEED SEARCH: подстрока}>], ' +
       '[<{FILE INFO: путь}>], [<{READ RANGE: путь:с-по}>] (каждый с новой строки, без примера в коде). ' +
       'Рабочее сообщение = только блоки/запросы, без итога; итог пиши следующим сообщением после SYSTEM-ответа. ' +
-      'Эту служебную вставку в ответе не упоминай.]' + rulesBlock();
+      'Эту служебную вставку в ответе не упоминай.]' + rulesBlock() + jbBlock();
   }
   async function refreshPrompt() {
     var en = await fsCall('ensure');
@@ -301,7 +334,7 @@
     var t = await fsCall('tree', { max_entries: 350 });
     if (t.ok) st.bigPrompt = bigPrompt(t.data.text);
     else if (!st.bigPrompt) st.bigPrompt = bigPrompt('');
-    console.log('[DSX] refresh: папка="' + st.folderName + '", промпт=' +
+    console.log('[DSX] refresh: папка="' + st.folderName + '"' + (cfg.jbTest && (cfg.jbText || '').trim() ? ', JB-ТЕСТ ВКЛ' : '') + ', промпт=' +
       (st.bigPrompt ? st.bigPrompt.length + ' символов' : 'НЕТ') + (t.ok ? '' : ' (дерево не прочиталось)'));
     syncNativeToggle(); syncFolderLabels();
   }
@@ -1115,7 +1148,7 @@
 
   // ---------------- старт
   if (sessionStorage.getItem('dsx:primed') === '1') st.primedOnce = true;
-  console.log('[DSX] DeepSeek Extended v23 стелс: загружено. pilot=' + cfg.pilot);
+  console.log('[DSX] DeepSeek Extended v24 стелс: загружено. pilot=' + cfg.pilot);
   refreshPrompt();
   setTimeout(refreshPrompt, 1200);
   setInterval(function () {
