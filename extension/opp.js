@@ -162,7 +162,7 @@
   // «<{» не трактуется HTML-токенайзером как тег (после < идёт {), поэтому
   // разметка доживает до DOM-текста нетронутой и видна пользователю.
   // Маркеры внутри ```-ограждённого кода игнорируются (это могут быть примеры).
-  var BRACKET_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH)\s*:\s*([^<>]*?)\s*\}>\]/gi;
+  var BRACKET_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH|ASK MULTI|ASK)\s*:\s*([^<>]*?)\s*\}>\]/gi;
   function findBracketRequests(answer) {
     var out = [], inFence = false;
     var lines = String(answer).split('\n');
@@ -172,7 +172,7 @@
       if (inFence) continue;
       var m; BRACKET_RE.lastIndex = 0;
       while ((m = BRACKET_RE.exec(line)) !== null && out.length < 12) {
-        var kind = m[1].toUpperCase(), key;
+        var kind = m[1].toUpperCase(), key, opts = [];
         var val = unescapeHtml(String(m[2])).trim();
         if (kind === 'NEED FILE' || kind === 'FILE INFO') {
           val = cleanPath(val);
@@ -187,6 +187,16 @@
           if (t < f) t = f;
           if (t - f > 1199) t = f + 1199; // потолок фрагмента: 1200 строк
           val = pth + ':' + f + '-' + t;
+        } else if (kind === 'ASK' || kind === 'ASK MULTI') {
+          var pm = /^(.+?)::([\s\S]*)$/.exec(val);
+          var opts = [];
+          if (pm) {
+            opts = pm[2].split(';').map(function (s) { return s.trim(); })
+                        .filter(function (s) { return s.length > 0; }).slice(0, 8);
+            val = pm[1].trim();
+          }
+          if (!val) continue;
+          if (val.length > 300) val = val.slice(0, 300);
         } else { // NEED SEARCH / MEMORY SEARCH
           val = val.slice(0, 200);
           if (!val) continue;
@@ -194,7 +204,7 @@
         key = kind + '|' + val.toLowerCase();
         var dup = false;
         for (var k = 0; k < out.length; ++k) if (out[k].key === key) { dup = true; break; }
-        if (!dup) out.push({ kind: kind, arg: val, key: key, bracket: true });
+        if (!dup) out.push({ kind: kind, arg: val, opts: opts, key: key, bracket: true });
       }
     }
     return out;
@@ -308,6 +318,9 @@
 "[<{NEED FILE: <project-relative path>}>]         -> WHOLE file with line numbers (hard cap ~4000 lines / 120k chars; the rest is TRUNCATED).",
 "[<{NEED SEARCH: <substring>}>]                   -> matches across ALL text files of the project in the form file:line: text.",
 "[<{MEMORY SEARCH: <keywords>}>]                  -> owner\u2019s knowledge base (architecture, fields, structures, protocols, how things work): returns matching note fragments.",
+"[<{ASK: <dilemma> :: <option1> ; <option2> ; <option3>}>]      -> asks the HUMAN through a clickable card: single choice (one option).",
+"[<{ASK MULTI: <dilemma> :: <option1> ; <option2> ; <option3>}>] -> same but the human may tick SEVERAL options.",
+"  (2-8 concrete options after \u0027::\u0027, separated by \u0027;\u0027; the UI always adds a \u0027custom answer\u0027 field itself. You get the picked answer(s) as a SYSTEM message and continue.)",
 "Example:",
 "[<{FILE INFO: src/main.cpp}>]",
 "[<{READ RANGE: src/main.cpp:1-300}>]",
@@ -316,6 +329,7 @@
 "- If unsure about a file's size, ask FILE INFO FIRST. For files over ~600 lines ALWAYS read them chunk-by-chunk with READ RANGE (e.g. :1-400, then :401-800) instead of NEED FILE — full dumps get truncated and waste context.",
 "- NEED SEARCH scans the ENTIRE project, not only files you have already received. Use it to locate symbols before asking for files.",
 "- Never invent project internals (field names, struct layouts, packet formats, config keys...). MEMORY SEARCH is your first stop for \u201chow does X work here\u201d; NEED SEARCH / READ RANGE confirm it in code.",
+"- Prefer acting on your own defaults; but when a fork genuinely depends on the HUMAN\u2019s intent (which framework, keep-or-delete, which of two APIs...), ask via [<{ASK: ...}>] / [<{ASK MULTI: ...}>] instead of plain-text questions or stalling. Plain-text questions are invisible to the automation and dead-end the loop.",
 "- Batch all requests you need into ONE message, then wait — do not narrate them.",
 "- NEVER repeat a request that was already answered in this chat: re-use what you already received. Repeating wastes a whole round-trip and is treated as an error.",
 "# PROJECT STRUCTURE",

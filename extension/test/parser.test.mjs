@@ -118,3 +118,23 @@ test('MEMORY SEARCH: маркер ловится, поиск по заметка
   assert.equal(Ops.searchMemory(notes, 'несуществующий кверселлум').length, 0, 'нет совпадений — пусто');
   assert.equal(Ops.searchMemory([], 'что-то').length, 0, 'пустая память — пусто');
 });
+
+test('ASK / ASK MULTI: вопросы с опциями парсятся, фенсы игнорятся', () => {
+  const a = Ops.findBracketRequests('[<{ASK: React или Vue? :: React ; Vue ; Vanilla JS}>]');
+  assert.equal(a.length, 1);
+  assert.equal(a[0].kind, 'ASK');
+  assert.equal(a[0].arg, 'React или Vue?');
+  assert.deepEqual(a[0].opts, ['React', 'Vue', 'Vanilla JS']);
+
+  const m = Ops.findBracketRequests('смотри:\n[<{ASK MULTI: Какие файлы трогаем? :: main.cpp ; sdk/entity.inl }>]');
+  assert.equal(m[0].kind, 'ASK MULTI');
+  assert.deepEqual(m[0].opts, ['main.cpp', 'sdk/entity.inl']);
+
+  // без опций — один вопрос
+  const bare = Ops.findBracketRequests('[<{ASK: Какой порт слушаем?}>]');
+  assert.equal(bare[0].arg, 'Какой порт слушаем?');
+  assert.deepEqual(bare[0].opts, []);
+
+  // в фенсе — игнор
+  assert.equal(Ops.findBracketRequests('```\n[<{ASK: x :: y ; z}>]\n```').length, 0);
+});

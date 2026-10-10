@@ -1,5 +1,5 @@
 /* =====================================================================
- * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v25.
+ * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v26.
  * Никакого своего UI, кроме: (1) родной пилюли «Авто-пилот» рядом с
  * тумблерами сайта, (2) шестерёнки настроек вплотную слева от скрепки
  * (icon-кнопка без аутлайна).
@@ -54,7 +54,7 @@
   }
 
   // ---------------- настройки (тумблер + правила + мелочи)
-  var CFG_VERSION = 25;
+  var CFG_VERSION = 26;
   var cfg = { pilot: false, rules: '', statusRows: true, jbTest: false, jbText: '', memory: [] };
   try {
     chrome.storage.local.get(['pilot', 'rules', 'statusRows', 'jbTest', 'jbText', 'memory', 'v'], function (v) {
@@ -270,7 +270,7 @@
       '</div>' +
       // --- футер
       '<div style="display:flex;align-items:center;gap:10px;padding:18px 20px 20px">' +
-        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.5.0</div>' +
+        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.6.0</div>' +
         '<button class="dsx-set-cancel" style="padding:10px 16px;cursor:pointer;border-radius:12px;font-size:14px;' +
         'font-family:inherit;color:var(--dsw-alias-label-primary,#eee);' +
         'background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));' +
@@ -688,7 +688,7 @@
     reqs.forEach(function (r) { if (!seen[r.key]) { seen[r.key] = 1; uniq.push(r); } });
     if (!uniq.length) return { text: '', rows: [] };
 
-    var out = ['SYSTEM: auto-reply from DeepSeek Extended.'], rows = [];
+    var out = ['SYSTEM: auto-reply from DeepSeek Extended.'], rows = [], asks = [];
     var done = 0, i;
     for (i = 0; i < uniq.length; ++i) {
       var rq = uniq[i];
@@ -770,6 +770,9 @@
         }
         if (!rq.bracket) rows.push('Память «' + mq + '»' + (hits.length ? ': найдено' : ' — пусто'));
         done++;
+      } else if (rq.kind === 'ASK' || rq.kind === 'ASK MULTI') {
+        asks.push({ q: rq.arg, opts: rq.opts || [], multi: rq.kind === 'ASK MULTI' });
+        if (!rq.bracket) rows.push('Ждёт ответа: ' + rq.arg);
       } else { // NEED SEARCH
         var q = rq.arg;
         if (st.sentSearches[q]) continue;
@@ -783,6 +786,7 @@
       }
     }
     sentSave();
+    if (asks.length && !done) return { text: '', rows: rows, asks: asks }; // вопросы человеку — крутилки ждут
     if (!done) {
       // ВСЁ запрошенное уже отправлялось раньше: молчать НЕЛЬЗЯ (модель ждёт
       // ответ и встаёт навсегда) — шлём короткое напоминание.
@@ -791,12 +795,12 @@
                '[<{READ RANGE: <path>:<other-from>-<other-to>}>]; for size, [<{FILE INFO: <path>}>].');
       return { text: out.join('\n\n'), rows: [] };
     }
-    return { text: out.join('\n\n'), rows: rows };
+    return { text: out.join('\n\n'), rows: rows, asks: asks };
   }
 
   // ---------------- бейджи: [<{…}>] в ответе модели превращаем в строки-статусы
   // Меняем ТОЛЬКО nodeValue текстовых узлов (React не заметит — дерево то же).
-  var BADGE_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH)\s*:\s*([^<>]*?)\s*\}>\]/gi;
+  var BADGE_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH|ASK MULTI|ASK)\s*:\s*([^<>]*?)\s*\}>\]/gi;
   function badgeText(kind, arg, pending) {
     var K = kind.toUpperCase(), tail = pending ? '…' : '';
     if (K === 'NEED FILE')    return (pending ? 'Чтение: '        : 'Прочитано: ')      + base(arg) + tail;
@@ -807,6 +811,7 @@
       return (pending ? 'Чтение: ' : 'Прочитано: ') + nm + tail;
     }
     if (K === 'MEMORY SEARCH') return (pending ? 'Память: ' : 'Найдено в памяти: ') + String(arg).trim() + tail;
+    if (K === 'ASK' || K === 'ASK MULTI') return (pending ? 'Спрашивает: ' : 'Отвечено: ') + String(arg).trim() + tail;
     return (pending ? 'Поиск: ' : 'Найдено: ') + String(arg).trim() + tail; // NEED SEARCH
   }
   function eachTextNode(root, fn) {
@@ -830,7 +835,8 @@
       [/Чтение: ([^…\n]+)…/g,        'Прочитано: $1'],
       [/Осмотр: ([^…\n]+)…/g,        'Размер получен: $1'],
       [/Поиск: ([^…\n]+)…/g,         'Найдено: $1'],
-      [/Память: ([^…\n]+)…/g,        'Найдено в памяти: $1']
+      [/Память: ([^…\n]+)…/g,        'Найдено в памяти: $1'],
+      [/Спрашивает: ([^…\n]+)…/g,     'Отвечено: $1']
     ];
     try {
       eachTextNode(block, function (n) {
@@ -841,6 +847,123 @@
       });
     } catch (e) {}
   }
+  // ---------------- карточка-опрос (ASK / ASK MULTI): варианты → клик → ответ
+  // сам уезжает модели служебным сообщением; последний вариант всегда «Свой ответ»
+  function renderAskCard(block, ask) {
+    try {
+      var host = block.closest('._4f9bf79') || block.parentElement;
+      if (!host) return;
+      var key = 'dsx-ask-' + hashStr(ask.q + '|' + (ask.opts || []).join(';')).slice(0, 24);
+      if (host.querySelector('[data-key="' + key + '"]')) return;
+
+      var card = document.createElement('div');
+      card.setAttribute('data-key', key);
+      card.style.cssText = 'margin-top:10px;padding:12px 14px;border-radius:12px;' +
+        'background:var(--dsw-alias-bg-layer-2,#1d1f24);' +
+        'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1));max-width:520px';
+
+      var title = document.createElement('div');
+      title.textContent = ask.q;
+      title.style.cssText = 'font-size:13.5px;font-weight:600;line-height:1.45;' +
+        'color:var(--dsw-alias-label-primary,#eee)';
+      card.appendChild(title);
+
+      var hint = document.createElement('div');
+      hint.textContent = ask.multi ? 'отметь один или несколько вариантов' : 'выбери один вариант';
+      hint.style.cssText = 'margin-top:2px;font-size:11.5px;color:var(--dsw-alias-label-tertiary,#888)';
+      card.appendChild(hint);
+
+      var list = document.createElement('div');
+      list.style.cssText = 'margin-top:8px;display:flex;flex-direction:column;gap:6px';
+      var options = (ask.opts || []).concat(['Свой ответ…']);
+      var name = key + '-grp';
+      options.forEach(function (opt, oi) {
+        var lab = document.createElement('label');
+        lab.style.cssText = 'display:flex;align-items:center;gap:9px;cursor:pointer;font-size:13px;' +
+          'padding:7px 10px;border-radius:9px;color:var(--dsw-alias-label-secondary,#ccc);' +
+          'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.08));' +
+          'background:transparent;transition:border-color .15s,background .15s';
+        var inp = document.createElement('input');
+        inp.type = ask.multi ? 'checkbox' : 'radio';
+        inp.name = name;
+        inp.style.cssText = 'width:14px;height:14px;accent-color:#5686fe;flex-shrink:0;margin:0';
+        var sp = document.createElement('span');
+        sp.textContent = opt;
+        lab.appendChild(inp); lab.appendChild(sp);
+        list.appendChild(lab);
+      });
+      card.appendChild(list);
+
+      var customTa = document.createElement('textarea');
+      customTa.rows = 2; customTa.placeholder = 'Напиши свой вариант ответа…';
+      customTa.style.cssText = 'display:none;width:100%;box-sizing:border-box;margin-top:8px;' +
+        'padding:8px 10px;resize:vertical;border-radius:9px;font-size:13px;line-height:1.45;' +
+        'font-family:inherit;background:transparent;color:var(--dsw-alias-label-primary,#f5f5f5);' +
+        'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));outline:none';
+      card.appendChild(customTa);
+
+      var btn = document.createElement('button');
+      btn.textContent = 'Отправить ответ';
+      btn.disabled = true;
+      btn.style.cssText = 'margin-top:10px;padding:9px 16px;border:none;cursor:pointer;' +
+        'border-radius:10px;font-size:13px;font-weight:600;font-family:inherit;color:#fff;' +
+        'opacity:.5;background:var(--dsw-alias-brand-primary,#5686fe)';
+      card.appendChild(btn);
+
+      var inps = function () { return list.querySelectorAll('input'); };
+      function isCustomChecked() { var l = inps(); return l[l.length - 1].checked; }
+      function refreshBtn() {
+        var l = inps(), on = false;
+        for (var i = 0; i < l.length; ++i) if (l[i].checked) on = true;
+        if (isCustomChecked() && !(customTa.value || '').trim()) on = false;
+        btn.disabled = !on;
+        btn.style.opacity = on ? '1' : '.5';
+      }
+      function paint() {
+        var l = inps();
+        for (var i = 0; i < l.length; ++i) {
+          var lab = l[i].parentElement;
+          if (l[i].checked) { lab.style.borderColor = '#5686fe'; lab.style.background = 'rgba(86,134,254,.12)'; }
+          else { lab.style.borderColor = 'var(--dsw-alias-border-l2,rgba(255,255,255,.08))'; lab.style.background = 'transparent'; }
+        }
+        var cc = isCustomChecked();
+        customTa.style.display = cc ? 'block' : 'none';
+        if (cc) customTa.focus();
+      }
+      list.addEventListener('change', function () { paint(); refreshBtn(); });
+      customTa.addEventListener('input', refreshBtn);
+
+      btn.onclick = async function () {
+        var l = inps(), picked = [];
+        for (var i = 0; i < l.length - 1; ++i) if (l[i].checked) picked.push(options[i]);
+        var customText = (customTa.value || '').trim();
+        if (isCustomChecked() && customText) picked.push(customText);
+        if (!picked.length) { toast('Выбери вариант или напиши свой ответ'); return; }
+        btn.disabled = true; btn.style.opacity = '.5'; btn.textContent = 'Отправляю…';
+        var answer = 'SYSTEM: the user answered your question (via DeepSeek Extended UI).\n' +
+          'QUESTION: «' + ask.q + '»\n' +
+          'ANSWER' + (ask.multi ? 'S (several picked)' : '') + ': ' +
+          (ask.multi ? '\n- ' + picked.join('\n- ') : picked.join('; '));
+        var ok = await injectStealth(answer, 'ответ на вопрос');
+        if (!ok) { btn.disabled = false; btn.style.opacity = '1'; btn.textContent = 'Отправить ответ'; return; }
+        st.autoCount++;
+        st.waitingAnswer = true; sessionStorage.setItem('dsx:wait', '1');
+        sessionStorage.setItem('dsx:auto', String(st.autoCount));
+        card.innerHTML = '';
+        var doneRow = document.createElement('div');
+        doneRow.textContent = 'Ответ отправлен: ' + picked.join(', ');
+        doneRow.style.cssText = 'font-size:12.5px;color:var(--dsw-alias-label-tertiary,#888)';
+        card.appendChild(doneRow);
+        finalizeBadges(block);
+        hideActionBar(block);
+      };
+
+      host.appendChild(card);
+      console.log('[DSX] ask-карточка: «' + ask.q.slice(0, 60) + '» (' +
+        (ask.multi ? 'multi' : 'single') + ', опций ' + (ask.opts || []).length + ')');
+    } catch (e) { console.warn('[DSX] ask card error', e); }
+  }
+
   // у сообщения-запроса прячем экшн-бар (копировать/регенер/лайки…) — выглядит
   // как единое служебное сообщение без мусора внизу
   function hideActionBar(block) {
@@ -979,7 +1102,9 @@
   }
   // живой тик во время стрима (троттлинг из наблюдателя)
   function liveTick() {
-    if (!cfg.pilot || !st.folderReady || st.busy || st.waitingAnswer) return;
+    // NB: waitingAnswer НЕ проверяем — стрим ответа после служебного как раз
+    // идёт под этим гейтом, и именно тогда живые статусы нужны сильнее всего
+    if (!cfg.pilot || !st.folderReady || st.busy) return;
     var block = lastAnswerBlock();
     if (!block || !isTailAssistant(block)) return;
     updateLiveOps(block);
@@ -1059,6 +1184,10 @@
             svcReq = true;
             note = note ? note + '\n\n' + svc.text : svc.text;
             rows = svc.rows.concat(rows);
+          }
+          if (svc.asks && svc.asks.length) {
+            svc.asks.forEach(function (a) { renderAskCard(block, a); });
+            hideActionBar(block); // у сообщения с вопросом экшн-бар тоже прячем
           }
         }
 
@@ -1251,7 +1380,7 @@
 
   // ---------------- старт
   if (sessionStorage.getItem('dsx:primed') === '1') st.primedOnce = true;
-  console.log('[DSX] DeepSeek Extended v25 стелс: загружено. pilot=' + cfg.pilot);
+  console.log('[DSX] DeepSeek Extended v26 стелс: загружено. pilot=' + cfg.pilot);
   refreshPrompt();
   setTimeout(refreshPrompt, 1200);
   setInterval(function () {
