@@ -95,3 +95,26 @@ test('скобочные запросы [<{...}>] v22: виды, диапазо�
   // не наша скобка — мимо
   assert.equal(Ops.findBracketRequests('просто текст без маркеров').length, 0);
 });
+
+test('MEMORY SEARCH: маркер ловится, поиск по заметкам скорит и режет', () => {
+  const r = Ops.findBracketRequests('гляну память:\n[<{MEMORY SEARCH: поля пакета движения}>]');
+  assert.equal(r.length, 1);
+  assert.equal(r[0].kind, 'MEMORY SEARCH');
+  assert.equal(r[0].arg, 'поля пакета движения');
+
+  const notes = [
+    { t: 'Пакет движения', x: 'struct MovePacket {\n  float x, y, z;\n  uint8 flags; // бит 0 — прыжок\n};\nОтправляется каждые 33мс.' },
+    { t: 'Рецепты зелий', x: 'зелье скорости: сахар + паутина\nзелье силы: огненный порошок' }
+  ];
+  // совпадение по строкам
+  const hits = Ops.searchMemory(notes, 'flags прыжок');
+  assert.equal(hits.length, 1, 'одна карточка попала');
+  assert.equal(hits[0].title, 'Пакет движения');
+  assert.ok(hits[0].snippet.indexOf('uint8 flags') >= 0, 'фрагмент со строкой flags присутствует');
+  // совпадение только по заголовку — фолбэк на начало заметки
+  const t2 = Ops.searchMemory(notes, 'движения');
+  assert.equal(t2.length, 1);
+  assert.ok(t2[0].snippet.indexOf('MovePacket') >= 0, 'фолбэк-сниппет с началом заметки');
+  assert.equal(Ops.searchMemory(notes, 'несуществующий кверселлум').length, 0, 'нет совпадений — пусто');
+  assert.equal(Ops.searchMemory([], 'что-то').length, 0, 'пустая память — пусто');
+});

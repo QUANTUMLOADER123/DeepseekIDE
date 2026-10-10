@@ -162,7 +162,7 @@
   // «<{» не трактуется HTML-токенайзером как тег (после < идёт {), поэтому
   // разметка доживает до DOM-текста нетронутой и видна пользователю.
   // Маркеры внутри ```-ограждённого кода игнорируются (это могут быть примеры).
-  var BRACKET_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE)\s*:\s*([^<>]*?)\s*\}>\]/gi;
+  var BRACKET_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH)\s*:\s*([^<>]*?)\s*\}>\]/gi;
   function findBracketRequests(answer) {
     var out = [], inFence = false;
     var lines = String(answer).split('\n');
@@ -187,7 +187,7 @@
           if (t < f) t = f;
           if (t - f > 1199) t = f + 1199; // потолок фрагмента: 1200 строк
           val = pth + ':' + f + '-' + t;
-        } else { // NEED SEARCH
+        } else { // NEED SEARCH / MEMORY SEARCH
           val = val.slice(0, 200);
           if (!val) continue;
         }
@@ -198,6 +198,48 @@
       }
     }
     return out;
+  }
+
+
+  // ----- ПАМЯТЬ владельца: поиск по заметкам (простой скоринг по термам)
+  // Вход: notes = [{t: title, x: text}], query — строка запроса.
+  // Выход: до 2 лучших карточек {title, snippet} (snippet с «…»-склейкой).
+  function searchMemory(notes, query) {
+    if (!Array.isArray(notes) || !notes.length) return [];
+    var q = String(query || '').toLowerCase().trim();
+    if (!q) return [];
+    var terms = q.split(/[^\p{L}\p{N}_]+/u).filter(function (s) { return s.length > 1; });
+    if (!terms.length) terms = [q];
+    var scored = [];
+    notes.forEach(function (n, idx) {
+      var title = String(n.t || ('заметка ' + (idx + 1)));
+      var text = String(n.x || '');
+      if (!text) return;
+      var lines = text.split('\n'), hits = [], score = 0, i;
+      var low = text.toLowerCase();
+      if (low.indexOf(q) >= 0) score += 10; // точная фраза — сильный буст
+      for (i = 0; i < lines.length; ++i) {
+        var ll = lines[i].toLowerCase(), lineScore = 0;
+        terms.forEach(function (t) {
+          var p = 0, c = 0;
+          while ((p = ll.indexOf(t, p)) >= 0 && c < 8) { lineScore++; p += t.length; c++; }
+        });
+        if (lineScore > 0) { score += lineScore; hits.push(lines[i].trim()); }
+      }
+      var tl = title.toLowerCase();
+      terms.forEach(function (t) { if (tl.indexOf(t) >= 0) score += 3; });
+      if (score <= 0) return;
+      var snippet = hits.slice(0, 18).join('\n…\n');
+      if (!snippet) {
+        // совпал только заголовок — отдаём начало заметки как выдержку
+        snippet = lines.map(function (l) { return l.trim(); }).filter(Boolean).slice(0, 5).join('\n');
+        if (snippet.length > 800) snippet = snippet.slice(0, 800) + ' …';
+      }
+      if (snippet.length > 1600) snippet = snippet.slice(0, 1600) + ' …';
+      scored.push({ title: title, snippet: snippet, score: score });
+    });
+    scored.sort(function (a, b) { return b.score - a.score; });
+    return scored.slice(0, 2);
   }
 
   // ----- безопасный относительный путь (sandbox — против ../ и абсолюта)
@@ -265,6 +307,7 @@
 "[<{READ RANGE: <project-relative path>:<from>-<to>}>] -> numbered lines from..to (1-based, inclusive, up to 1200 lines at once).",
 "[<{NEED FILE: <project-relative path>}>]         -> WHOLE file with line numbers (hard cap ~4000 lines / 120k chars; the rest is TRUNCATED).",
 "[<{NEED SEARCH: <substring>}>]                   -> matches across ALL text files of the project in the form file:line: text.",
+"[<{MEMORY SEARCH: <keywords>}>]                  -> owner\u2019s knowledge base (architecture, fields, structures, protocols, how things work): returns matching note fragments.",
 "Example:",
 "[<{FILE INFO: src/main.cpp}>]",
 "[<{READ RANGE: src/main.cpp:1-300}>]",
@@ -272,6 +315,7 @@
 "STRICT RULES:",
 "- If unsure about a file's size, ask FILE INFO FIRST. For files over ~600 lines ALWAYS read them chunk-by-chunk with READ RANGE (e.g. :1-400, then :401-800) instead of NEED FILE — full dumps get truncated and waste context.",
 "- NEED SEARCH scans the ENTIRE project, not only files you have already received. Use it to locate symbols before asking for files.",
+"- Never invent project internals (field names, struct layouts, packet formats, config keys...). MEMORY SEARCH is your first stop for \u201chow does X work here\u201d; NEED SEARCH / READ RANGE confirm it in code.",
 "- Batch all requests you need into ONE message, then wait — do not narrate them.",
 "- NEVER repeat a request that was already answered in this chat: re-use what you already received. Repeating wastes a whole round-trip and is treated as an error.",
 "# PROJECT STRUCTURE",
@@ -298,6 +342,7 @@ tree || '(структура недоступна — спросите чере�
     findFileRequests: findFileRequests,
     findSearchRequests: findSearchRequests,
     findBracketRequests: findBracketRequests,
+    searchMemory: searchMemory,
     sanitizeRel: sanitizeRel,
     insertLines: insertLines,
     replaceLines: replaceLines,

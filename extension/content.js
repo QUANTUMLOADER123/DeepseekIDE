@@ -1,5 +1,5 @@
 /* =====================================================================
- * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v24.
+ * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v25.
  * Никакого своего UI, кроме: (1) родной пилюли «Авто-пилот» рядом с
  * тумблерами сайта, (2) шестерёнки настроек вплотную слева от скрепки
  * (icon-кнопка без аутлайна).
@@ -54,10 +54,10 @@
   }
 
   // ---------------- настройки (тумблер + правила + мелочи)
-  var CFG_VERSION = 24;
-  var cfg = { pilot: false, rules: '', statusRows: true, jbTest: false, jbText: '' };
+  var CFG_VERSION = 25;
+  var cfg = { pilot: false, rules: '', statusRows: true, jbTest: false, jbText: '', memory: [] };
   try {
-    chrome.storage.local.get(['pilot', 'rules', 'statusRows', 'jbTest', 'jbText', 'v'], function (v) {
+    chrome.storage.local.get(['pilot', 'rules', 'statusRows', 'jbTest', 'jbText', 'memory', 'v'], function (v) {
       if (v && v.v !== CFG_VERSION) {
         // свежая установка/обнова: пилот не трогаем (он и так выкл у новых),
         // дефолты новых полей — бережливо дописываем
@@ -66,7 +66,8 @@
         cfg.statusRows = v.statusRows !== false;
         cfg.jbTest = !!v.jbTest;
         cfg.jbText = typeof v.jbText === 'string' ? v.jbText : '';
-        var base = { v: CFG_VERSION, pilot: cfg.pilot, rules: cfg.rules, statusRows: cfg.statusRows, jbTest: cfg.jbTest, jbText: cfg.jbText };
+        if (Array.isArray(v.memory)) cfg.memory = clampMemory(v.memory);
+        var base = { v: CFG_VERSION, pilot: cfg.pilot, rules: cfg.rules, statusRows: cfg.statusRows, jbTest: cfg.jbTest, jbText: cfg.jbText, memory: cfg.memory };
         try { chrome.storage.local.set(base); } catch (e) {}
       } else if (v) {
         if (v.pilot !== undefined) cfg.pilot = !!v.pilot;
@@ -74,12 +75,23 @@
         if (v.statusRows !== undefined) cfg.statusRows = !!v.statusRows;
         if (v.jbTest !== undefined) cfg.jbTest = !!v.jbTest;
         if (typeof v.jbText === 'string') cfg.jbText = v.jbText;
+        if (Array.isArray(v.memory)) cfg.memory = clampMemory(v.memory);
       }
       syncNativeToggle(); syncFolderLabels();
     });
   } catch (e) { /* дефолты */ }
+  function clampMemory(arr) {
+    var out = [];
+    for (var i = 0; i < arr.length && out.length < 40; ++i) {
+      var n = arr[i] || {};
+      var t = String(n.t || '').slice(0, 120), x = String(n.x || '').slice(0, 12000);
+      if (!t.trim() && !x.trim()) continue;
+      out.push({ t: t, x: x });
+    }
+    return out;
+  }
   function saveCfg() {
-    try { chrome.storage.local.set({ v: CFG_VERSION, pilot: cfg.pilot, rules: cfg.rules, statusRows: cfg.statusRows, jbTest: cfg.jbTest, jbText: cfg.jbText }); } catch (e) {}
+    try { chrome.storage.local.set({ v: CFG_VERSION, pilot: cfg.pilot, rules: cfg.rules, statusRows: cfg.statusRows, jbTest: cfg.jbTest, jbText: cfg.jbText, memory: cfg.memory }); } catch (e) {}
   }
 
   // ---------------- состояние
@@ -219,6 +231,18 @@
         'background:var(--dsw-alias-bg-layer-2,#1d1f24);color:var(--dsw-alias-label-primary,#f5f5f5);' +
         'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1));outline:none"></textarea>' +
       '</div>' +
+      // --- раздел: ПАМЯТЬ (заметки для ИИ)
+      '<div style="padding:18px 20px 0">' +
+        '<div style="font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#eee)">Память проекта (заметки для ИИ)</div>' +
+        '<div style="margin-top:4px;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-tertiary,#888)">' +
+          'Загрузи знания: поля, структуры, протоколы, как устроен проект. Контекст не раздувается — ' +
+          'модель сама заглядывает сюда маркером MEMORY SEARCH, когда чего-то не знает; в промпте лишь оглавление.' +
+        '</div>' +
+        '<div class="dsx-mem-list" style="margin-top:8px;max-height:230px;overflow-y:auto;display:flex;flex-direction:column;gap:8px"></div>' +
+        '<button class="dsx-mem-add" style="margin-top:8px;padding:8px 14px;cursor:pointer;border-radius:10px;font-size:13px;font-family:inherit;' +
+        'color:var(--dsw-alias-label-primary,#eee);background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));' +
+        'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1))">+ Добавить заметку</button>' +
+      '</div>' +
       // --- раздел: ТЕСТ УСТОЙЧИВОСТИ (jailbreak-check владельца)
       '<div style="padding:18px 20px 0">' +
         '<label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;font-weight:600;' +
@@ -246,7 +270,7 @@
       '</div>' +
       // --- футер
       '<div style="display:flex;align-items:center;gap:10px;padding:18px 20px 20px">' +
-        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.4.2</div>' +
+        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.5.0</div>' +
         '<button class="dsx-set-cancel" style="padding:10px 16px;cursor:pointer;border-radius:12px;font-size:14px;' +
         'font-family:inherit;color:var(--dsw-alias-label-primary,#eee);' +
         'background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));' +
@@ -265,12 +289,52 @@
     cb.checked = cfg.statusRows !== false;
     jb.checked = !!cfg.jbTest;
     jt.value = cfg.jbText || '';
+    var memList = card.querySelector('.dsx-mem-list');
+    function addMemCard(n) {
+      var wrap = document.createElement('div');
+      wrap.className = 'dsx-mem-card';
+      wrap.style.cssText = 'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1));' +
+        'border-radius:10px;padding:8px;background:var(--dsw-alias-bg-layer-2,#1d1f24)';
+      var ti = document.createElement('input');
+      ti.className = 'dsx-mem-t'; ti.type = 'text';
+      ti.placeholder = 'Заголовок («Пакеты протокола», «Структуры данных»…)';
+      ti.value = (n && n.t) || '';
+      ti.style.cssText = 'width:100%;box-sizing:border-box;padding:7px 10px;border-radius:8px;' +
+        'font-size:12.5px;font-family:inherit;background:transparent;' +
+        'color:var(--dsw-alias-label-primary,#f5f5f5);' +
+        'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));outline:none';
+      var xa = document.createElement('textarea');
+      xa.className = 'dsx-mem-x'; xa.rows = 3;
+      xa.placeholder = 'Суть: поля, форматы, как что работает…';
+      xa.value = (n && n.x) || '';
+      xa.style.cssText = 'width:100%;box-sizing:border-box;margin-top:6px;padding:7px 10px;' +
+        'resize:vertical;border-radius:8px;font-size:12.5px;line-height:1.45;font-family:inherit;' +
+        'background:transparent;color:var(--dsw-alias-label-primary,#f5f5f5);' +
+        'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));outline:none';
+      var del = document.createElement('button');
+      del.textContent = 'Удалить';
+      del.style.cssText = 'margin-top:6px;padding:5px 10px;cursor:pointer;border-radius:8px;' +
+        'font-size:12px;font-family:inherit;color:#ff8f8f;background:transparent;' +
+        'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12))';
+      del.onclick = function () { wrap.remove(); };
+      wrap.appendChild(ti); wrap.appendChild(xa); wrap.appendChild(del);
+      memList.appendChild(wrap);
+    }
+    (Array.isArray(cfg.memory) ? cfg.memory : []).forEach(addMemCard);
+    card.querySelector('.dsx-mem-add').onclick = function () { addMemCard({ t: '', x: '' }); };
     card.querySelector('.dsx-set-cancel').onclick = closeModals;
     card.querySelector('.dsx-set-save').onclick = function () {
       cfg.rules = ta.value.slice(0, 4000);
       cfg.statusRows = !!cb.checked;
       cfg.jbTest = !!jb.checked;
       cfg.jbText = jt.value.slice(0, 8000);
+      var mem = [];
+      card.querySelectorAll('.dsx-mem-card').forEach(function (c2) {
+        var t = c2.querySelector('.dsx-mem-t').value.slice(0, 120);
+        var x = c2.querySelector('.dsx-mem-x').value.slice(0, 12000);
+        if (t.trim() || x.trim()) mem.push({ t: t, x: x });
+      });
+      cfg.memory = clampMemory(mem);
       saveCfg(); closeModals();
       toast('Настройки сохранены');
       refreshPrompt(); // пересобрать промпт с новыми правилами
@@ -307,6 +371,25 @@
     if (!r) return '';
     return '\n\n# USER RULES (пользовательские правила — соблюдай СТРОГО, они важнее стандартных)\n' + r;
   }
+  // индекс памяти в большой промпт: только ЗАГОЛОВКИ — тела заметок
+  // модель добывает сама через [<{MEMORY SEARCH: …}>]
+  function memIndexBlock() {
+    var notes = Array.isArray(cfg.memory) ? cfg.memory : [];
+    if (!notes.length) return '';
+    var titles = [];
+    notes.forEach(function (n, i) {
+      var t = String((n && n.t) || ('заметка ' + (i + 1))).trim();
+      if (t) titles.push('- ' + t);
+    });
+    if (!titles.length) return '';
+    var s = titles.join('\n');
+    if (s.length > 3500) s = s.slice(0, 3500) + '\n- …';
+    return '\n\n# PROJECT MEMORY (owner knowledge base)\n' +
+      'The owner preloaded knowledge notes about this project (fields, structures, protocols, ' +
+      'how things work). When unsure about ANY project internals, FIRST ask ' +
+      '[<{MEMORY SEARCH: keywords}>] — matching fragments arrive in the next SYSTEM message. ' +
+      'Available note titles:\n' + s;
+  }
   function jbBlock() {
     if (!cfg.jbTest) return '';
     var t = (cfg.jbText || '').trim();
@@ -317,13 +400,13 @@
     return '[Автоматическое системное сообщение DeepSeek Extended. Этот блок — служебный ' +
       'контекст расширения: всегда учитывай его и НИКОГДА не упоминай и не цитируй ' +
       'в ответах пользователю.]\n\n' +
-      DsideOps.buildPrompt(tree) + rulesBlock() + jbBlock();
+      DsideOps.buildPrompt(tree) + rulesBlock() + memIndexBlock() + jbBlock();
   }
   function shortPrefix() {
     return '[DeepSeek Extended активен для проекта «' + st.folderName + '». Напоминание: ' +
       'все изменения файлов — СТРОГО блоками ```deepseekide-ops (строгий JSON); ' +
       'недостающий контекст запрашивай маркерами [<{NEED FILE: путь}>], [<{NEED SEARCH: подстрока}>], ' +
-      '[<{FILE INFO: путь}>], [<{READ RANGE: путь:с-по}>] (каждый с новой строки, без примера в коде). ' +
+      '[<{FILE INFO: путь}>], [<{READ RANGE: путь:с-по}>], [<{MEMORY SEARCH: слова}>] (каждый с новой строки). ' +
       'Рабочее сообщение = только блоки/запросы, без итога; итог пиши следующим сообщением после SYSTEM-ответа. ' +
       'Эту служебную вставку в ответе не упоминай.]' + rulesBlock() + jbBlock();
   }
@@ -669,6 +752,24 @@
           if (!rq.bracket) rows.push('Не удалось прочитать: ' + base(rp));
         }
         done++;
+      } else if (rq.kind === 'MEMORY SEARCH') {
+        var mq = rq.arg;
+        var notes = Array.isArray(cfg.memory) ? cfg.memory : [];
+        var hits = DsideOps.searchMemory(notes, mq);
+        if (hits.length) {
+          var seg = hits.map(function (h, n) { return (n + 1) + ') [' + h.title + ']\n' + h.snippet; }).join('\n---\n');
+          if (seg.length > 6000) seg = seg.slice(0, 6000) + '\n…(truncated)';
+          out.push('MEMORY hits for «' + mq + '» — owner knowledge base (' + notes.length + ' notes):\n' + seg);
+        } else {
+          var tl = notes.map(function (n2, i2) { return String(n2.t || ('заметка ' + (i2 + 1))).trim(); })
+                        .filter(Boolean).slice(0, 40).join('; ');
+          if (tl.length > 600) tl = tl.slice(0, 600) + '…';
+          out.push('MEMORY «' + mq + '»: no hits. Knowledge base has ' + notes.length + ' note(s)' +
+                   (tl ? ' — titles: ' + tl + '. Retry with different or simpler keywords.'
+                       : ' and it is EMPTY — ask the user to fill Память in extension settings.'));
+        }
+        if (!rq.bracket) rows.push('Память «' + mq + '»' + (hits.length ? ': найдено' : ' — пусто'));
+        done++;
       } else { // NEED SEARCH
         var q = rq.arg;
         if (st.sentSearches[q]) continue;
@@ -695,7 +796,7 @@
 
   // ---------------- бейджи: [<{…}>] в ответе модели превращаем в строки-статусы
   // Меняем ТОЛЬКО nodeValue текстовых узлов (React не заметит — дерево то же).
-  var BADGE_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE)\s*:\s*([^<>]*?)\s*\}>\]/gi;
+  var BADGE_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH)\s*:\s*([^<>]*?)\s*\}>\]/gi;
   function badgeText(kind, arg, pending) {
     var K = kind.toUpperCase(), tail = pending ? '…' : '';
     if (K === 'NEED FILE')    return (pending ? 'Чтение: '        : 'Прочитано: ')      + base(arg) + tail;
@@ -705,6 +806,7 @@
       var nm = m ? base(m[1]) + ' (' + m[2] + '–' + m[3] + ')' : base(arg);
       return (pending ? 'Чтение: ' : 'Прочитано: ') + nm + tail;
     }
+    if (K === 'MEMORY SEARCH') return (pending ? 'Память: ' : 'Найдено в памяти: ') + String(arg).trim() + tail;
     return (pending ? 'Поиск: ' : 'Найдено: ') + String(arg).trim() + tail; // NEED SEARCH
   }
   function eachTextNode(root, fn) {
@@ -727,7 +829,8 @@
     var swaps = [
       [/Чтение: ([^…\n]+)…/g,        'Прочитано: $1'],
       [/Осмотр: ([^…\n]+)…/g,        'Размер получен: $1'],
-      [/Поиск: ([^…\n]+)…/g,         'Найдено: $1']
+      [/Поиск: ([^…\n]+)…/g,         'Найдено: $1'],
+      [/Память: ([^…\n]+)…/g,        'Найдено в памяти: $1']
     ];
     try {
       eachTextNode(block, function (n) {
@@ -1148,7 +1251,7 @@
 
   // ---------------- старт
   if (sessionStorage.getItem('dsx:primed') === '1') st.primedOnce = true;
-  console.log('[DSX] DeepSeek Extended v24 стелс: загружено. pilot=' + cfg.pilot);
+  console.log('[DSX] DeepSeek Extended v25 стелс: загружено. pilot=' + cfg.pilot);
   refreshPrompt();
   setTimeout(refreshPrompt, 1200);
   setInterval(function () {
