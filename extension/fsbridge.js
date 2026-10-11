@@ -322,6 +322,35 @@
     }) };
   };
 
+  // Откат ОДНОГО файла: самое свежее до-состояние из снапшотов (новейшее → старое).
+  // Найденный item консумируется, чтобы последующий rollback не перезаписал поверх.
+  OPS.revertFile = async function (args) {
+    var rel = String(args.path || '');
+    var all = await idbAll('snaps');
+    all.sort(function (a, b) { return b.val.ts - a.val.ts; });
+    for (var i = 0; i < all.length; ++i) {
+      var items = (all[i].val && all[i].val.items) || [];
+      for (var j = items.length - 1; j >= 0; --j) {
+        var it = items[j];
+        if (it.path !== rel) continue;
+        if (it.kind === 'created' || it.kind === 'created-dir') {
+          var d = await parentOf(rel, false);
+          await d.removeEntry(leaf(rel), { recursive: it.kind === 'created-dir' });
+        } else if (it.oldText !== null && it.oldText !== undefined) {
+          await writeText(rel, it.oldText);
+        }
+        items.splice(j, 1);
+        if (!items.length) {
+          await idb('readwrite', function (tx, r) { tx.objectStore('snaps').delete(all[i].key); tx.oncomplete = r; });
+        } else {
+          await idbSet('snaps', all[i].key, all[i].val);
+        }
+        return { reverted: true, path: rel, kind: it.kind, label: all[i].val.label || '', ts: all[i].val.ts };
+      }
+    }
+    return { reverted: false, error: 'нет снапшота по этому файлу (он ещё не правился или история стёрта)' };
+  };
+
   OPS.rollback = async function (args) {
     var all = await idbAll('snaps');
     var hit = null;

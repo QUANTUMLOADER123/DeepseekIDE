@@ -1,9 +1,11 @@
 {
   "manifest_version": 3,
   "name": "DeepSeek Extended · агент-проекты",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Расширенный DeepSeek: агент применяет правки прямо в папку вашего проекта, без всяких серверов.",
   "permissions": ["storage"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "bg.js" },
   "content_scripts": [
     { "matches": ["https://chat.deepseek.com/*"], "js": ["opp.js", "content.js"], "run_at": "document_idle" }
   ],

@@ -138,3 +138,24 @@ test('ASK / ASK MULTI: вопросы с опциями парсятся, фен
   // в фенсе — игнор
   assert.equal(Ops.findBracketRequests('```\n[<{ASK: x :: y ; z}>]\n```').length, 0);
 });
+
+test('v27: WEB FETCH / MEMORY ADD / REVERT FILE парсятся и валидируются', () => {
+  const w = Ops.findBracketRequests('[<{WEB FETCH: https://learn.microsoft.com/ru-ru/cpp/?view=msvc-170}>]');
+  assert.equal(w[0].kind, 'WEB FETCH');
+  assert.equal(w[0].arg, 'https://learn.microsoft.com/ru-ru/cpp/?view=msvc-170');
+
+  const bad = Ops.findBracketRequests('[<{WEB FETCH: javascript:alert(1)}>]');
+  assert.equal(bad.length, 0, 'не-http(s) схема отброшена');
+
+  const m = Ops.findBracketRequests('[<{MEMORY ADD: Дамп оффсетов :: m_hPawn = 0x828, проверено на билде 12345}>]');
+  assert.equal(m[0].kind, 'MEMORY ADD');
+  assert.equal(m[0].arg, 'Дамп оффсетов');
+  assert.equal(m[0].extra, 'm_hPawn = 0x828, проверено на билде 12345');
+
+  const r = Ops.findBracketRequests('[<{REVERT FILE: sdk/entity/c_entity_list.inl}>]');
+  assert.equal(r[0].kind, 'REVERT FILE');
+  assert.equal(r[0].arg, 'sdk/entity/c_entity_list.inl');
+
+  const junk = Ops.findBracketRequests('[<{REVERT FILE: не путь}>]');
+  assert.equal(junk.length, 0, 'не-путь отброшен');
+});

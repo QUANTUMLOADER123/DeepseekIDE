@@ -1,5 +1,5 @@
 /* =====================================================================
- * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v26.
+ * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v27.
  * Никакого своего UI, кроме: (1) родной пилюли «Авто-пилот» рядом с
  * тумблерами сайта, (2) шестерёнки настроек вплотную слева от скрепки
  * (icon-кнопка без аутлайна).
@@ -54,7 +54,7 @@
   }
 
   // ---------------- настройки (тумблер + правила + мелочи)
-  var CFG_VERSION = 26;
+  var CFG_VERSION = 27;
   var cfg = { pilot: false, rules: '', statusRows: true, jbTest: false, jbText: '', memory: [] };
   try {
     chrome.storage.local.get(['pilot', 'rules', 'statusRows', 'jbTest', 'jbText', 'memory', 'v'], function (v) {
@@ -100,7 +100,7 @@
     bigPrompt: '', primedOnce: false,
     lastAnswer: '', opsHash: sessionStorage.getItem('dsx:opsh') || '',
     autoCount: Number(sessionStorage.getItem('dsx:auto') || 0),
-    sentFiles: {}, sentSearches: {}, sentInfos: {}, sentRanges: {}, busy: false,
+    sentFiles: {}, sentSearches: {}, sentInfos: {}, sentRanges: {}, sentWeb: {}, busy: false,
     waitingAnswer: sessionStorage.getItem('dsx:wait') === '1',
     lastUrl: location.href, lastTrimAt: 0, watchdog: 0, reloadHint: 0
   };
@@ -270,7 +270,7 @@
       '</div>' +
       // --- футер
       '<div style="display:flex;align-items:center;gap:10px;padding:18px 20px 20px">' +
-        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.6.0</div>' +
+        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.7.0</div>' +
         '<button class="dsx-set-cancel" style="padding:10px 16px;cursor:pointer;border-radius:12px;font-size:14px;' +
         'font-family:inherit;color:var(--dsw-alias-label-primary,#eee);' +
         'background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));' +
@@ -473,7 +473,7 @@
       toast('Контекст проекта подшит к первому сообщению');
     }
     // новое сообщение юзера = новый цикл: дедуп NEED сбрасываем (в т.ч. на диске)
-    st.autoCount = 0; st.sentFiles = {}; st.sentSearches = {}; st.sentInfos = {}; st.sentRanges = {}; sentSave();
+    st.autoCount = 0; st.sentFiles = {}; st.sentSearches = {}; st.sentInfos = {}; st.sentRanges = {}; st.sentWeb = {}; sentSave();
     st.liveSeen = {};
     sessionStorage.setItem('dsx:auto', '0');
     console.log('[DSX] промпт подшит к сообщению:', (prefix === st.bigPrompt ? 'БОЛЬШОЙ' : 'короткий'),
@@ -658,15 +658,44 @@
       if (!raw) return;
       var d = JSON.parse(raw);
       st.sentFiles = d.f || {}; st.sentSearches = d.s || {};
-      st.sentInfos = d.i || {}; st.sentRanges = d.r || {};
+      st.sentInfos = d.i || {}; st.sentRanges = d.r || {}; st.sentWeb = d.w || {};
     } catch (e) {}
   }
   function sentSave() {
     try {
-      sessionStorage.setItem(sentKey(), JSON.stringify({ f: st.sentFiles, s: st.sentSearches, i: st.sentInfos, r: st.sentRanges }));
+      sessionStorage.setItem(sentKey(), JSON.stringify({ f: st.sentFiles, s: st.sentSearches, i: st.sentInfos, r: st.sentRanges, w: st.sentWeb }));
     } catch (e) {}
   }
   sentLoad();
+  // ---------------- WEB FETCH: фон тянет страницу, тут чистим в текст
+  function hostOf(u) { try { return new URL(u).host; } catch (e) { return String(u).slice(0, 60); } }
+  function webFetchCall(url) {
+    return new Promise(function (resolve) {
+      try {
+        chrome.runtime.sendMessage({ dsx: 'webfetch', url: url }, function (r) {
+          if (chrome.runtime.lastError) resolve({ ok: false, error: chrome.runtime.lastError.message });
+          else resolve(r || { ok: false, error: 'пустой ответ фона' });
+        });
+      } catch (e) { resolve({ ok: false, error: String(e && e.message || e) }); }
+    });
+  }
+  function htmlToText(html, type) {
+    var raw = String(html || '');
+    if (String(type).indexOf('html') < 0) {
+      // json/txt/xml — отдаём как есть, без html-крякозябр
+      return raw;
+    }
+    try {
+      var doc = new DOMParser().parseFromString(raw, 'text/html');
+      ['script', 'style', 'noscript', 'svg', 'header', 'footer', 'nav', 'form', 'iframe', 'canvas']
+        .forEach(function (t) { doc.querySelectorAll(t).forEach(function (n) { n.remove(); }); });
+      var main = doc.querySelector('main') || doc.querySelector('article') ||
+                 doc.querySelector('#main') || doc.querySelector('#content') ||
+                 doc.querySelector('.content') || doc.body;
+      var text = (main && main.textContent) || '';
+      return text.replace(/[ \t\r\f\v]+/g, ' ').replace(/\n\s*\n+/g, '\n\n').trim();
+    } catch (e) { return raw; }
+  }
   function base(p) { var a = String(p).split('/'); return a[a.length - 1]; }
 
   async function serviceNote(raw) {
@@ -770,6 +799,62 @@
         }
         if (!rq.bracket) rows.push('Память «' + mq + '»' + (hits.length ? ': найдено' : ' — пусто'));
         done++;
+      } else if (rq.kind === 'WEB FETCH') {
+        var wu = rq.arg;
+        if (st.sentWeb[wu]) continue;
+        st.sentWeb[wu] = 1;
+        var wf = await webFetchCall(wu);
+        if (wf.ok) {
+          var wtxt = htmlToText(wf.text || '', wf.type || '');
+          if (!wtxt.trim()) {
+            out.push('PAGE "' + wu + '": fetched (HTTP ' + wf.status + ') but no readable text — ' +
+                     (String(wf.type || '').indexOf('html') >= 0 ? 'JS-heavy SPA?' : 'empty body') + '. Try documentation mirrors or another URL.');
+          } else {
+            if (wtxt.length > 25000) wtxt = wtxt.slice(0, 25000) + '\n…(truncated at 25k chars; fetch a more specific page if needed)';
+            out.push('PAGE "' + wu + '" (HTTP ' + wf.status + ', ' + (wf.type || '?') + '):\n```\n' + wtxt + '\n```');
+          }
+          if (!rq.bracket) rows.push('Загружено: ' + hostOf(wu));
+        } else {
+          out.push('PAGE "' + wu + '": FETCH FAILED — ' + (wf.error || 'сеть недоступна'));
+          if (!rq.bracket) rows.push('Не загрузилось: ' + hostOf(wu));
+        }
+        done++;
+      } else if (rq.kind === 'MEMORY ADD') {
+        var mt = rq.arg, mb = String(rq.extra || '');
+        if (!Array.isArray(cfg.memory)) cfg.memory = [];
+        var merged = false, mi;
+        for (mi = 0; mi < cfg.memory.length; ++mi) {
+          if (String(cfg.memory[mi].t || '').toLowerCase() === mt.toLowerCase()) {
+            cfg.memory[mi].x = (String(cfg.memory[mi].x || '') + '\n' + mb).slice(0, 12000);
+            merged = true; break;
+          }
+        }
+        if (!merged && cfg.memory.length >= 40) {
+          out.push('MEMORY ADD «' + mt + '»: REJECTED — knowledge base is full (40 notes). Tell the user, or add the fact into an EXISTING note title.');
+          if (!rq.bracket) rows.push('Память переполнена: ' + mt);
+        } else {
+          if (!merged) cfg.memory.push({ t: mt.slice(0, 120), x: mb.slice(0, 2000) });
+          cfg.memory = clampMemory(cfg.memory);
+          saveCfg();
+          out.push('MEMORY SAVED «' + mt + '»' + (merged ? ' (appended to the existing note)' : ' (new note)') +
+                   '. Total: ' + cfg.memory.length + ' note(s). It is now searchable via MEMORY SEARCH.');
+          if (!rq.bracket) rows.push('Запомнил: ' + mt);
+        }
+        done++;
+      } else if (rq.kind === 'REVERT FILE') {
+        var vp = rq.arg;
+        var rv = await fsCall('revertFile', { path: vp });
+        if (rv.ok && rv.data && rv.data.reverted) {
+          out.push('REVERT "' + vp + '": done — restored its pre-edit state from snapshot «' + (rv.data.label || 'без имени') + '»' +
+                   (rv.data.kind === 'created' ? ' (your edit had created it, so the file was REMOVED)' : ' (old content written back)') +
+                   '. The file now differs from your last edit — re-read it before editing again.');
+          if (!rq.bracket) rows.push('Откачено: ' + base(vp));
+          refreshPrompt(); // содержимое изменилось
+        } else {
+          out.push('REVERT "' + vp + '": FAILED — ' + ((rv.data && rv.data.error) || rv.error || 'нет снапшота'));
+          if (!rq.bracket) rows.push('Откат не удался: ' + base(vp));
+        }
+        done++;
       } else if (rq.kind === 'ASK' || rq.kind === 'ASK MULTI') {
         asks.push({ q: rq.arg, opts: rq.opts || [], multi: rq.kind === 'ASK MULTI' });
         if (!rq.bracket) rows.push('Ждёт ответа: ' + rq.arg);
@@ -800,7 +885,7 @@
 
   // ---------------- бейджи: [<{…}>] в ответе модели превращаем в строки-статусы
   // Меняем ТОЛЬКО nodeValue текстовых узлов (React не заметит — дерево то же).
-  var BADGE_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH|ASK MULTI|ASK)\s*:\s*([^<>]*?)\s*\}>\]/gi;
+  var BADGE_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH|MEMORY ADD|ASK MULTI|ASK|REVERT FILE|WEB FETCH)\s*:\s*([^<>]*?)\s*\}>\]/gi;
   function badgeText(kind, arg, pending) {
     var K = kind.toUpperCase(), tail = pending ? '…' : '';
     if (K === 'NEED FILE')    return (pending ? 'Чтение: '        : 'Прочитано: ')      + base(arg) + tail;
@@ -812,6 +897,9 @@
     }
     if (K === 'MEMORY SEARCH') return (pending ? 'Память: ' : 'Найдено в памяти: ') + String(arg).trim() + tail;
     if (K === 'ASK' || K === 'ASK MULTI') return (pending ? 'Спрашивает: ' : 'Отвечено: ') + String(arg).trim() + tail;
+    if (K === 'WEB FETCH') return (pending ? 'Загрузка: ' : 'Загружено: ') + hostOf(String(arg).trim()) + tail;
+    if (K === 'MEMORY ADD') return (pending ? 'Запоминает: ' : 'Запомнил: ') + String(arg).split('::')[0].trim() + tail;
+    if (K === 'REVERT FILE') return (pending ? 'Откатываю: ' : 'Откачено: ') + base(String(arg).trim()) + tail;
     return (pending ? 'Поиск: ' : 'Найдено: ') + String(arg).trim() + tail; // NEED SEARCH
   }
   function eachTextNode(root, fn) {
@@ -836,7 +924,10 @@
       [/Осмотр: ([^…\n]+)…/g,        'Размер получен: $1'],
       [/Поиск: ([^…\n]+)…/g,         'Найдено: $1'],
       [/Память: ([^…\n]+)…/g,        'Найдено в памяти: $1'],
-      [/Спрашивает: ([^…\n]+)…/g,     'Отвечено: $1']
+      [/Спрашивает: ([^…\n]+)…/g,     'Отвечено: $1'],
+      [/Загрузка: ([^…\n]+)…/g,       'Загружено: $1'],
+      [/Запоминает: ([^…\n]+)…/g,     'Запомнил: $1'],
+      [/Откатываю: ([^…\n]+)…/g,      'Откачено: $1']
     ];
     try {
       eachTextNode(block, function (n) {
@@ -1310,7 +1401,7 @@
     if (location.href !== st.lastUrl) {
       st.lastUrl = location.href;
       st.primedOnce = false; st.lastAnswer = ''; st.opsHash = '';
-      st.sentFiles = {}; st.sentSearches = {}; st.sentInfos = {}; st.sentRanges = {}; sentLoad(); // дедуп новой беседы
+      st.sentFiles = {}; st.sentSearches = {}; st.sentInfos = {}; st.sentRanges = {}; st.sentWeb = {}; sentLoad(); // дедуп новой беседы
       st.liveSeen = {};
       st.autoCount = 0; sessionStorage.setItem('dsx:auto', '0');
       sessionStorage.removeItem('dsx:primed');
@@ -1380,7 +1471,7 @@
 
   // ---------------- старт
   if (sessionStorage.getItem('dsx:primed') === '1') st.primedOnce = true;
-  console.log('[DSX] DeepSeek Extended v26 стелс: загружено. pilot=' + cfg.pilot);
+  console.log('[DSX] DeepSeek Extended v27 стелс: загружено. pilot=' + cfg.pilot);
   refreshPrompt();
   setTimeout(refreshPrompt, 1200);
   setInterval(function () {

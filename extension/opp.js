@@ -162,7 +162,7 @@
   // «<{» не трактуется HTML-токенайзером как тег (после < идёт {), поэтому
   // разметка доживает до DOM-текста нетронутой и видна пользователю.
   // Маркеры внутри ```-ограждённого кода игнорируются (это могут быть примеры).
-  var BRACKET_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH|ASK MULTI|ASK)\s*:\s*([^<>]*?)\s*\}>\]/gi;
+  var BRACKET_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH|MEMORY ADD|ASK MULTI|ASK|REVERT FILE|WEB FETCH)\s*:\s*([^<>]*?)\s*\}>\]/gi;
   function findBracketRequests(answer) {
     var out = [], inFence = false;
     var lines = String(answer).split('\n');
@@ -172,7 +172,7 @@
       if (inFence) continue;
       var m; BRACKET_RE.lastIndex = 0;
       while ((m = BRACKET_RE.exec(line)) !== null && out.length < 12) {
-        var kind = m[1].toUpperCase(), key, opts = [];
+        var kind = m[1].toUpperCase(), key, opts = [], extra = '';
         var val = unescapeHtml(String(m[2])).trim();
         if (kind === 'NEED FILE' || kind === 'FILE INFO') {
           val = cleanPath(val);
@@ -187,6 +187,16 @@
           if (t < f) t = f;
           if (t - f > 1199) t = f + 1199; // потолок фрагмента: 1200 строк
           val = pth + ':' + f + '-' + t;
+        } else if (kind === 'WEB FETCH') {
+          if (!/^https?:\/\/\S+$/.test(val) || val.length > 500) continue;
+        } else if (kind === 'MEMORY ADD') {
+          var am = /^(.+?)::([\s\S]*)$/.exec(val);
+          if (!am || !am[1].trim() || !am[2].trim()) continue;
+          extra = am[2].trim().slice(0, 1500);
+          val = am[1].trim().slice(0, 120);
+        } else if (kind === 'REVERT FILE') {
+          val = cleanPath(val);
+          if (!looksLikePath(val)) continue;
         } else if (kind === 'ASK' || kind === 'ASK MULTI') {
           var pm = /^(.+?)::([\s\S]*)$/.exec(val);
           var opts = [];
@@ -204,7 +214,7 @@
         key = kind + '|' + val.toLowerCase();
         var dup = false;
         for (var k = 0; k < out.length; ++k) if (out[k].key === key) { dup = true; break; }
-        if (!dup) out.push({ kind: kind, arg: val, opts: opts, key: key, bracket: true });
+        if (!dup) out.push({ kind: kind, arg: val, opts: opts, extra: extra, key: key, bracket: true });
       }
     }
     return out;
@@ -318,6 +328,9 @@
 "[<{NEED FILE: <project-relative path>}>]         -> WHOLE file with line numbers (hard cap ~4000 lines / 120k chars; the rest is TRUNCATED).",
 "[<{NEED SEARCH: <substring>}>]                   -> matches across ALL text files of the project in the form file:line: text.",
 "[<{MEMORY SEARCH: <keywords>}>]                  -> owner\u2019s knowledge base (architecture, fields, structures, protocols, how things work): returns matching note fragments.",
+"[<{WEB FETCH: <https-url>}>]                              -> fetches a web page and returns its readable TEXT (docs, references). JS-only SPA pages may come back empty.",
+"[<{MEMORY ADD: <title> :: <one-line fact>}>]               -> permanently saves a durable fact into the owner knowledge base (verified offsets, decisions, conventions — never code dumps, one line per fact).",
+"[<{REVERT FILE: <project-relative path>}>]                 -> restores the file to the snapshot taken right before its last edit by you (if your edit created it, the file is removed). The undo is permanent.",
 "[<{ASK: <dilemma> :: <option1> ; <option2> ; <option3>}>]      -> asks the HUMAN through a clickable card: single choice (one option).",
 "[<{ASK MULTI: <dilemma> :: <option1> ; <option2> ; <option3>}>] -> same but the human may tick SEVERAL options.",
 "  (2-8 concrete options after \u0027::\u0027, separated by \u0027;\u0027; the UI always adds a \u0027custom answer\u0027 field itself. You get the picked answer(s) as a SYSTEM message and continue.)",
@@ -329,6 +342,9 @@
 "- If unsure about a file's size, ask FILE INFO FIRST. For files over ~600 lines ALWAYS read them chunk-by-chunk with READ RANGE (e.g. :1-400, then :401-800) instead of NEED FILE — full dumps get truncated and waste context.",
 "- NEED SEARCH scans the ENTIRE project, not only files you have already received. Use it to locate symbols before asking for files.",
 "- Never invent project internals (field names, struct layouts, packet formats, config keys...). MEMORY SEARCH is your first stop for \u201chow does X work here\u201d; NEED SEARCH / READ RANGE confirm it in code.",
+"- Teach the future you: every time you verify a durable fact (working offset, tricky API call, naming convention...), immediately MEMORY ADD it. Next sessions will reuse it instead of re-digging.",
+"- Broke something with your own edit and the fix is not obvious? REVERT FILE it and redo cleanly \u2014 that is cheaper than patching over damage.",
+"- External docs available: when the task involves an API/format you do not know well, WEB FETCH the authoritative page instead of guessing.",
 "- Prefer acting on your own defaults; but when a fork genuinely depends on the HUMAN\u2019s intent (which framework, keep-or-delete, which of two APIs...), ask via [<{ASK: ...}>] / [<{ASK MULTI: ...}>] instead of plain-text questions or stalling. Plain-text questions are invisible to the automation and dead-end the loop.",
 "- Batch all requests you need into ONE message, then wait — do not narrate them.",
 "- NEVER repeat a request that was already answered in this chat: re-use what you already received. Repeating wastes a whole round-trip and is treated as an error.",
