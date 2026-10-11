@@ -1,5 +1,5 @@
 /* =====================================================================
- * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v29.
+ * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v30.
  * Никакого своего UI, кроме: (1) родной пилюли «Авто-пилот» рядом с
  * тумблерами сайта, (2) шестерёнки настроек вплотную слева от скрепки
  * (icon-кнопка без аутлайна).
@@ -54,7 +54,7 @@
   }
 
   // ---------------- настройки (тумблер + правила + мелочи)
-  var CFG_VERSION = 29;
+  var CFG_VERSION = 30;
   var cfg = { pilot: false, rules: '', statusRows: true, jbTest: false, jbText: '', memory: [] };
   try {
     chrome.storage.local.get(['pilot', 'rules', 'statusRows', 'jbTest', 'jbText', 'memory', 'v'], function (v) {
@@ -94,11 +94,22 @@
     try { chrome.storage.local.set({ v: CFG_VERSION, pilot: cfg.pilot, rules: cfg.rules, statusRows: cfg.statusRows, jbTest: cfg.jbTest, jbText: cfg.jbText, memory: cfg.memory }); } catch (e) {}
   }
 
+  // ---- ops-дедуп v30: скипаем повтор ТОЛЬКО того же ответа (тот же блок/ключ),
+  // а не «того же текста» — юзер вправе попросить повторить правку дословно
+  function loadOpsMeta() {
+    try {
+      var r = sessionStorage.getItem('dsx:opsh');
+      if (!r) return { h: '', k: '' };
+      var d = JSON.parse(r);
+      if (d && typeof d === 'object') return { h: String(d.h || ''), k: String(d.k || '') };
+      return { h: String(d), k: '' }; // легаси-строка
+    } catch (e) { return { h: '', k: '' }; }
+  }
   // ---------------- состояние
   var st = {
     folderReady: false, folderName: '',
     bigPrompt: '', primedOnce: false,
-    lastAnswer: '', opsHash: sessionStorage.getItem('dsx:opsh') || '',
+    lastAnswer: '', lastBlock: null, opsMeta: loadOpsMeta(),
     autoCount: Number(sessionStorage.getItem('dsx:auto') || 0),
     sentFiles: {}, sentSearches: {}, sentInfos: {}, sentRanges: {}, sentWeb: {}, sentDl: {}, sentGrep: {}, busy: false,
     waitingAnswer: sessionStorage.getItem('dsx:wait') === '1',
@@ -270,7 +281,7 @@
       '</div>' +
       // --- футер
       '<div style="display:flex;align-items:center;gap:10px;padding:18px 20px 20px">' +
-        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.8.1</div>' +
+        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.8.2</div>' +
         '<button class="dsx-set-cancel" style="padding:10px 16px;cursor:pointer;border-radius:12px;font-size:14px;' +
         'font-family:inherit;color:var(--dsw-alias-label-primary,#eee);' +
         'background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));' +
@@ -1330,7 +1341,11 @@
       var pay = answerPayload(block);
       if (paused) resumeBadges(block);          // ...и снова в бейджи
       var text = (pay.text || '').trim();
-      if (text.length > 80 && text === (st.lastAnswer || '').trim()) return; // дедуп
+      // дедуп — ТОЛЬКО тот же блок с тем же текстом (перерисовка/скролл).
+      // Если юзер попросил «ещё раз» и модель ответила дословно так же — это
+      // НОВЫЙ блок: обрабатываем заново, иначе правки никогда не повторятся.
+      if (text.length > 80 && st.lastBlock === block && text === (st.lastAnswer || '').trim()) return;
+      st.lastBlock = block;
       st.busy = true;
       noteAnswerArrived(text);
       try {
@@ -1343,9 +1358,14 @@
 
         var rows = [], note = '';
         // --- правки: применяем ОДИН раз на ответ (хэш переживает перезагрузку)
-        if (outp.ops.length && answHash !== st.opsHash) {
-          st.opsHash = answHash;
-          sessionStorage.setItem('dsx:opsh', st.opsHash);
+        var vKey = '';
+        try {
+          var vh = block.closest('[data-virtual-list-item-key]');
+          vKey = vh ? (vh.getAttribute('data-virtual-list-item-key') || '') : '';
+        } catch (e) {}
+        if (outp.ops.length && (answHash !== st.opsMeta.h || vKey !== st.opsMeta.k)) {
+          st.opsMeta = { h: answHash, k: vKey };
+          sessionStorage.setItem('dsx:opsh', JSON.stringify(st.opsMeta));
           outp.ops = outp.ops.filter(function (o) {
             var p = o.args && (o.args.path || o.args.from);
             return !p || !!DsideOps.sanitizeRel(p);
@@ -1519,7 +1539,7 @@
   setInterval(function () {
     if (location.href !== st.lastUrl) {
       st.lastUrl = location.href;
-      st.primedOnce = false; st.lastAnswer = ''; st.opsHash = '';
+      st.primedOnce = false; st.lastAnswer = ''; st.lastBlock = null; st.opsMeta = { h: '', k: '' };
       st.sentFiles = {}; st.sentSearches = {}; st.sentInfos = {}; st.sentRanges = {}; st.sentWeb = {}; st.sentDl = {}; st.sentGrep = {}; sentLoad(); // дедуп новой беседы
       st.liveSeen = {};
       st.autoCount = 0; sessionStorage.setItem('dsx:auto', '0');
@@ -1590,7 +1610,7 @@
 
   // ---------------- старт
   if (sessionStorage.getItem('dsx:primed') === '1') st.primedOnce = true;
-  console.log('[DSX] DeepSeek Extended v29 стелс: загружено. pilot=' + cfg.pilot);
+  console.log('[DSX] DeepSeek Extended v30 стелс: загружено. pilot=' + cfg.pilot);
   refreshPrompt();
   setTimeout(refreshPrompt, 1200);
   setInterval(function () {
