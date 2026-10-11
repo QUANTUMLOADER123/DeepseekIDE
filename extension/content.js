@@ -1,5 +1,5 @@
 /* =====================================================================
- * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v28.
+ * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v29.
  * Никакого своего UI, кроме: (1) родной пилюли «Авто-пилот» рядом с
  * тумблерами сайта, (2) шестерёнки настроек вплотную слева от скрепки
  * (icon-кнопка без аутлайна).
@@ -54,7 +54,7 @@
   }
 
   // ---------------- настройки (тумблер + правила + мелочи)
-  var CFG_VERSION = 28;
+  var CFG_VERSION = 29;
   var cfg = { pilot: false, rules: '', statusRows: true, jbTest: false, jbText: '', memory: [] };
   try {
     chrome.storage.local.get(['pilot', 'rules', 'statusRows', 'jbTest', 'jbText', 'memory', 'v'], function (v) {
@@ -270,7 +270,7 @@
       '</div>' +
       // --- футер
       '<div style="display:flex;align-items:center;gap:10px;padding:18px 20px 20px">' +
-        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.8.0</div>' +
+        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.8.1</div>' +
         '<button class="dsx-set-cancel" style="padding:10px 16px;cursor:pointer;border-radius:12px;font-size:14px;' +
         'font-family:inherit;color:var(--dsw-alias-label-primary,#eee);' +
         'background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));' +
@@ -980,17 +980,44 @@
     var w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
     var n; while ((n = w.nextNode())) fn(n);
   }
-  // сразу после остановки ответа: маркеры → «Чтение: x…»
+  // маркеры [<{...}>] прячем в «Чтение: x…» СРАЗУ (во время стрима тоже).
+  // КАЖДАЯ замена записывается на узле (n.__dsxMarks: {бейдж, маркер}) —
+  // иначе после замены парсер команд вообще не видит [<{...}>: бейджи
+  // съедали маркеры раньше serviceNote, и тулки умирали (регрессия v28).
   function renderBadges(block) {
     try {
       eachTextNode(block, function (n) {
-        if (n.nodeValue && n.nodeValue.indexOf('[<{') >= 0 && BADGE_RE.test(n.nodeValue)) {
-          BADGE_RE.lastIndex = 0;
-          n.nodeValue = n.nodeValue.replace(BADGE_RE, function (mm, k, a) { return badgeText(k, a, true); });
-        }
+        if (!n.nodeValue || n.nodeValue.indexOf('[<{') < 0) return;
+        BADGE_RE.lastIndex = 0;
+        if (!BADGE_RE.test(n.nodeValue)) return;
+        BADGE_RE.lastIndex = 0;
+        var marks = n.__dsxMarks || (n.__dsxMarks = []);
+        n.nodeValue = n.nodeValue.replace(BADGE_RE, function (mm, k, a) {
+          var b = badgeText(k, a, true);
+          marks.push({ b: b, m: mm });
+          return b;
+        });
       });
     } catch (e) {}
   }
+  // на время чтения возвращаем оригинальные маркеры на место (парсеру нужен
+  // сырой вид команды), потом resumeBadges прячет обратно
+  function pauseBadges(block) {
+    var n0 = 0;
+    try {
+      eachTextNode(block, function (n) {
+        var marks = n.__dsxMarks;
+        if (!marks || !marks.length) return;
+        var v = n.nodeValue;
+        for (var i = 0; i < marks.length; ++i) {
+          if (v.indexOf(marks[i].b) >= 0) v = v.split(marks[i].b).join(marks[i].m);
+        }
+        if (v !== n.nodeValue) { n.nodeValue = v; n0++; }
+      });
+    } catch (e) {}
+    return n0;
+  }
+  function resumeBadges(block) { try { renderBadges(block); } catch (e) {} }
   // после того, как служебное ушло: «Чтение: x…» → «Прочитано: x»
   function finalizeBadges(block) {
     var swaps = [
@@ -1299,7 +1326,9 @@
       if (st.busy || !cfg.pilot || !st.folderReady) return;
       var block = lastAnswerBlock();
       if (!block) return;
+      var paused = pauseBadges(block);          // маркеры на место — парсер их видит
       var pay = answerPayload(block);
+      if (paused) resumeBadges(block);          // ...и снова в бейджи
       var text = (pay.text || '').trim();
       if (text.length > 80 && text === (st.lastAnswer || '').trim()) return; // дедуп
       st.busy = true;
@@ -1561,7 +1590,7 @@
 
   // ---------------- старт
   if (sessionStorage.getItem('dsx:primed') === '1') st.primedOnce = true;
-  console.log('[DSX] DeepSeek Extended v28 стелс: загружено. pilot=' + cfg.pilot);
+  console.log('[DSX] DeepSeek Extended v29 стелс: загружено. pilot=' + cfg.pilot);
   refreshPrompt();
   setTimeout(refreshPrompt, 1200);
   setInterval(function () {
