@@ -162,7 +162,7 @@
   // «<{» не трактуется HTML-токенайзером как тег (после < идёт {), поэтому
   // разметка доживает до DOM-текста нетронутой и видна пользователю.
   // Маркеры внутри ```-ограждённого кода игнорируются (это могут быть примеры).
-  var BRACKET_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH|MEMORY ADD|ASK MULTI|ASK|REVERT FILE|WEB FETCH)\s*:\s*([^<>]*?)\s*\}>\]/gi;
+  var BRACKET_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH|MEMORY ADD|ASK MULTI|ASK|REVERT FILE|WEB FETCH|WEB DOWNLOAD|WEB GREP)\s*:\s*([^<>]*?)\s*\}>\]/gi;
   function findBracketRequests(answer) {
     var out = [], inFence = false;
     var lines = String(answer).split('\n');
@@ -189,6 +189,20 @@
           val = pth + ':' + f + '-' + t;
         } else if (kind === 'WEB FETCH') {
           if (!/^https?:\/\/\S+$/.test(val) || val.length > 500) continue;
+        } else if (kind === 'WEB DOWNLOAD') {
+          var dm = /^(.+?)::([\s\S]*)$/.exec(val);
+          if (!dm) continue;
+          var durl = dm[1].trim(), dpath = cleanPath(dm[2]);
+          if (!/^https?:\/\/\S+$/.test(durl) || durl.length > 500) continue;
+          if (!looksLikePath(dpath)) continue;
+          val = durl; extra = dpath;
+        } else if (kind === 'WEB GREP') {
+          var gm = /^(.+?)::([\s\S]*)$/.exec(val);
+          if (!gm) continue;
+          var gurl = gm[1].trim(), gq = gm[2].trim().slice(0, 200);
+          if (!/^https?:\/\/\S+$/.test(gurl) || gurl.length > 500) continue;
+          if (!gq) continue;
+          val = gurl; extra = gq;
         } else if (kind === 'MEMORY ADD') {
           var am = /^(.+?)::([\s\S]*)$/.exec(val);
           if (!am || !am[1].trim() || !am[2].trim()) continue;
@@ -331,6 +345,8 @@
 "[<{WEB FETCH: <https-url>}>]                              -> fetches a web page and returns its readable TEXT (docs, references). JS-only SPA pages may come back empty.",
 "[<{MEMORY ADD: <title> :: <one-line fact>}>]               -> permanently saves a durable fact into the owner knowledge base (verified offsets, decisions, conventions — never code dumps, one line per fact).",
 "[<{REVERT FILE: <project-relative path>}>]                 -> restores the file to the snapshot taken right before its last edit by you (if your edit created it, the file is removed). The undo is permanent.",
+"[<{WEB GREP: <url> :: <substring or from-to>}>]               -> downloads the page RAW/CLEANED and returns FULL matching lines (e.g. \u0027m_modelState\u0027 -> whole \u0027constexpr ... = 0x140;\u0027 lines with numbers). Use \u0027144-150\u0027 instead of a substring to get that line range.",
+"[<{WEB DOWNLOAD: <url> :: <project-relative path>}>]          -> downloads a file (binary ok, ≤16 MB) straight into the project folder. Use for dumps/SDK snapshots the task needs; confirm the path in your summary.",
 "[<{ASK: <dilemma> :: <option1> ; <option2> ; <option3>}>]      -> asks the HUMAN through a clickable card: single choice (one option).",
 "[<{ASK MULTI: <dilemma> :: <option1> ; <option2> ; <option3>}>] -> same but the human may tick SEVERAL options.",
 "  (2-8 concrete options after \u0027::\u0027, separated by \u0027;\u0027; the UI always adds a \u0027custom answer\u0027 field itself. You get the picked answer(s) as a SYSTEM message and continue.)",
@@ -345,6 +361,7 @@
 "- Teach the future you: every time you verify a durable fact (working offset, tricky API call, naming convention...), immediately MEMORY ADD it. Next sessions will reuse it instead of re-digging.",
 "- Broke something with your own edit and the fix is not obvious? REVERT FILE it and redo cleanly \u2014 that is cheaper than patching over damage.",
 "- External docs available: when the task involves an API/format you do not know well, WEB FETCH the authoritative page instead of guessing.",
+"- Working with open dumps (offsets, schemas, SDKs)? Do NOT guess fields: WEB GREP the raw dump page for the member name to get its exact line, then MEMORY ADD the verified result.",
 "- Prefer acting on your own defaults; but when a fork genuinely depends on the HUMAN\u2019s intent (which framework, keep-or-delete, which of two APIs...), ask via [<{ASK: ...}>] / [<{ASK MULTI: ...}>] instead of plain-text questions or stalling. Plain-text questions are invisible to the automation and dead-end the loop.",
 "- Batch all requests you need into ONE message, then wait — do not narrate them.",
 "- NEVER repeat a request that was already answered in this chat: re-use what you already received. Repeating wastes a whole round-trip and is treated as an error.",

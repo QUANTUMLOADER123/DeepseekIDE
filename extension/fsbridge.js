@@ -131,6 +131,25 @@
       return { text: out.join('\n'), lines: lines.length, bytes: text.length };
     },
 
+    // бинарная запись (WEB DOWNLOAD): base64 → файл, под снапшот-одиночкой
+    writeB64: async function (args) {
+      var bin = atob(String(args.b64 || ''));
+      var bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; ++i) bytes[i] = bin.charCodeAt(i);
+      var rel = String(args.path || '');
+      var prev = null, had = true;
+      try { prev = await readText(rel); } catch (e) { had = false; }
+      await snapBegin('web download');
+      await snapRecordBefore(rel, had ? 'modified' : 'created', had ? prev : null);
+      var d = await parentOf(rel, true);
+      var fh = await d.getFileHandle(leaf(rel), { create: true });
+      var w = await fh.createWritable();
+      await w.write(new Blob([bytes], { type: 'application/octet-stream' }));
+      await w.close();
+      await snapCommit();
+      return { ok: true, bytes: bytes.length };
+    },
+
     fileInfo: async function (args) {
       var d = await parentOf(args.path, false);
       var fh = await d.getFileHandle(leaf(args.path));

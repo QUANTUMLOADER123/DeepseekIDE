@@ -1,5 +1,5 @@
 /* =====================================================================
- * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v27.
+ * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v28.
  * Никакого своего UI, кроме: (1) родной пилюли «Авто-пилот» рядом с
  * тумблерами сайта, (2) шестерёнки настроек вплотную слева от скрепки
  * (icon-кнопка без аутлайна).
@@ -54,7 +54,7 @@
   }
 
   // ---------------- настройки (тумблер + правила + мелочи)
-  var CFG_VERSION = 27;
+  var CFG_VERSION = 28;
   var cfg = { pilot: false, rules: '', statusRows: true, jbTest: false, jbText: '', memory: [] };
   try {
     chrome.storage.local.get(['pilot', 'rules', 'statusRows', 'jbTest', 'jbText', 'memory', 'v'], function (v) {
@@ -100,7 +100,7 @@
     bigPrompt: '', primedOnce: false,
     lastAnswer: '', opsHash: sessionStorage.getItem('dsx:opsh') || '',
     autoCount: Number(sessionStorage.getItem('dsx:auto') || 0),
-    sentFiles: {}, sentSearches: {}, sentInfos: {}, sentRanges: {}, sentWeb: {}, busy: false,
+    sentFiles: {}, sentSearches: {}, sentInfos: {}, sentRanges: {}, sentWeb: {}, sentDl: {}, sentGrep: {}, busy: false,
     waitingAnswer: sessionStorage.getItem('dsx:wait') === '1',
     lastUrl: location.href, lastTrimAt: 0, watchdog: 0, reloadHint: 0
   };
@@ -270,7 +270,7 @@
       '</div>' +
       // --- футер
       '<div style="display:flex;align-items:center;gap:10px;padding:18px 20px 20px">' +
-        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.7.0</div>' +
+        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.8.0</div>' +
         '<button class="dsx-set-cancel" style="padding:10px 16px;cursor:pointer;border-radius:12px;font-size:14px;' +
         'font-family:inherit;color:var(--dsw-alias-label-primary,#eee);' +
         'background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));' +
@@ -473,7 +473,7 @@
       toast('Контекст проекта подшит к первому сообщению');
     }
     // новое сообщение юзера = новый цикл: дедуп NEED сбрасываем (в т.ч. на диске)
-    st.autoCount = 0; st.sentFiles = {}; st.sentSearches = {}; st.sentInfos = {}; st.sentRanges = {}; st.sentWeb = {}; sentSave();
+    st.autoCount = 0; st.sentFiles = {}; st.sentSearches = {}; st.sentInfos = {}; st.sentRanges = {}; st.sentWeb = {}; st.sentDl = {}; st.sentGrep = {}; sentSave();
     st.liveSeen = {};
     sessionStorage.setItem('dsx:auto', '0');
     console.log('[DSX] промпт подшит к сообщению:', (prefix === st.bigPrompt ? 'БОЛЬШОЙ' : 'короткий'),
@@ -659,20 +659,21 @@
       var d = JSON.parse(raw);
       st.sentFiles = d.f || {}; st.sentSearches = d.s || {};
       st.sentInfos = d.i || {}; st.sentRanges = d.r || {}; st.sentWeb = d.w || {};
+      st.sentDl = d.d || {}; st.sentGrep = d.g || {};
     } catch (e) {}
   }
   function sentSave() {
     try {
-      sessionStorage.setItem(sentKey(), JSON.stringify({ f: st.sentFiles, s: st.sentSearches, i: st.sentInfos, r: st.sentRanges, w: st.sentWeb }));
+      sessionStorage.setItem(sentKey(), JSON.stringify({ f: st.sentFiles, s: st.sentSearches, i: st.sentInfos, r: st.sentRanges, w: st.sentWeb, d: st.sentDl, g: st.sentGrep }));
     } catch (e) {}
   }
   sentLoad();
   // ---------------- WEB FETCH: фон тянет страницу, тут чистим в текст
   function hostOf(u) { try { return new URL(u).host; } catch (e) { return String(u).slice(0, 60); } }
-  function webFetchCall(url) {
+  function webFetchCall(url, dl) {
     return new Promise(function (resolve) {
       try {
-        chrome.runtime.sendMessage({ dsx: 'webfetch', url: url }, function (r) {
+        chrome.runtime.sendMessage({ dsx: 'webfetch', url: url, dl: !!dl }, function (r) {
           if (chrome.runtime.lastError) resolve({ ok: false, error: chrome.runtime.lastError.message });
           else resolve(r || { ok: false, error: 'пустой ответ фона' });
         });
@@ -698,7 +699,7 @@
   }
   function base(p) { var a = String(p).split('/'); return a[a.length - 1]; }
 
-  async function serviceNote(raw) {
+  async function serviceNote(raw, progress) {
     if (raw.length > 60000) raw = raw.slice(0, 60000);
     // LLM иногда пересказывает прошлые NEED-строки в ответе («я запросил
     // README.md…») — отрезаем этот эпилог, запросы ниже списка не ловим.
@@ -803,7 +804,9 @@
         var wu = rq.arg;
         if (st.sentWeb[wu]) continue;
         st.sentWeb[wu] = 1;
+        var fin1 = progress ? progress('Загрузка: ' + hostOf(wu) + '…') : null;
         var wf = await webFetchCall(wu);
+        if (fin1) fin1(wf.ok ? 'Загружено: ' + hostOf(wu) : 'Не загрузилось: ' + hostOf(wu));
         if (wf.ok) {
           var wtxt = htmlToText(wf.text || '', wf.type || '');
           if (!wtxt.trim()) {
@@ -817,6 +820,69 @@
         } else {
           out.push('PAGE "' + wu + '": FETCH FAILED — ' + (wf.error || 'сеть недоступна'));
           if (!rq.bracket) rows.push('Не загрузилось: ' + hostOf(wu));
+        }
+        done++;
+      } else if (rq.kind === 'WEB DOWNLOAD') {
+        var durl = rq.arg, dpath = String(rq.extra || '');
+        var dkey = durl + '|' + dpath;
+        if (st.sentDl[dkey]) continue;
+        st.sentDl[dkey] = 1;
+        var finD = progress ? progress('Скачивает: ' + base(dpath) + ' ← ' + hostOf(durl) + '…') : null;
+        var dwn = await webFetchCall(durl, true);
+        if (dwn.ok && dwn.b64) {
+          var wb = await fsCall('writeB64', { path: dpath, b64: dwn.b64 });
+          if (wb.ok) {
+            var kb = dwn.size > 1048576 ? (dwn.size / 1048576).toFixed(1) + ' MB' : Math.round(dwn.size / 1024) + ' KB';
+            out.push('DOWNLOAD saved: «' + dpath + '» — ' + dwn.size + ' bytes (' + (dwn.type || '?') + ') from ' + durl + '. The file is in the project now.');
+            if (!rq.bracket) rows.push('Скачано: ' + base(dpath) + ' (' + kb + ')');
+            if (finD) finD('Скачано: ' + base(dpath) + ' (' + kb + ')');
+            refreshPrompt();
+          } else {
+            out.push('DOWNLOAD «' + dpath + '»: write FAILED — ' + (wb.error || '?'));
+            if (!rq.bracket) rows.push('Не сохранилось: ' + base(dpath));
+            if (finD) finD('Не сохранилось: ' + base(dpath));
+          }
+        } else {
+          out.push('DOWNLOAD from ' + durl + ': FETCH FAILED — ' + (dwn.error || '?'));
+          if (!rq.bracket) rows.push('Не скачалось: ' + hostOf(durl));
+          if (finD) finD('Не скачалось: ' + hostOf(durl));
+        }
+        done++;
+      } else if (rq.kind === 'WEB GREP') {
+        var gurl = rq.arg, gq = String(rq.extra || '');
+        var gkey = gurl + '|' + gq.toLowerCase();
+        if (st.sentGrep[gkey]) continue;
+        st.sentGrep[gkey] = 1;
+        var finG = progress ? progress('Ищет в инете: «' + gq + '» на ' + hostOf(gurl) + '…') : null;
+        var gp = await webFetchCall(gurl);
+        if (gp.ok) {
+          var gsrc = String(gp.type || '').indexOf('html') >= 0 ? htmlToText(gp.text || '', gp.type) : String(gp.text || '');
+          var glines = gsrc.split('\n'), gout = [], gi;
+          var lm = gq.match(/^(\d+)\s*[-–—]\s*(\d+)$/);
+          if (lm) { // диапазон строк «144-150»
+            var gf = Math.max(1, +lm[1]), gt = Math.min(glines.length, Math.min(gf + 119, +lm[2]));
+            for (gi = gf; gi <= gt; ++gi) gout.push('L' + gi + ': ' + glines[gi - 1].slice(0, 300));
+            if (+lm[2] > gt) gout.push('…(дальше ' + gt + ' строк нет: всего ' + glines.length + ')');
+            out.push('GREP "' + gurl + '" — lines ' + gf + '-' + gt + ' of ' + glines.length + ':\n```\n' + gout.join('\n').slice(0, 20000) + '\n```');
+            if (finG) finG('Прочитано в инете: строки ' + gf + '–' + gt + ' (' + hostOf(gurl) + ')');
+            if (!rq.bracket) rows.push('Строки ' + gf + '–' + gt + ': ' + hostOf(gurl));
+          } else { // подстрока → ПОЛНЫЕ строки с номерами
+            for (gi = 0; gi < glines.length && gout.length < 40; ++gi) {
+              if (glines[gi].indexOf(gq) >= 0) gout.push('L' + (gi + 1) + ': ' + glines[gi].trim().slice(0, 300));
+            }
+            if (gout.length) {
+              out.push('GREP "' + gurl + '" for «' + gq + '» — ' + gout.length + ' hit(s), FULL lines:\n```\n' + gout.join('\n').slice(0, 20000) + '\n```');
+              if (finG) finG('Найдено в инете: «' + gq + '» — ' + gout.length + ' совпад.');
+            } else {
+              out.push('GREP "' + gurl + '" for «' + gq + '» — no hits on the page (' + glines.length + ' lines scanned). Try another spelling or fetch the page first.');
+              if (finG) finG('Не найдено в инете: «' + gq + '»');
+            }
+            if (!rq.bracket) rows.push('Искал в инете: «' + gq + '»' + (gout.length ? ' — ' + gout.length + ' совпад.' : ' — пусто'));
+          }
+        } else {
+          out.push('GREP "' + gurl + '": FETCH FAILED — ' + (gp.error || '?'));
+          if (finG) finG('Не открылось: ' + hostOf(gurl));
+          if (!rq.bracket) rows.push('Не открылось: ' + hostOf(gurl));
         }
         done++;
       } else if (rq.kind === 'MEMORY ADD') {
@@ -885,7 +951,7 @@
 
   // ---------------- бейджи: [<{…}>] в ответе модели превращаем в строки-статусы
   // Меняем ТОЛЬКО nodeValue текстовых узлов (React не заметит — дерево то же).
-  var BADGE_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH|MEMORY ADD|ASK MULTI|ASK|REVERT FILE|WEB FETCH)\s*:\s*([^<>]*?)\s*\}>\]/gi;
+  var BADGE_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH|MEMORY ADD|ASK MULTI|ASK|REVERT FILE|WEB FETCH|WEB DOWNLOAD|WEB GREP)\s*:\s*([^<>]*?)\s*\}>\]/gi;
   function badgeText(kind, arg, pending) {
     var K = kind.toUpperCase(), tail = pending ? '…' : '';
     if (K === 'NEED FILE')    return (pending ? 'Чтение: '        : 'Прочитано: ')      + base(arg) + tail;
@@ -898,6 +964,14 @@
     if (K === 'MEMORY SEARCH') return (pending ? 'Память: ' : 'Найдено в памяти: ') + String(arg).trim() + tail;
     if (K === 'ASK' || K === 'ASK MULTI') return (pending ? 'Спрашивает: ' : 'Отвечено: ') + String(arg).trim() + tail;
     if (K === 'WEB FETCH') return (pending ? 'Загрузка: ' : 'Загружено: ') + hostOf(String(arg).trim()) + tail;
+    if (K === 'WEB DOWNLOAD') {
+      var dp = String(arg).split('::'); var dn = dp.length > 1 ? base(dp[1].trim()) : hostOf(dp[0].trim());
+      return (pending ? 'Скачивает: ' : 'Скачано: ') + dn + tail;
+    }
+    if (K === 'WEB GREP') {
+      var gp2 = String(arg).split('::'); var gq2 = (gp2.length > 1 ? gp2[1] : gp2[0]).trim();
+      return (pending ? 'Ищет в инете: ' : 'Найдено в инете: ') + gq2 + tail;
+    }
     if (K === 'MEMORY ADD') return (pending ? 'Запоминает: ' : 'Запомнил: ') + String(arg).split('::')[0].trim() + tail;
     if (K === 'REVERT FILE') return (pending ? 'Откатываю: ' : 'Откачено: ') + base(String(arg).trim()) + tail;
     return (pending ? 'Поиск: ' : 'Найдено: ') + String(arg).trim() + tail; // NEED SEARCH
@@ -926,6 +1000,8 @@
       [/Память: ([^…\n]+)…/g,        'Найдено в памяти: $1'],
       [/Спрашивает: ([^…\n]+)…/g,     'Отвечено: $1'],
       [/Загрузка: ([^…\n]+)…/g,       'Загружено: $1'],
+      [/Скачивает: ([^…\n]+)…/g,      'Скачано: $1'],
+      [/Ищет в инете: ([^…\n]+)…/g,   'Найдено в инете: $1'],
       [/Запоминает: ([^…\n]+)…/g,     'Запомнил: $1'],
       [/Откатываю: ([^…\n]+)…/g,      'Откачено: $1']
     ];
@@ -1198,7 +1274,8 @@
     if (!cfg.pilot || !st.folderReady || st.busy) return;
     var block = lastAnswerBlock();
     if (!block || !isTailAssistant(block)) return;
-    updateLiveOps(block);
+    renderBadges(block);   // маркеры [<{...}>] мгновенно превращаем в «Ищет в инете: …»
+    updateLiveOps(block);  // живые строки «Пишет: файл…»
   }
 
   // ---------------- главный цикл: ответ устоялся → применить → ответить
@@ -1270,7 +1347,20 @@
         var svcReq = false;
         if (tail) {
           renderBadges(block); // маркеры сразу превращаем в «Чтение: x…»
-          var svc = await serviceNote(text);
+          var svc = await serviceNote(text, function (pending) {
+            // строка прогресса прямо под сообщением модели, живёт секунды-секунды
+            try {
+              var host = block.closest('._4f9bf79') || block.parentElement;
+              if (!host) return function () {};
+              var boxL = ensureLiveBox(host);
+              var row = document.createElement('p');
+              row.className = 'dsx-live-line dsx-svc-live';
+              row.textContent = pending;
+              row.style.cssText = LIVE_ROW_CSS;
+              boxL.appendChild(row);
+              return function (fin) { row.textContent = fin; };
+            } catch (e) { return function () {}; }
+          });
           if (svc.text) {
             svcReq = true;
             note = note ? note + '\n\n' + svc.text : svc.text;
@@ -1401,7 +1491,7 @@
     if (location.href !== st.lastUrl) {
       st.lastUrl = location.href;
       st.primedOnce = false; st.lastAnswer = ''; st.opsHash = '';
-      st.sentFiles = {}; st.sentSearches = {}; st.sentInfos = {}; st.sentRanges = {}; st.sentWeb = {}; sentLoad(); // дедуп новой беседы
+      st.sentFiles = {}; st.sentSearches = {}; st.sentInfos = {}; st.sentRanges = {}; st.sentWeb = {}; st.sentDl = {}; st.sentGrep = {}; sentLoad(); // дедуп новой беседы
       st.liveSeen = {};
       st.autoCount = 0; sessionStorage.setItem('dsx:auto', '0');
       sessionStorage.removeItem('dsx:primed');
@@ -1471,7 +1561,7 @@
 
   // ---------------- старт
   if (sessionStorage.getItem('dsx:primed') === '1') st.primedOnce = true;
-  console.log('[DSX] DeepSeek Extended v27 стелс: загружено. pilot=' + cfg.pilot);
+  console.log('[DSX] DeepSeek Extended v28 стелс: загружено. pilot=' + cfg.pilot);
   refreshPrompt();
   setTimeout(refreshPrompt, 1200);
   setInterval(function () {

@@ -159,3 +159,19 @@ test('v27: WEB FETCH / MEMORY ADD / REVERT FILE парсятся и валиди
   const junk = Ops.findBracketRequests('[<{REVERT FILE: не путь}>]');
   assert.equal(junk.length, 0, 'не-путь отброшен');
 });
+
+test('v28: WEB DOWNLOAD / WEB GREP — «url :: цель» парсится и валидируется', () => {
+  const d = Ops.findBracketRequests('[<{WEB DOWNLOAD: https://example.com/dump.zip :: sdk/dumps/dump.zip}>]');
+  assert.equal(d[0].kind, 'WEB DOWNLOAD');
+  assert.equal(d[0].arg, 'https://example.com/dump.zip');
+  assert.equal(d[0].extra, 'sdk/dumps/dump.zip');
+
+  const g = Ops.findBracketRequests('[<{WEB GREP: https://raw.example/offests.hpp :: m_modelState}>]');
+  assert.equal(g[0].kind, 'WEB GREP');
+  assert.equal(g[0].extra, 'm_modelState');
+
+  const bad = Ops.findBracketRequests('[<{WEB DOWNLOAD: https://x.y/a.bin}>]'); // без пути
+  assert.equal(bad.length, 0);
+  const bad2 = Ops.findBracketRequests('[<{WEB GREP: ftp://x :: q}>]');
+  assert.equal(bad2.length, 0, 'не-http схема отброшена');
+});
