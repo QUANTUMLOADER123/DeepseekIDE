@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableDelayedExpansion
+setlocal
 set "SRC=%~dp0"
 set "DEST=%LOCALAPPDATA%\DeepSeekExtended\shell"
 set "NAME=ai.deepseekide.shell"
@@ -13,18 +13,21 @@ if not exist "%DEST%" mkdir "%DEST%"
 copy /y "%SRC%host.ps1" "%DEST%\host.ps1" >nul
 copy /y "%SRC%host.bat" "%DEST%\host.bat" >nul
 copy /y "%SRC%host.json" "%DEST%\host.json" >nul
+copy /y "%SRC%check.ps1" "%DEST%\check.ps1" >nul
+copy /y "%SRC%check.bat" "%DEST%\check.bat" >nul
 set /p PROJ=Project folder absolute path [Enter = %CD%]: 
 if "%PROJ%"=="" set "PROJ=%CD%"
 (echo %PROJ%)> "%DEST%\project.cwd"
-rem absolute host path must land in the manifest
+rem rebuild the installed manifest: absolute host.bat path, UTF-8 WITHOUT BOM
 set "MANIFEST=%DEST%\host.json"
-powershell -NoProfile -Command "$j = Get-Content '%MANIFEST%' -Raw | ConvertFrom-Json; $j.path = '%DEST%\host.bat' -replace '\\','\\'; $j | ConvertTo-Json | Set-Content '%MANIFEST%' -Encoding UTF8"
+powershell -NoProfile -Command "$m='%MANIFEST%'; $j=Get-Content $m -Raw | ConvertFrom-Json; $j.path='%DEST%\host.bat'; $n=$j | ConvertTo-Json -Depth 6; [IO.File]::WriteAllText($m, $n, (New-Object Text.UTF8Encoding($false)))" >nul
 reg add "HKCU\Software\Google\Chrome\NativeMessagingHosts\%NAME%" /ve /t REG_SZ /d "%DEST%\host.json" /f >nul
 if errorlevel 1 (
   echo ERROR: registry write failed
   pause
   exit /b 1
 )
-echo OK: host installed to %DEST%, registry key written.
-echo Restart Chrome for the change to take effect.
+echo OK: host installed to %DEST%, manifest written without BOM, registry key set.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%DEST%\check.ps1" -ExecFile "%DEST%\host.bat"
+echo Restart Chrome COMPLETELY ^(close tray icon too^), then reload the chat tab.
 pause

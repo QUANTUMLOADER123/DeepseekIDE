@@ -21,7 +21,7 @@ jobs:
       - name: Shell host files sanity
         run: |
           # проверяем: в .bat/.json только ASCII (CRLF обязателен для Windows)
-          for f in shell/host.bat shell/install.bat shell/uninstall.bat shell/host.json; do
+          for f in shell/host.bat shell/install.bat shell/uninstall.bat shell/check.bat shell/host.json; do
             if tr -d '\r\n' < "$f" | LC_ALL=C grep -q '[^ -~]'; then
               echo "non-ASCII in $f!"; exit 1
             fi
