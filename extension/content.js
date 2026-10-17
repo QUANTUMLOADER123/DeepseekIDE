@@ -1,5 +1,5 @@
 /* =====================================================================
- * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v31.
+ * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v32.
  * Никакого своего UI, кроме: (1) родной пилюли «Авто-пилот» рядом с
  * тумблерами сайта, (2) шестерёнки настроек вплотную слева от скрепки
  * (icon-кнопка без аутлайна).
@@ -54,7 +54,7 @@
   }
 
   // ---------------- настройки (тумблер + правила + мелочи)
-  var CFG_VERSION = 31;
+  var CFG_VERSION = 32;
   var cfg = { pilot: false, rules: '', statusRows: true, jbTest: false, jbText: '', memory: [] };
   try {
     chrome.storage.local.get(['pilot', 'rules', 'statusRows', 'jbTest', 'jbText', 'memory', 'v'], function (v) {
@@ -281,7 +281,7 @@
       '</div>' +
       // --- футер
       '<div style="display:flex;align-items:center;gap:10px;padding:18px 20px 20px">' +
-        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.9.0</div>' +
+        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.10.0</div>' +
         '<button class="dsx-set-cancel" style="padding:10px 16px;cursor:pointer;border-radius:12px;font-size:14px;' +
         'font-family:inherit;color:var(--dsw-alias-label-primary,#eee);' +
         'background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));' +
@@ -594,6 +594,34 @@
       });
     } catch (e) {}
   }, 1000);
+
+  // ---------------- автоклик «Continue/Продолжить» (оборванная генерация)
+  // DeepSeek рисует чип-кнопку, когда ответ обрывается; пока мы ждём хвост
+  // генерации после служебного — жмём её сами, иначе авто-цикл встаёт молча.
+  var lastContinueAt = 0;
+  function clickContinueIfAny() {
+    if (!cfg.pilot) return;
+    if (!st.waitingAnswer && !st.busy) return;       // не наша очередь — не наши кнопки
+    if (Date.now() - lastContinueAt < 8000) return;  // анти-спам
+    var items = document.querySelectorAll('[data-virtual-list-item-key]');
+    if (!items.length) return;
+    var tail = items[items.length - 1];              // только хвост беседы
+    var cands = tail.querySelectorAll('div[role="button"], button');
+    for (var i = cands.length - 1; i >= 0; --i) {
+      var el = cands[i];
+      if (!el || !el.isConnected || el.offsetParent === null) continue;
+      if (el.closest('._871cbca')) continue;         // композер — запретная зона
+      var t = (el.textContent || '').trim();
+      if (t !== 'Continue' && t !== 'Продолжить' && t !== 'Continue generating') continue;
+      var ev = new MouseEvent('click', { bubbles: true });
+      ev.__dsxBypass = true;
+      el.dispatchEvent(ev);
+      lastContinueAt = Date.now();
+      console.log('[DSX] нажал «Continue» — генерация продолжается');
+      break;
+    }
+  }
+  setInterval(function () { try { clickContinueIfAny(); } catch (e) {} }, 1500);
 
   // ---------------- ввод в чат (служебные сообщения автопилота — настоящие
   // отправки на сервер, чтобы после перезагрузки модель их видела)
@@ -1361,6 +1389,22 @@
       try { if (pre.style.display !== 'none') pre.style.display = 'none'; } catch (e) {}
     });
   }
+  // think-блоки (```deepseekide-think```) скрываем от юзера целиком
+  function hideThinkBlocks(block) {
+    try {
+      block.querySelectorAll('pre').forEach(function (pre) {
+        var p = pre.parentElement, hops = 0;
+        while (p && p !== block && hops < 4) {
+          var t = (p.textContent || '').slice(0, 120).toLowerCase();
+          if (t.indexOf('deepseekide-think') >= 0) {
+            if (p.style.display !== 'none') p.style.display = 'none';
+            return;
+          }
+          p = p.parentElement; hops++;
+        }
+      });
+    } catch (e) {}
+  }
   function ensureLiveBox(host) {
     var box = host.querySelector('.dsx-live-box');
     if (!box) {
@@ -1434,6 +1478,7 @@
     if (!block || !isTailAssistant(block)) return;
     renderBadges(block);   // маркеры [<{...}>] мгновенно превращаем в «Ищет в инете: …»
     updateLiveOps(block);  // живые строки «Пишет: файл…»
+    hideThinkBlocks(block); // think-блоки юзеру не видны
   }
 
   // ---------------- главный цикл: ответ устоялся → применить → ответить
@@ -1516,6 +1561,7 @@
         var svcReq = false;
         if (tail) {
           renderBadges(block); // маркеры сразу превращаем в «Чтение: x…»
+          hideThinkBlocks(block);
           var svc = await serviceNote(text, function (pending) {
             // строка прогресса прямо под сообщением модели, живёт секунды-секунды
             try {
@@ -1734,7 +1780,7 @@
 
   // ---------------- старт
   if (sessionStorage.getItem('dsx:primed') === '1') st.primedOnce = true;
-  console.log('[DSX] DeepSeek Extended v31 стелс: загружено. pilot=' + cfg.pilot);
+  console.log('[DSX] DeepSeek Extended v32 стелс: загружено. pilot=' + cfg.pilot);
   refreshPrompt();
   setTimeout(refreshPrompt, 1200);
   setInterval(function () {
