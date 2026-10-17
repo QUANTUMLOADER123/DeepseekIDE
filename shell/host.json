@@ -1,0 +1,9 @@
+{
+  "name": "ai.deepseekide.shell",
+  "description": "DeepSeek Extended shell host (.exe native messaging)",
+  "path": "host.exe",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://bbchojkaackedjmpgbhebbjodjgkillp/"
+  ]
+}
