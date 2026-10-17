@@ -20,7 +20,9 @@ jobs:
         run: node extension/test/parser.test.mjs
       - name: Shell host files sanity
         run: |
-          LC_ALL=C grep -q '[^ -~]' shell/host.bat shell/install.bat shell/uninstall.bat shell/host.json && echo "non-ASCII in .bat/.json!" && exit 1 || true
-          for f in shell/host.bat shell/install.bat shell/uninstall.bat; do
-            LC_ALL=C grep -q '[^ -~]' "$f" && echo "non-ASCII in $f!" && exit 1 || true
+          # проверяем: в .bat/.json только ASCII (CRLF обязателен для Windows)
+          for f in shell/host.bat shell/install.bat shell/uninstall.bat shell/host.json; do
+            if tr -d '\r\n' < "$f" | LC_ALL=C grep -q '[^ -~]'; then
+              echo "non-ASCII in $f!"; exit 1
+            fi
           done
