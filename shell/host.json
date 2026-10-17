@@ -1,7 +1,7 @@
 {
   "name": "ai.deepseekide.shell",
-  "description": "DeepSeek Extended shell host (PowerShell via native messaging)",
-  "path": "host.bat",
+  "description": "DeepSeek Extended shell host (.exe native messaging)",
+  "path": "host.exe",
   "type": "stdio",
   "allowed_origins": [
     "chrome-extension://bbchojkaackedjmpgbhebbjodjgkillp/"

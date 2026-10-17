@@ -1,9 +1,8 @@
 @echo off
-setlocal
 set "NAME=ai.deepseekide.shell"
-set "DEST=%LOCALAPPDATA%\DeepSeekExtended\shell"
-echo == DeepSeek Extended shell host: uninstall ==
 reg delete "HKCU\Software\Google\Chrome\NativeMessagingHosts\%NAME%" /f >nul 2>nul
-if exist "%DEST%" rmdir /s /q "%DEST%"
-echo Done: registry key removed, files deleted.
+reg delete "HKCU\Software\Microsoft\Edge\NativeMessagingHosts\%NAME%" /f >nul 2>nul
+rmdir /s /q "%LOCALAPPDATA%\DeepSeekExtended\shell" >nul 2>nul
+echo OK: shell host removed (registry Chrome+Edge, files in LOCALAPPDATA).
+echo Restart Chrome for the change to take effect.
 pause
