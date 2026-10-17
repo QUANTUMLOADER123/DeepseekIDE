@@ -1,5 +1,5 @@
 /* =====================================================================
- * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v30.
+ * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v31.
  * Никакого своего UI, кроме: (1) родной пилюли «Авто-пилот» рядом с
  * тумблерами сайта, (2) шестерёнки настроек вплотную слева от скрепки
  * (icon-кнопка без аутлайна).
@@ -54,7 +54,7 @@
   }
 
   // ---------------- настройки (тумблер + правила + мелочи)
-  var CFG_VERSION = 30;
+  var CFG_VERSION = 31;
   var cfg = { pilot: false, rules: '', statusRows: true, jbTest: false, jbText: '', memory: [] };
   try {
     chrome.storage.local.get(['pilot', 'rules', 'statusRows', 'jbTest', 'jbText', 'memory', 'v'], function (v) {
@@ -281,7 +281,7 @@
       '</div>' +
       // --- футер
       '<div style="display:flex;align-items:center;gap:10px;padding:18px 20px 20px">' +
-        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.8.2</div>' +
+        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.9.0</div>' +
         '<button class="dsx-set-cancel" style="padding:10px 16px;cursor:pointer;border-radius:12px;font-size:14px;' +
         'font-family:inherit;color:var(--dsw-alias-label-primary,#eee);' +
         'background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));' +
@@ -729,7 +729,7 @@
     reqs.forEach(function (r) { if (!seen[r.key]) { seen[r.key] = 1; uniq.push(r); } });
     if (!uniq.length) return { text: '', rows: [] };
 
-    var out = ['SYSTEM: auto-reply from DeepSeek Extended.'], rows = [], asks = [];
+    var out = ['SYSTEM: auto-reply from DeepSeek Extended.'], rows = [], asks = [], shells = [];
     var done = 0, i;
     for (i = 0; i < uniq.length; ++i) {
       var rq = uniq[i];
@@ -932,6 +932,9 @@
           if (!rq.bracket) rows.push('Откат не удался: ' + base(vp));
         }
         done++;
+      } else if (rq.kind === 'SHELL') {
+        shells.push({ cmd: rq.arg });
+        if (!rq.bracket) rows.push('Команда: ' + rq.arg.slice(0, 80));
       } else if (rq.kind === 'ASK' || rq.kind === 'ASK MULTI') {
         asks.push({ q: rq.arg, opts: rq.opts || [], multi: rq.kind === 'ASK MULTI' });
         if (!rq.bracket) rows.push('Ждёт ответа: ' + rq.arg);
@@ -948,7 +951,7 @@
       }
     }
     sentSave();
-    if (asks.length && !done) return { text: '', rows: rows, asks: asks }; // вопросы человеку — крутилки ждут
+    if ((asks.length || shells.length) && !done) return { text: '', rows: rows, asks: asks, shells: shells }; // вопросы/команды — ждёт человек
     if (!done) {
       // ВСЁ запрошенное уже отправлялось раньше: молчать НЕЛЬЗЯ (модель ждёт
       // ответ и встаёт навсегда) — шлём короткое напоминание.
@@ -957,12 +960,12 @@
                '[<{READ RANGE: <path>:<other-from>-<other-to>}>]; for size, [<{FILE INFO: <path>}>].');
       return { text: out.join('\n\n'), rows: [] };
     }
-    return { text: out.join('\n\n'), rows: rows, asks: asks };
+    return { text: out.join('\n\n'), rows: rows, asks: asks, shells: shells };
   }
 
   // ---------------- бейджи: [<{…}>] в ответе модели превращаем в строки-статусы
   // Меняем ТОЛЬКО nodeValue текстовых узлов (React не заметит — дерево то же).
-  var BADGE_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH|MEMORY ADD|ASK MULTI|ASK|REVERT FILE|WEB FETCH|WEB DOWNLOAD|WEB GREP)\s*:\s*([^<>]*?)\s*\}>\]/gi;
+  var BADGE_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH|MEMORY ADD|ASK MULTI|ASK|REVERT FILE|WEB FETCH|WEB DOWNLOAD|WEB GREP|SHELL)\s*:\s*([^<>]*?)\s*\}>\]/gi;
   function badgeText(kind, arg, pending) {
     var K = kind.toUpperCase(), tail = pending ? '…' : '';
     if (K === 'NEED FILE')    return (pending ? 'Чтение: '        : 'Прочитано: ')      + base(arg) + tail;
@@ -985,6 +988,7 @@
     }
     if (K === 'MEMORY ADD') return (pending ? 'Запоминает: ' : 'Запомнил: ') + String(arg).split('::')[0].trim() + tail;
     if (K === 'REVERT FILE') return (pending ? 'Откатываю: ' : 'Откачено: ') + base(String(arg).trim()) + tail;
+    if (K === 'SHELL') return (pending ? 'Команда: ' : 'Выполнено: ') + String(arg).trim().slice(0, 90) + tail;
     return (pending ? 'Поиск: ' : 'Найдено: ') + String(arg).trim() + tail; // NEED SEARCH
   }
   function eachTextNode(root, fn) {
@@ -1041,7 +1045,8 @@
       [/Скачивает: ([^…\n]+)…/g,      'Скачано: $1'],
       [/Ищет в инете: ([^…\n]+)…/g,   'Найдено в инете: $1'],
       [/Запоминает: ([^…\n]+)…/g,     'Запомнил: $1'],
-      [/Откатываю: ([^…\n]+)…/g,      'Откачено: $1']
+      [/Откатываю: ([^…\n]+)…/g,      'Откачено: $1'],
+      [/Команда: ([^…\n]+)…/g,        'Выполнено: $1']
     ];
     try {
       eachTextNode(block, function (n) {
@@ -1052,6 +1057,121 @@
       });
     } catch (e) {}
   }
+  // ---------------- SHELL: карточка-команда с подтверждением (или авто-режим)
+  function shellSend(cmd, body) {
+    return injectStealth('SYSTEM: shell result for ' + cmd + '\n' + body, 'шелл');
+  }
+  function shellBookkeep() {
+    st.autoCount++;
+    st.waitingAnswer = true; sessionStorage.setItem('dsx:wait', '1');
+    sessionStorage.setItem('dsx:auto', String(st.autoCount));
+  }
+  async function execShell(block, cmd, statusEl) {
+    if (statusEl) statusEl.textContent = 'Выполняет: ' + cmd.slice(0, 90) + '…';
+    var r = await new Promise(function (resolve) {
+      try {
+        chrome.runtime.sendMessage({ dsx: 'shell', cmd: cmd }, function (resp) {
+          if (chrome.runtime.lastError) resolve({ ok: false, error: chrome.runtime.lastError.message });
+          else resolve(resp || { ok: false, error: 'пустой ответ фона' });
+        });
+      } catch (e) { resolve({ ok: false, error: String(e && e.message || e) }); }
+    });
+    var report, short;
+    if (r && r.ok) {
+      var out = String(r.stdout || '').replace(/\n$/, '');
+      var err = String(r.stderr || '').replace(/\n$/, '');
+      report = 'CHDIR: ' + (r.cwd || '?') + '\nEXIT CODE: ' + r.exitCode +
+               (r.killed ? ' (TIMEOUT 120s — убито)' : '') +
+               '\n\nSTDOUT:\n```\n' + (out || '(пусто)') + '\n```' +
+               (err ? '\n\nSTDERR:\n```\n' + err + '\n```' : '');
+      short = 'Выполнено (код ' + r.exitCode + '): ' + cmd.slice(0, 70) +
+              (out ? ' → ' + out.split('\n')[0].slice(0, 60) : '');
+    } else {
+      var er = (r && r.error) || 'нет связи с хостом';
+      report = 'SHELL ERROR: ' + er + '\n(Если хост не установлен/не запущен — подскажи юзеру: shell\\install.bat из репозитория, потом перезапуск Chrome. Не повторяй ту же команду впрок.)';
+      short = 'Ошибка шелла: ' + er.slice(0, 80);
+    }
+    if (statusEl) statusEl.textContent = short;
+    await shellSend(cmd, report); shellBookkeep();
+    finalizeBadges(block); hideActionBar(block);
+  }
+  function runShellCmd(block, cmd) {
+    // авто-режим (галка в карточке): исполняем без вопроса
+    if (st.shellAuto) { execShell(block, cmd, null); return; }
+    try {
+      var host = block.closest('._4f9bf79') || block.parentElement;
+      if (!host) return;
+      var key = 'dsx-sh-' + hashStr(cmd).slice(0, 24);
+      if (host.querySelector('[data-key="' + key + '"]')) return;
+
+      var card = document.createElement('div');
+      card.setAttribute('data-key', key);
+      card.style.cssText = 'margin-top:10px;padding:12px 14px;border-radius:12px;max-width:560px;' +
+        'background:var(--dsw-alias-bg-layer-2,#1d1f24);' +
+        'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1))';
+
+      var cap = document.createElement('div');
+      cap.textContent = 'Модель просит выполнить команду:';
+      cap.style.cssText = 'font-size:12px;margin-bottom:6px;color:var(--dsw-alias-label-tertiary,#888)';
+      card.appendChild(cap);
+
+      var code = document.createElement('div');
+      code.textContent = cmd;
+      code.style.cssText = 'padding:8px 10px;border-radius:8px;font-family:Consolas,monospace;font-size:12.5px;' +
+        'line-height:1.45;word-break:break-all;user-select:text;' +
+        'color:var(--dsw-alias-label-primary,#eee);background:rgba(0,0,0,.25);' +
+        'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.08))';
+      card.appendChild(code);
+
+      var row = document.createElement('div');
+      row.style.cssText = 'margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap';
+      var run = document.createElement('button');
+      run.textContent = 'Выполнить';
+      run.style.cssText = 'padding:8px 16px;border:none;cursor:pointer;border-radius:10px;' +
+        'font-size:13px;font-weight:600;font-family:inherit;color:#fff;' +
+        'background:var(--dsw-alias-brand-primary,#5686fe)';
+      var no = document.createElement('button');
+      no.textContent = 'Отклонить';
+      no.style.cssText = 'padding:8px 14px;cursor:pointer;border-radius:10px;font-size:13px;' +
+        'font-family:inherit;color:var(--dsw-alias-label-primary,#eee);' +
+        'background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));' +
+        'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1))';
+      var autoLab = document.createElement('label');
+      autoLab.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;' +
+        'color:var(--dsw-alias-label-tertiary,#888)';
+      var autoCb = document.createElement('input');
+      autoCb.type = 'checkbox'; autoCb.style.cssText = 'width:14px;height:14px;accent-color:#5686fe;margin:0';
+      var autoTx = document.createElement('span');
+      autoTx.textContent = 'авто-разрешать до конца сессии';
+      autoLab.appendChild(autoCb); autoLab.appendChild(autoTx);
+      row.appendChild(run); row.appendChild(no); row.appendChild(autoLab);
+      card.appendChild(row);
+
+      var statusEl = document.createElement('div');
+      statusEl.style.cssText = 'margin-top:8px;font-size:12.5px;color:var(--dsw-alias-label-tertiary,#888)';
+      card.appendChild(statusEl);
+      host.appendChild(card);
+
+      run.onclick = function () {
+        if (autoCb.checked) st.shellAuto = true;
+        run.disabled = true; no.disabled = true;
+        code.style.opacity = '.6';
+        execShell(block, cmd, statusEl).then(function () {
+          card.removeChild(code); card.removeChild(row);
+        });
+      };
+      no.onclick = async function () {
+        run.disabled = true; no.disabled = true; card.removeChild(code); card.removeChild(row);
+        statusEl.textContent = 'Отклонено: ' + cmd.slice(0, 90);
+        await shellSend(cmd, 'The user REJECTED this command in the confirm card. Do NOT retry it; ' +
+          'continue without it, or suggest a manual alternative in text.');
+        shellBookkeep();
+        finalizeBadges(block); hideActionBar(block);
+      };
+      console.log('[DSX] shell-карточка: «' + cmd.slice(0, 60) + '»');
+    } catch (e) { console.warn('[DSX] shell card error', e); }
+  }
+
   // ---------------- карточка-опрос (ASK / ASK MULTI): варианты → клик → ответ
   // сам уезжает модели служебным сообщением; последний вариант всегда «Свой ответ»
   function renderAskCard(block, ask) {
@@ -1419,6 +1539,10 @@
             svc.asks.forEach(function (a) { renderAskCard(block, a); });
             hideActionBar(block); // у сообщения с вопросом экшн-бар тоже прячем
           }
+          if (svc.shells && svc.shells.length) {
+            svc.shells.forEach(function (s) { runShellCmd(block, s.cmd); });
+            hideActionBar(block); // и у сообщения с командами
+          }
         }
 
         if (note) {
@@ -1610,7 +1734,7 @@
 
   // ---------------- старт
   if (sessionStorage.getItem('dsx:primed') === '1') st.primedOnce = true;
-  console.log('[DSX] DeepSeek Extended v30 стелс: загружено. pilot=' + cfg.pilot);
+  console.log('[DSX] DeepSeek Extended v31 стелс: загружено. pilot=' + cfg.pilot);
   refreshPrompt();
   setTimeout(refreshPrompt, 1200);
   setInterval(function () {

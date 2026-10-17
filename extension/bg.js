@@ -16,6 +16,23 @@ function bufToBase64(buf) {
 }
 
 chrome.runtime.onMessage.addListener(function (m, sender, sendResponse) {
+  if (m && m.dsx === 'shell' && typeof m.cmd === 'string') {
+    // SHELL-мост: команда уезжает в нативный хост, ответ — обратно в контент
+    (async function () {
+      try {
+        var resp = await chrome.runtime.sendNativeMessage('ai.deepseekide.shell', { id: m.id || '', cmd: m.cmd });
+        sendResponse(resp && typeof resp === 'object' ? resp : { ok: false, error: 'странный ответ хоста' });
+      } catch (e) {
+        var msg = String((e && e.message) || e || 'native messaging failed');
+        if (msg.indexOf('not found') >= 0 || msg.indexOf('not.installed') >= 0)
+          msg = 'хост шелла не установлен — запусти shell/install.bat из репозитория и перезапусти Chrome';
+        else if (msg.indexOf('forbidden') >= 0 || msg.indexOf('access') >= 0)
+          msg = 'ID расширения не в allowed_origins хоста — переустанови хост (install.bat) с новой версией';
+        sendResponse({ ok: false, error: msg });
+      }
+    })();
+    return true;
+  }
   if (!m || m.dsx !== 'webfetch' || typeof m.url !== 'string') return;
   (async function () {
     var timer = 0;

@@ -162,7 +162,7 @@
   // «<{» не трактуется HTML-токенайзером как тег (после < идёт {), поэтому
   // разметка доживает до DOM-текста нетронутой и видна пользователю.
   // Маркеры внутри ```-ограждённого кода игнорируются (это могут быть примеры).
-  var BRACKET_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH|MEMORY ADD|ASK MULTI|ASK|REVERT FILE|WEB FETCH|WEB DOWNLOAD|WEB GREP)\s*:\s*([^<>]*?)\s*\}>\]/gi;
+  var BRACKET_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH|MEMORY ADD|ASK MULTI|ASK|REVERT FILE|WEB FETCH|WEB DOWNLOAD|WEB GREP|SHELL)\s*:\s*([^<>]*?)\s*\}>\]/gi;
   function findBracketRequests(answer) {
     var out = [], inFence = false;
     var lines = String(answer).split('\n');
@@ -221,6 +221,9 @@
           }
           if (!val) continue;
           if (val.length > 300) val = val.slice(0, 300);
+        } else if (kind === 'SHELL') {
+          val = val.replace(/[\r\n]+/g, ' ').trim();
+          if (!val || val.length > 500) continue;
         } else { // NEED SEARCH / MEMORY SEARCH
           val = val.slice(0, 200);
           if (!val) continue;
@@ -332,7 +335,6 @@
 "- insert_lines {path, line, content} — insert BEFORE 1-based line (line = lineCount+1 appends).",
 "- replace_lines {path, start_line, end_line, content} — replace range (empty content deletes it).",
 "- make_dir {path}. delete_path {path, recursive?}. copy_file {from, to}. move_file {from, to}.",
-"(There is NO terminal in this edition — the browser sandbox cannot run commands. Deliver build/run instructions in text instead.)",
 "",
 "# GETTING CONTEXT (self-service, automatic — never ask the human for file contents)",
 "Missing information? Emit requests INSIDE the special bracket marker, ONE per line, OUTSIDE ops blocks and code fences. The extension answers them automatically within seconds and shows the user an inline status chip; the answer arrives as a hidden SYSTEM message and your flow continues automatically.",
@@ -347,6 +349,8 @@
 "[<{REVERT FILE: <project-relative path>}>]                 -> restores the file to the snapshot taken right before its last edit by you (if your edit created it, the file is removed). The undo is permanent.",
 "[<{WEB GREP: <url> :: <substring or from-to>}>]               -> downloads the page RAW/CLEANED and returns FULL matching lines (e.g. \u0027m_modelState\u0027 -> whole \u0027constexpr ... = 0x140;\u0027 lines with numbers). Use \u0027144-150\u0027 instead of a substring to get that line range.",
 "[<{WEB DOWNLOAD: <url> :: <project-relative path>}>]          -> downloads a file (binary ok, ≤16 MB) straight into the project folder. Use for dumps/SDK snapshots the task needs; confirm the path in your summary.",
+"[<{SHELL: <one-line command>}>]                              -> runs the command in the project folder via the native shell bridge: the HUMAN sees it in a confirm card (or has auto-allow on); you receive stdout+stderr+exit code. For builds, tests, scripts, package managers, compilers. One line only (chain with &&), non-interactive, 120s timeout. If the reply says the bridge is offline, do NOT retry — give the human run instructions in text instead.",
+
 "[<{ASK: <dilemma> :: <option1> ; <option2> ; <option3>}>]      -> asks the HUMAN through a clickable card: single choice (one option).",
 "[<{ASK MULTI: <dilemma> :: <option1> ; <option2> ; <option3>}>] -> same but the human may tick SEVERAL options.",
 "  (2-8 concrete options after \u0027::\u0027, separated by \u0027;\u0027; the UI always adds a \u0027custom answer\u0027 field itself. You get the picked answer(s) as a SYSTEM message and continue.)",
@@ -362,6 +366,7 @@
 "- Broke something with your own edit and the fix is not obvious? REVERT FILE it and redo cleanly \u2014 that is cheaper than patching over damage.",
 "- External docs available: when the task involves an API/format you do not know well, WEB FETCH the authoritative page instead of guessing.",
 "- Working with open dumps (offsets, schemas, SDKs)? Do NOT guess fields: WEB GREP the raw dump page for the member name to get its exact line, then MEMORY ADD the verified result.",
+"- Prove your work: after code edits prefer VERIFYING with SHELL (compiler check, tests, lint) when a suitable command exists. Destructive/irreversible actions (mass deletes, force-push...) must go through the ASK card instead.",
 "- Prefer acting on your own defaults; but when a fork genuinely depends on the HUMAN\u2019s intent (which framework, keep-or-delete, which of two APIs...), ask via [<{ASK: ...}>] / [<{ASK MULTI: ...}>] instead of plain-text questions or stalling. Plain-text questions are invisible to the automation and dead-end the loop.",
 "- Batch all requests you need into ONE message, then wait — do not narrate them.",
 "- NEVER repeat a request that was already answered in this chat: re-use what you already received. Repeating wastes a whole round-trip and is treated as an error.",

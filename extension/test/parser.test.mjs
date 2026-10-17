@@ -175,3 +175,13 @@ test('v28: WEB DOWNLOAD / WEB GREP — «url :: цель» парсится и �
   const bad2 = Ops.findBracketRequests('[<{WEB GREP: ftp://x :: q}>]');
   assert.equal(bad2.length, 0, 'не-http схема отброшена');
 });
+
+test('SHELL: команда парсится, переносы строк схлопываются, мусор режется', () => {
+  const s = Ops.findBracketRequests('[<{SHELL: cmake --build build --config Release}>]');
+  assert.equal(s[0].kind, 'SHELL');
+  assert.equal(s[0].arg, 'cmake --build build --config Release');
+  const empty = Ops.findBracketRequests('[<{SHELL:    }>]');
+  assert.equal(empty.length, 0, 'пустая команда отброшена');
+  const chained = Ops.findBracketRequests('[<{SHELL: cd sdk && npm test}>]');
+  assert.equal(chained[0].arg, 'cd sdk && npm test');
+});
