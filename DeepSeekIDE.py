@@ -38,7 +38,7 @@ CAP_PAGE_TEXT = 300000
 CAP_DOWNLOAD = 16 * 1024 * 1024
 
 UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-      '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36')
+      '(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36')
 
 
 def app_data_dir():
@@ -3272,6 +3272,8 @@ def run_app():
 
         def inject_agent(self):
             self.page.runJavaScript(AGENT_JS)
+            # диагностика: смотрим, что движок видит сайту (в консоль приложения)
+            self.page.runJavaScript('navigator.userAgent', lambda ua: print('[DSX] UA -> ' + str(ua)))
 
         def center_window(self):
             screen = QApplication.primaryScreen().availableGeometry()
@@ -3338,6 +3340,7 @@ def run_app():
 
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
+    print('[DSX] DeepSeekIDE started (UA: Chrome 140). Если Google отказывается логинить — входи по почте/телефону на той же странице.')
     window = DeepSeekApp()
     window.show()
     sys.exit(app.exec())
