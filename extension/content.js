@@ -1,5 +1,5 @@
 /* =====================================================================
- * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v33.
+ * content.js — DeepSeek Extended (isolated world): СТЕЛС-автопилот v34.
  * Никакого своего UI, кроме: (1) родной пилюли «Авто-пилот» рядом с
  * тумблерами сайта, (2) шестерёнки настроек вплотную слева от скрепки
  * (icon-кнопка без аутлайна).
@@ -26,9 +26,35 @@
     document.documentElement.appendChild(el);
     return el;
   }
-  var url = chrome.runtime.getURL;
-  inject('script', { src: url('opp.js') });
-  inject('script', { src: url('fsbridge.js') });
+  if (!window.__DSX_QT && typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL) {
+    var url = chrome.runtime.getURL;
+    inject('script', { src: url('opp.js') });
+    inject('script', { src: url('fsbridge.js') });
+  }
+  // ---------------- транспорт: Qt-приложение (window.dsxCall) ИЛИ chrome-расширение
+  function dsxSend(kind, data) {
+    return new Promise(function (resolve) {
+      try {
+        if (typeof window.dsxCall === 'function') {
+          window.dsxCall(kind, data).then(resolve, function (e) {
+            resolve({ ok: false, error: String(e && e.message || e) });
+          });
+          return;
+        }
+        if (kind === 'webfetch') {
+          chrome.runtime.sendMessage({ dsx: 'webfetch', url: data.url, dl: !!data.dl }, function (r) {
+            if (chrome.runtime.lastError) resolve({ ok: false, error: chrome.runtime.lastError.message });
+            else resolve(r || { ok: false, error: 'пустой ответ фона' });
+          });
+        } else if (kind === 'shell') {
+          chrome.runtime.sendMessage({ dsx: 'shell', cmd: data.cmd }, function (r) {
+            if (chrome.runtime.lastError) resolve({ ok: false, error: chrome.runtime.lastError.message });
+            else resolve(r || { ok: false, error: 'пустой ответ фона' });
+          });
+        } else resolve({ ok: false, error: 'dsxSend: unknown kind ' + kind });
+      } catch (e) { resolve({ ok: false, error: String(e && e.message || e) }); }
+    });
+  }
 
   // ---------------- стелс-маркеры служебного контента
   // Модель видит всё; пользователь — только то, что после ⟦/DSX⟧.
@@ -54,7 +80,7 @@
   }
 
   // ---------------- настройки (тумблер + правила + мелочи)
-  var CFG_VERSION = 33;
+  var CFG_VERSION = 34;
   var cfg = { pilot: false, rules: '', statusRows: true, jbTest: false, jbText: '', memory: [] };
   try {
     chrome.storage.local.get(['pilot', 'rules', 'statusRows', 'jbTest', 'jbText', 'memory', 'v'], function (v) {
@@ -281,7 +307,7 @@
       '</div>' +
       // --- футер
       '<div style="display:flex;align-items:center;gap:10px;padding:18px 20px 20px">' +
-        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.10.1</div>' +
+        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.11.0</div>' +
         '<button class="dsx-set-cancel" style="padding:10px 16px;cursor:pointer;border-radius:12px;font-size:14px;' +
         'font-family:inherit;color:var(--dsw-alias-label-primary,#eee);' +
         'background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));' +
@@ -709,16 +735,7 @@
   sentLoad();
   // ---------------- WEB FETCH: фон тянет страницу, тут чистим в текст
   function hostOf(u) { try { return new URL(u).host; } catch (e) { return String(u).slice(0, 60); } }
-  function webFetchCall(url, dl) {
-    return new Promise(function (resolve) {
-      try {
-        chrome.runtime.sendMessage({ dsx: 'webfetch', url: url, dl: !!dl }, function (r) {
-          if (chrome.runtime.lastError) resolve({ ok: false, error: chrome.runtime.lastError.message });
-          else resolve(r || { ok: false, error: 'пустой ответ фона' });
-        });
-      } catch (e) { resolve({ ok: false, error: String(e && e.message || e) }); }
-    });
-  }
+  function webFetchCall(url, dl) { return dsxSend('webfetch', { url: url, dl: !!dl }); }
   function htmlToText(html, type) {
     var raw = String(html || '');
     if (String(type).indexOf('html') < 0) {
@@ -1096,14 +1113,7 @@
   }
   async function execShell(block, cmd, statusEl) {
     if (statusEl) statusEl.textContent = 'Выполняет: ' + cmd.slice(0, 90) + '…';
-    var r = await new Promise(function (resolve) {
-      try {
-        chrome.runtime.sendMessage({ dsx: 'shell', cmd: cmd }, function (resp) {
-          if (chrome.runtime.lastError) resolve({ ok: false, error: chrome.runtime.lastError.message });
-          else resolve(resp || { ok: false, error: 'пустой ответ фона' });
-        });
-      } catch (e) { resolve({ ok: false, error: String(e && e.message || e) }); }
-    });
+    var r = await dsxSend('shell', { cmd: cmd });
     var report, short;
     if (r && r.ok) {
       var out = String(r.stdout || '').replace(/\n$/, '');
@@ -1780,7 +1790,7 @@
 
   // ---------------- старт
   if (sessionStorage.getItem('dsx:primed') === '1') st.primedOnce = true;
-  console.log('[DSX] DeepSeek Extended v33 стелс: загружено. pilot=' + cfg.pilot);
+  console.log('[DSX] DeepSeek Extended v34 стелс: загружено. pilot=' + cfg.pilot);
   refreshPrompt();
   setTimeout(refreshPrompt, 1200);
   setInterval(function () {

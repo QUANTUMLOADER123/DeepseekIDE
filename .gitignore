@@ -27,3 +27,4 @@ Thumbs.db
 # приватный ключ identity-фиксации ID расширения (ID уже вшит в manifest.key,
 # pem нужен только для упаковки .crx, в репозитории не храним)
 shell/key.pem
+__pycache__/

@@ -7,6 +7,16 @@
  * перевыпрашивается ОДНИМ кликом после перезапуска браузера.
  * ===================================================================== */
 (function () {
+  // ---------- Qt-режим (DeepSeekIDE.py): файловые примитивы уходят в Python через WebChannel
+  var QT = function () { return window.__DSX_QT === true && typeof window.dsxCall === 'function'; };
+  function qfs(op, args) {
+    var a = {}; for (var k in (args || {})) a[k] = args[k]; a.op = op;
+    return window.dsxCall('fs', a).then(function (r) {
+      if (r && r.ok === false) throw new Error(r.error || 'qt fs error: ' + op);
+      return r;
+    });
+  }
+
   'use strict';
   if (window.__dsidefsReady) return;
   window.__dsidefsReady = true;
@@ -61,12 +71,22 @@
 
   // ---------- хэндл папки
   async function pick() {
+    if (QT()) {
+      var r = await qfs('pick', {}); // нативный диалог Qt, гестур не нужен
+      dirHandle = null; dirName = (r && (r.name || r.path)) || 'папка';
+      return { name: dirName };
+    }
     dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
     dirName = dirHandle.name;
     await idbSet('kv', 'dirHandle', dirHandle);
     return { name: dirName };
   }
   async function ensure() {
+    if (QT()) {
+      var r = await qfs('ensure', {});
+      if (r && r.ok) { dirName = r.name || dirName; return { ok: true, name: dirName }; }
+      return { ok: false, needPick: true };
+    }
     if (!dirHandle) {
       try {
         var saved = await idbGet('kv', 'dirHandle');
@@ -102,6 +122,7 @@
     return p[p.length - 1];
   }
   async function readText(rel) {
+    if (QT()) { var rr = await qfs('read', { path: rel }); return String(rr.text != null ? rr.text : ''); }
     var d = await parentOf(rel, false);
     var fh = await d.getFileHandle(leaf(rel));
     var f = await fh.getFile();
@@ -109,6 +130,7 @@
     return new TextDecoder('utf-8', { fatal: false }).decode(buf);
   }
   async function writeText(rel, text) {
+    if (QT()) { await qfs('write', { path: rel, text: String(text) }); return; }
     var d = await parentOf(rel, true);
     var fh = await d.getFileHandle(leaf(rel), { create: true });
     var w = await fh.createWritable();
@@ -141,6 +163,11 @@
       try { prev = await readText(rel); } catch (e) { had = false; }
       await snapBegin('web download');
       await snapRecordBefore(rel, had ? 'modified' : 'created', had ? prev : null);
+      if (QT()) {
+        var r = await qfs('write_b64', { path: rel, b64: String(args.b64 || '') });
+        await snapCommit();
+        return { ok: true, bytes: r.bytes != null ? r.bytes : bytes.length };
+      }
       var d = await parentOf(rel, true);
       var fh = await d.getFileHandle(leaf(rel), { create: true });
       var w = await fh.createWritable();
@@ -151,6 +178,10 @@
     },
 
     fileInfo: async function (args) {
+      if (QT()) {
+        var r = await qfs('stat', { path: args.path });
+        return { bytes: r.bytes, lines: r.lines != null ? r.lines : -1, modified: r.modified || '' };
+      }
       var d = await parentOf(args.path, false);
       var fh = await d.getFileHandle(leaf(args.path));
       var f = await fh.getFile();
@@ -163,6 +194,7 @@
     },
 
     tree: async function (args) {
+      if (QT()) { var r = await qfs('tree', { max_entries: (args && args.max_entries) || 400 }); return { text: r.text }; }
       var max = (args && args.max_entries) || 400, out = [], count = 0;
       var SKIP = { '.git': 1, 'node_modules': 1, '.deepseekide': 1 };
       async function walk(d, prefix, depth) {
@@ -180,6 +212,10 @@
     },
 
     search: async function (args) {
+      if (QT()) {
+        var r = await qfs('search', { query: args.query, case_sensitive: !!args.case_sensitive });
+        return { text: r.text, matches: r.matches || 0, scanned: r.scanned || 0 };
+      }
       var needle = args.case_sensitive ? args.query : String(args.query).toLowerCase();
       var out = [], matches = 0, scanned = 0;
       var SKIP = { '.git': 1, 'node_modules': 1, '.deepseekide': 1 };
@@ -278,17 +314,21 @@
       return (name === 'insert_lines' ? 'insert ' : 'replace ') + rel;
     }
     if (name === 'make_dir') {
-      await dirAt(partsOf(rel), true);
+      if (QT()) await qfs('mkdir', { path: rel });
+      else await dirAt(partsOf(rel), true);
       await snapRecordBefore(rel, 'created-dir', null);
       return 'mkdir ' + rel;
     }
     if (name === 'delete_path') {
-      var d = await parentOf(rel, false);
-      var wantFile = true, old = null;
-      try { old = await readText(rel); } catch (e) { wantFile = false; }
-      if (!wantFile && !args.recursive) throw new Error('это папка — нужно recursive:true');
-      await snapRecordBefore(rel, wantFile ? (old !== null ? 'deleted' : 'missing') : 'deleted-dir', old);
-      await d.removeEntry(leaf(rel), { recursive: !!args.recursive });
+      var oldT = null;
+      try { oldT = await readText(rel); } catch (e) { /* это папка */ }
+      if (oldT === null && !args.recursive) throw new Error('это папка — нужно recursive:true');
+      await snapRecordBefore(rel, oldT !== null ? 'deleted' : 'deleted-dir', oldT);
+      if (QT()) await qfs('remove', { path: rel, recursive: !!args.recursive });
+      else {
+        var d0 = await parentOf(rel, false);
+        await d0.removeEntry(leaf(rel), { recursive: !!args.recursive });
+      }
       return 'delete ' + rel;
     }
     if (name === 'copy_file' || name === 'move_file') {
@@ -301,9 +341,9 @@
       await snapRecordBefore(to, 'created', null);
       await writeText(to, src);
       if (name === 'move_file') {
-        var pd = await parentOf(from, false);
         await snapRecordBefore(from, 'deleted', src);
-        await pd.removeEntry(leaf(from));
+        if (QT()) await qfs('remove', { path: from, recursive: false });
+        else { var pd = await parentOf(from, false); await pd.removeEntry(leaf(from)); }
       }
       return name === 'copy_file' ? 'copy ' + from + ' → ' + to : 'move ' + from + ' → ' + to;
     }
@@ -436,6 +476,7 @@
       if (m.op === 'ensure') { reply({ ok: true, data: await ensure() }); return; }
       if (m.op === 'forget') {          // «Забыть папку» из настроек — без нужды в папке
         dirHandle = null; dirName = '';
+        if (QT()) { try { await qfs('forget', {}); } catch (e2) {} }
         try {
           await idb('readwrite', function (tx, res) {
             tx.objectStore('kv').delete('dirHandle');

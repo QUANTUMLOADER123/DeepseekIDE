@@ -18,6 +18,11 @@ jobs:
           done
       - name: Parser & memory tests
         run: node extension/test/parser.test.mjs
+      - name: Single-file app build + headless selftest
+        run: |
+          python3 tools/build_single.py
+          python3 -m py_compile DeepSeekIDE.py
+          python3 DeepSeekIDE.py --selftest
       - name: Shell host files sanity
         run: |
           # проверяем: в .bat/.json только ASCII (CRLF обязателен для Windows)
