@@ -1234,11 +1234,15 @@ tree || '(структура недоступна — спросите чере�
       el.__dsxBound = true;
       el.addEventListener('click', function () {
         var origText = el.textContent;
-        el.textContent = 'Открываю выбор папки…';
+        el.textContent = (window.DSX_T || function (a) { return a; })('Открываю выбор папки…', 'Opening the folder picker…');
         (async function () {
           try {
-            var stt = await ensure();
-            if (!stt.ok) await pick();
+            if (QT()) {
+              await pick();              // Qt: нативный диалог по клику всегда; иначе «Сменить…» обходит диалог
+            } else {
+              var stt = await ensure();
+              if (!stt.ok) await pick();
+            }
             window.postMessage({ __dsidefs: 'event', ev: 'folder', name: dirName }, '*');
           } catch (e) {
             window.postMessage({ __dsidefs: 'event', ev: 'folderError',
@@ -1306,6 +1310,10 @@ tree || '(структура недоступна — спросите чере�
   'use strict';
   if (window.__dsxContent) return; window.__dsxContent = true;
 
+  // ---------------- i18n: язык UI = язык сайта
+  var DSX_LANG = (String(document.documentElement.lang || '').toLowerCase().indexOf('ru') === 0) ? 'ru' : 'en';
+  var T = function (ru, en) { return DSX_LANG === 'ru' ? ru : en; };
+
   // ---------------- внедрение MAIN-world скриптов (File System Access мост)
   function inject(tag, attrs) {
     var el = document.createElement(tag);
@@ -1368,30 +1376,33 @@ tree || '(структура недоступна — спросите чере�
 
   // ---------------- настройки (тумблер + правила + мелочи)
   var CFG_VERSION = 34;
-  var cfg = { pilot: false, rules: '', statusRows: true, jbTest: false, jbText: '', memory: [] };
+  var cfg = { pilot: false, rules: '', statusRows: true, jbTest: false, jbText: '', memory: [], autolimit: undefined };
   try {
-    chrome.storage.local.get(['pilot', 'rules', 'statusRows', 'jbTest', 'jbText', 'memory', 'v'], function (v) {
-      if (v && v.v !== CFG_VERSION) {
-        // свежая установка/обнова: пилот не трогаем (он и так выкл у новых),
-        // дефолты новых полей — бережливо дописываем
-        cfg.pilot = !!v.pilot;
-        cfg.rules = typeof v.rules === 'string' ? v.rules : '';
-        cfg.statusRows = v.statusRows !== false;
-        cfg.jbTest = !!v.jbTest;
-        cfg.jbText = typeof v.jbText === 'string' ? v.jbText : '';
-        if (Array.isArray(v.memory)) cfg.memory = clampMemory(v.memory);
-        var base = { v: CFG_VERSION, pilot: cfg.pilot, rules: cfg.rules, statusRows: cfg.statusRows, jbTest: cfg.jbTest, jbText: cfg.jbText, memory: cfg.memory };
-        try { chrome.storage.local.set(base); } catch (e) {}
-      } else if (v) {
+    if (window.__DSX_QT) {
+      var rawc = localStorage.getItem('dsx:cfg');
+      if (rawc) {
+        var vc = JSON.parse(rawc);
+        if (vc.pilot !== undefined) cfg.pilot = !!vc.pilot;
+        if (typeof vc.rules === 'string') cfg.rules = vc.rules;
+        if (vc.statusRows !== undefined) cfg.statusRows = !!vc.statusRows;
+        if (vc.jbTest !== undefined) cfg.jbTest = !!vc.jbTest;
+        if (typeof vc.jbText === 'string') cfg.jbText = vc.jbText;
+        if (Array.isArray(vc.memory)) cfg.memory = clampMemory(vc.memory);
+        if (vc.autolimit !== undefined) cfg.autolimit = vc.autolimit | 0;
+      }
+    } else {
+      chrome.storage.local.get(['pilot', 'rules', 'statusRows', 'jbTest', 'jbText', 'memory', 'autolimit'], function (v) {
+        if (!v) return;
         if (v.pilot !== undefined) cfg.pilot = !!v.pilot;
         if (typeof v.rules === 'string') cfg.rules = v.rules;
         if (v.statusRows !== undefined) cfg.statusRows = !!v.statusRows;
         if (v.jbTest !== undefined) cfg.jbTest = !!v.jbTest;
         if (typeof v.jbText === 'string') cfg.jbText = v.jbText;
         if (Array.isArray(v.memory)) cfg.memory = clampMemory(v.memory);
-      }
-      syncNativeToggle(); syncFolderLabels();
-    });
+        if (v.autolimit !== undefined) cfg.autolimit = v.autolimit | 0;
+        syncNativeToggle(); syncFolderLabels();
+      });
+    }
   } catch (e) { /* дефолты */ }
   function clampMemory(arr) {
     var out = [];
@@ -1478,7 +1489,7 @@ tree || '(структура недоступна — спросите чере�
     return '<div style="display:flex;align-items:center;justify-content:space-between;padding:18px 20px 4px">' +
       '<div style="font-size:17px;font-weight:600">' + title + '</div>' +
       '<div class="dsx-modal-x" role="button" tabindex="0" style="cursor:pointer;padding:6px;border-radius:8px;' +
-      'color:var(--dsw-alias-label-secondary,#aaa)" title="Закрыть">✕</div></div>';
+      'color:var(--dsw-alias-label-secondary,#aaa)" title="' + T('Закрыть', 'Close') + '">✕</div></div>';
   }
   function bindModalChrome(card) {
     card.querySelector('.dsx-modal-x').onclick = closeModals;
@@ -1488,145 +1499,146 @@ tree || '(структура недоступна — спросите чере�
   }
   function syncFolderLabels() {
     document.querySelectorAll('.dsx-cur-folder').forEach(function (el) {
-      el.textContent = st.folderName ? st.folderName : '— папка не выбрана —';
+      el.textContent = st.folderName ? st.folderName : T('— папка не выбрана —', '— no folder selected —');
     });
   }
 
   // ---------------- модалка «Подключение автопилота»
   function showFolderModal() {
-    closeModals();
-    var card = overlayBase(420);
+    var card = overlayBase(430);
     card.innerHTML =
-      modalHeader('Авто-пилот') +
-      '<div style="padding:8px 20px 0;font-size:13.5px;line-height:1.55;color:var(--dsw-alias-label-secondary,#aaa)">' +
-        'DeepSeek станет агентом твоего проекта: правки будут падать прямо в файлы, ' +
-        'а контекст подмешиваться скрытно. Выбери корневую папку проекта — ' +
-        'она запомнится, потом всё само.' +
-      '</div>' +
-      '<div style="padding:12px 20px 0;font-size:13px;color:var(--dsw-alias-label-tertiary,#888)">' +
-        'Сейчас: <span class="dsx-cur-folder"></span>' +
-      '</div>' +
-      '<div style="display:flex;gap:10px;padding:18px 20px 20px">' +
-        '<button class="dsx-modal-pick" style="flex:1;padding:11px 16px;border:none;cursor:pointer;' +
-        'border-radius:12px;font-size:14px;font-weight:600;font-family:inherit;color:#fff;' +
-        'background:var(--dsw-alias-brand-primary,#5686fe);transition:filter .15s">Выбрать папку проекта</button>' +
-        '<button class="dsx-modal-no" style="padding:11px 16px;cursor:pointer;border-radius:12px;font-size:14px;' +
-        'font-family:inherit;color:var(--dsw-alias-label-primary,#eee);' +
-        'background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));' +
-        'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1))">Позже</button>' +
+      modalHeader(T('Авто-пилот', 'Auto-pilot')) +
+      '<div style="padding:14px 20px 20px">' +
+        '<div style="font-size:14px;line-height:1.6;color:var(--dsw-alias-label-secondary,#ccc)">' +
+          T('Авто-пилот будет редактировать прямо в папке проекта. Выбери её один раз — дальше агент сам читает файлы, пишет правки, запускает тесты и возвращает результат. В чате это выглядит как обычный диалог.',
+            'Auto-pilot edits right inside your project folder. Pick it once — the agent then reads files, applies edits, runs tests and reports back. In chat it still looks like a normal conversation.') +
+        '</div>' +
+        '<div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end">' +
+          '<button class="dsx-modal-later" style="padding:9px 16px;cursor:pointer;border-radius:10px;' +
+          'font-size:13px;font-family:inherit;color:var(--dsw-alias-label-primary,#eee);' +
+          'background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));' +
+          'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1))">' + T('Позже', 'Later') + '</button>' +
+          '<button class="dsx-modal-pick" style="padding:9px 16px;border:none;cursor:pointer;border-radius:10px;' +
+          'font-size:13px;font-weight:600;font-family:inherit;color:#fff;' +
+          'background:var(--dsw-alias-brand-primary,#5686fe)">' + T('Выбрать папку проекта', 'Choose project folder') + '</button>' +
+        '</div>' +
       '</div>';
     bindModalChrome(card);
-    card.querySelector('.dsx-modal-no').onclick = closeModals;
-    syncFolderLabels();
-    // «Выбрать папку» перехватит fsbridge в MAIN-мире (там живой жест) — см. bindGesture.
+    card.querySelector('.dsx-modal-later').onclick = function () {
+      cfg.pilot = false; saveCfg(); syncNativeToggle(); closeModals();
+    };
   }
 
-  // ---------------- модалка НАСТРОЕК (шестерёнка)
-  function showSettingsModal() {
-    closeModals();
-    var card = overlayBase(480);
-    card.innerHTML =
-      modalHeader('DeepSeek Extended — настройки') +
-      // --- раздел: папка проекта
-      '<div style="padding:14px 20px 0">' +
-        '<div style="font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#eee)">Папка проекта</div>' +
-        '<div style="display:flex;align-items:center;gap:10px;margin-top:8px">' +
-          '<div class="dsx-cur-folder" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' +
-          'font-size:13px;color:var(--dsw-alias-label-secondary,#aaa)"></div>' +
-          '<button class="dsx-modal-pick" style="padding:8px 14px;border:none;cursor:pointer;border-radius:10px;' +
-          'font-size:13px;font-weight:600;font-family:inherit;color:#fff;flex-shrink:0;' +
-          'background:var(--dsw-alias-brand-primary,#5686fe)">Сменить…</button>' +
-          '<button class="dsx-set-forget" title="Убрать сохранённый доступ к папке" style="padding:8px 12px;' +
-          'cursor:pointer;border-radius:10px;font-size:13px;font-family:inherit;flex-shrink:0;' +
-          'color:var(--dsw-alias-label-primary,#eee);background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));' +
-          'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1))">Забыть</button>' +
+  // ---------------- нативный ds-switch сайта для нашего автопилота
+  function setDsSwitch(sw, on) {
+    sw.classList.toggle('ds-switch--checked', on);
+    sw.setAttribute('aria-checked', on ? 'true' : 'false');
+  }
+
+  function syncNativeToggle() {
+    var sw = document.querySelector('.dsx-set-pilot');
+    if (sw) setDsSwitch(sw, !!cfg.pilot);
+  }
+
+  // ---------------- тело настроек агента (общее: и наш оверлей, и вкладка сайта)
+  function agentSettingsHtml() {
+    var ROW = 'display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 0;min-height:60px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.06))';
+    var TXT = 'flex:1;min-width:0';
+    var TIT = 'font-size:14px;font-weight:600;color:var(--dsw-alias-label-primary,#eee)';
+    var SUB = 'margin-top:2px;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-tertiary,#888)';
+    var INP = 'background:var(--dsw-alias-bg-layer-2,#1d1f24);color:var(--dsw-alias-label-primary,#f5f5f5);border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1));outline:none;border-radius:10px;font-family:inherit;font-size:13px';
+    var BTN = 'padding:8px 14px;border:none;cursor:pointer;border-radius:10px;font-size:13px;font-weight:600;font-family:inherit;color:#fff;flex-shrink:0;background:var(--dsw-alias-brand-primary,#5686fe)';
+    var GHOST = 'padding:8px 12px;cursor:pointer;border-radius:10px;font-size:13px;font-family:inherit;flex-shrink:0;color:var(--dsw-alias-label-primary,#eee);background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1))';
+    return '' +
+      '<div style="padding:2px 20px 18px">' +
+        // --- автопилот
+        '<div style="' + ROW + '">' +
+          '<div style="' + TXT + '"><div style="' + TIT + '">' + T('Авто-пилот', 'Auto-pilot') + '</div>' +
+          '<div style="' + SUB + '">' + T('Агент редактирует проект напрямую: читает, пишет, запускает команды', 'Agent edits your project directly: reads files, writes changes, runs commands') + '</div></div>' +
+          '<button type="button" role="switch" aria-checked="false" class="ds-switch dsx-set-pilot">' +
+            '<div class="ds-switch-thumb"></div></button>' +
         '</div>' +
-      '</div>' +
-      // --- раздел: начальный промпт
-      '<div style="padding:18px 20px 0">' +
-        '<div style="font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#eee)">Начальный промпт (правила для ИИ)</div>' +
-        '<div style="margin-top:4px;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-tertiary,#888)">' +
-          'Уходит скрытно с каждым сообщением при включённом автопилоте: стиль кода, язык, запреты. ' +
-          'Например: «Отвечай коротко. Код — C++17, комментарии на русском, отступы 4 пробела».' +
+        // --- папка проекта
+        '<div style="' + ROW + '">' +
+          '<div style="' + TXT + '"><div style="' + TIT + '">' + T('Папка проекта', 'Project folder') + '</div>' +
+          '<div class="dsx-cur-folder" style="' + SUB + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div></div>' +
+          '<button class="dsx-modal-pick" style="' + BTN + '">' + T('Сменить…', 'Change…') + '</button>' +
+          '<button class="dsx-set-forget" title="' + T('Убрать сохранённый доступ к папке', 'Drop saved folder access') + '" style="' + GHOST + '">' + T('Забыть', 'Forget') + '</button>' +
         '</div>' +
-        '<textarea class="dsx-set-rules" rows="5" placeholder="Твои правила для DeepSeek… (можно пусто)" ' +
-        'style="width:100%;box-sizing:border-box;margin-top:8px;padding:10px 12px;resize:vertical;' +
-        'border-radius:10px;font-size:13px;line-height:1.5;font-family:inherit;' +
-        'background:var(--dsw-alias-bg-layer-2,#1d1f24);color:var(--dsw-alias-label-primary,#f5f5f5);' +
-        'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1));outline:none"></textarea>' +
-      '</div>' +
-      // --- раздел: авто-лимит ходов
-      '<div style="padding:18px 20px 0">' +
-        '<div style="font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#eee)">Лимит авто-ходов за сессию</div>' +
-        '<div style="margin-top:4px;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-tertiary,#888)">' +
-          'Сколько служебных реплик агент может слать подряд без тебя. 0 = без лимита.' +
+        // --- правила
+        '<div style="padding:14px 0;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.06))">' +
+          '<div style="' + TIT + '">' + T('Начальный промпт (правила для ИИ)', 'Initial prompt (rules for the AI)') + '</div>' +
+          '<div style="' + SUB + '">' + T('Уходит скрытно с каждым сообщением при включённом автопилоте: стиль кода, язык, запреты. Например: «Отвечай коротко. Код — C++17, комментарии на русском, отступы 4 пробела».',
+            'Sent invisibly with every message while auto-pilot is on: code style, language, bans. E.g. “Answer briefly. C++17 code, Russian comments, 4-space indent”.') + '</div>' +
+          '<textarea class="dsx-set-rules" rows="5" placeholder="' + T('Твои правила для DeepSeek… (можно пусто)', 'Your rules for DeepSeek… (can be empty)') + '" style="width:100%;box-sizing:border-box;margin-top:8px;padding:10px 12px;resize:vertical;line-height:1.5;' + INP + '"></textarea>' +
         '</div>' +
-        '<input class="dsx-set-limit" type="number" min="0" max="999" step="1" ' +
-        'style="margin-top:8px;width:110px;padding:8px 10px;border-radius:10px;font-size:13px;font-family:inherit;' +
-        'background:var(--dsw-alias-bg-layer-2,#1d1f24);color:var(--dsw-alias-label-primary,#f5f5f5);' +
-        'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1));outline:none">' +
-      '</div>' +
-      // --- раздел: ПАМЯТЬ (заметки для ИИ)
-      '<div style="padding:18px 20px 0">' +
-        '<div style="font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#eee)">Память проекта (заметки для ИИ)</div>' +
-        '<div style="margin-top:4px;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-tertiary,#888)">' +
-          'Загрузи знания: поля, структуры, протоколы, как устроен проект. Контекст не раздувается — ' +
-          'модель сама заглядывает сюда маркером MEMORY SEARCH, когда чего-то не знает; в промпте лишь оглавление.' +
+        // --- лимит авто-ходов
+        '<div style="' + ROW + '">' +
+          '<div style="' + TXT + '"><div style="' + TIT + '">' + T('Лимит авто-ходов за сессию', 'Auto-turn limit per session') + '</div>' +
+          '<div style="' + SUB + '">' + T('Сколько служебных реплик агент может слать подряд без тебя. 0 = без лимита.', 'How many service replies the agent may send in a row by itself. 0 = unlimited.') + '</div></div>' +
+          '<input class="dsx-set-limit" type="number" min="0" max="999" step="1" style="width:96px;padding:8px 10px;text-align:center;flex-shrink:0;' + INP + '">' +
         '</div>' +
-        '<div class="dsx-mem-list" style="margin-top:8px;max-height:230px;overflow-y:auto;display:flex;flex-direction:column;gap:8px"></div>' +
-        '<button class="dsx-mem-add" style="margin-top:8px;padding:8px 14px;cursor:pointer;border-radius:10px;font-size:13px;font-family:inherit;' +
-        'color:var(--dsw-alias-label-primary,#eee);background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));' +
-        'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1))">+ Добавить заметку</button>' +
-      '</div>' +
-      // --- раздел: ТЕСТ УСТОЙЧИВОСТИ (jailbreak-check владельца)
-      '<div style="padding:18px 20px 0">' +
-        '<label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;font-weight:600;' +
-        'color:var(--dsw-alias-label-primary,#eee)">' +
-          '<input type="checkbox" class="dsx-set-jb" style="width:15px;height:15px;accent-color:#5686fe">' +
-          ' Тест устойчивости (jailbreak-check)' +
-        '</label>' +
-        '<div style="margin-top:4px;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-tertiary,#888)">' +
-          'Для проверки СВОЕЙ модели: вставь сюда свой тестовый промпт — он будет подшиваться ' +
-          'в конец скрытого контекста, и ты увидишь, поддаётся ли модель. Пустое поле = ничего не уходит.' +
+        // --- память
+        '<div style="padding:14px 0;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.06))">' +
+          '<div style="' + TIT + '">' + T('Память проекта (заметки для ИИ)', 'Project memory (notes for the AI)') + '</div>' +
+          '<div style="' + SUB + '">' + T('Загрузи знания: поля, структуры, протоколы, как устроен проект. Контекст не раздувается — модель сама заглядывает сюда маркером MEMORY SEARCH; в промпте лишь оглавление.',
+            'Preload knowledge: fields, structures, protocols, how the project works. The context stays slim — the model pulls details via MEMORY SEARCH; only the index lives in the prompt.') + '</div>' +
+          '<div class="dsx-mem-list" style="margin-top:8px;max-height:230px;overflow-y:auto;display:flex;flex-direction:column;gap:8px"></div>' +
+          '<button class="dsx-mem-add" style="margin-top:8px;' + GHOST + '">' + T('+ Добавить заметку', '+ Add note') + '</button>' +
         '</div>' +
-        '<textarea class="dsx-set-jbtext" rows="4" placeholder="Твой тестовый промпт для jailbreak-check…" ' +
-        'style="width:100%;box-sizing:border-box;margin-top:8px;padding:10px 12px;resize:vertical;' +
-        'border-radius:10px;font-size:13px;line-height:1.5;font-family:inherit;' +
-        'background:var(--dsw-alias-bg-layer-2,#1d1f24);color:var(--dsw-alias-label-primary,#f5f5f5);' +
-        'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1));outline:none"></textarea>' +
-      '</div>' +
-      // --- раздел: мелочи
-      '<div style="padding:16px 20px 0">' +
-        '<label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;' +
-        'color:var(--dsw-alias-label-secondary,#aaa)">' +
-          '<input type="checkbox" class="dsx-set-rows" style="width:15px;height:15px;accent-color:#5686fe">' +
-          ' Показывать строки статуса под ответом DeepSeek («Прочитано», «Применено»)' +
-        '</label>' +
-      '</div>' +
-      // --- футер
-      '<div style="display:flex;align-items:center;gap:10px;padding:18px 20px 20px">' +
-        '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek Extended · v1.11.0</div>' +
-        '<button class="dsx-set-cancel" style="padding:10px 16px;cursor:pointer;border-radius:12px;font-size:14px;' +
-        'font-family:inherit;color:var(--dsw-alias-label-primary,#eee);' +
-        'background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));' +
-        'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1))">Отмена</button>' +
-        '<button class="dsx-set-save" style="padding:10px 18px;border:none;cursor:pointer;border-radius:12px;' +
-        'font-size:14px;font-weight:600;font-family:inherit;color:#fff;' +
-        'background:var(--dsw-alias-brand-primary,#5686fe)">Сохранить</button>' +
+        // --- строки о ходе работы
+        '<div style="' + ROW + '">' +
+          '<div style="' + TXT + '"><div style="' + TIT + '">' + T('Строки о ходе работы', 'Work-status lines') + '</div>' +
+          '<div style="' + SUB + '">' + T('«Прочитано: app.py», «Команда: …» под ответами модели', '“Read: app.py”, “Command: …” lines under model replies') + '</div></div>' +
+          '<button type="button" role="switch" aria-checked="false" class="ds-switch dsx-set-rows">' +
+            '<div class="ds-switch-thumb"></div></button>' +
+        '</div>' +
+        // --- jailbreak-check
+        '<div style="padding:14px 0 6px">' +
+          '<div style="' + ROW + ';border-bottom:none;min-height:0;padding:0 0 8px">' +
+            '<div style="' + TXT + '"><div style="' + TIT + '">' + T('Тест устойчивости (jailbreak-check)', 'Robustness test (jailbreak-check)') + '</div>' +
+            '<div style="' + SUB + '">' + T('Для проверки СВОЕЙ модели: тестовый промпт подшивается в конец скрытого контекста — смотри, поддаётся ли модель. Пустое поле = ничего не уходит.',
+              'For testing YOUR model: the test prompt is appended to the hidden context — see if the model gives in. Empty field = nothing is sent.') + '</div></div>' +
+            '<button type="button" role="switch" aria-checked="false" class="ds-switch dsx-set-jb">' +
+              '<div class="ds-switch-thumb"></div></button>' +
+          '</div>' +
+          '<textarea class="dsx-set-jbtext" rows="4" placeholder="' + T('Твой тестовый промпт для jailbreak-check…', 'Your test prompt for the jailbreak-check…') + '" style="width:100%;box-sizing:border-box;margin-top:6px;padding:10px 12px;resize:vertical;line-height:1.5;' + INP + '"></textarea>' +
+        '</div>' +
+        // --- футер
+        '<div style="display:flex;align-items:center;gap:10px;padding-top:12px">' +
+          '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek IDE · built-in agent</div>' +
+          '<button class="dsx-set-save" style="' + BTN + ';padding:10px 18px;border-radius:12px;font-size:14px">' + T('Сохранить', 'Save') + '</button>' +
+        '</div>' +
       '</div>';
-    bindModalChrome(card);
+  }
+
+  function bindAgentSettings(root) {
     syncFolderLabels();
-    var ta = card.querySelector('.dsx-set-rules');
-    var cb = card.querySelector('.dsx-set-rows');
-    var jb = card.querySelector('.dsx-set-jb');
-    var jt = card.querySelector('.dsx-set-jbtext');
+    var swP = root.querySelector('.dsx-set-pilot');
+    setDsSwitch(swP, !!cfg.pilot);
+    swP.onclick = function () {
+      cfg.pilot = !cfg.pilot; saveCfg(); setDsSwitch(swP, cfg.pilot);
+      if (cfg.pilot && !st.folderReady) showFolderModal();
+    };
+    root.querySelector('.dsx-set-forget').onclick = function () {
+      fsCall('forget').then(function () {
+        st.folderReady = false; st.folderName = ''; st.bigPrompt = ''; st.primedOnce = false;
+        sessionStorage.removeItem('dsx:primed');
+        syncNativeToggle(); syncFolderLabels();
+        toast(T('Папка забыта', 'Folder forgotten'));
+      });
+    };
+    var ta = root.querySelector('.dsx-set-rules');
+    var swR = root.querySelector('.dsx-set-rows');
+    var swJ = root.querySelector('.dsx-set-jb');
+    var jt = root.querySelector('.dsx-set-jbtext');
     ta.value = cfg.rules || '';
-    cb.checked = cfg.statusRows !== false;
-    jb.checked = !!cfg.jbTest;
+    setDsSwitch(swR, cfg.statusRows !== false);
+    setDsSwitch(swJ, !!cfg.jbTest);
     jt.value = cfg.jbText || '';
-    var limIn = card.querySelector('.dsx-set-limit');
+    var limIn = root.querySelector('.dsx-set-limit');
     limIn.value = (cfg.autolimit === 0) ? '0' : String(cfg.autolimit || 12);
-    var memList = card.querySelector('.dsx-mem-list');
+    var memList = root.querySelector('.dsx-mem-list');
     function addMemCard(n) {
       var wrap = document.createElement('div');
       wrap.className = 'dsx-mem-card';
@@ -1634,7 +1646,7 @@ tree || '(структура недоступна — спросите чере�
         'border-radius:10px;padding:8px;background:var(--dsw-alias-bg-layer-2,#1d1f24)';
       var ti = document.createElement('input');
       ti.className = 'dsx-mem-t'; ti.type = 'text';
-      ti.placeholder = 'Заголовок («Пакеты протокола», «Структуры данных»…)';
+      ti.placeholder = T('Заголовок («Пакеты протокола», «Структуры данных»…)', 'Title (“Protocol packets”, “Data structures”…)');
       ti.value = (n && n.t) || '';
       ti.style.cssText = 'width:100%;box-sizing:border-box;padding:7px 10px;border-radius:8px;' +
         'font-size:12.5px;font-family:inherit;background:transparent;' +
@@ -1642,14 +1654,14 @@ tree || '(структура недоступна — спросите чере�
         'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));outline:none';
       var xa = document.createElement('textarea');
       xa.className = 'dsx-mem-x'; xa.rows = 3;
-      xa.placeholder = 'Суть: поля, форматы, как что работает…';
+      xa.placeholder = T('Суть: поля, форматы, как что работает…', 'Core info: fields, formats, how things work…');
       xa.value = (n && n.x) || '';
       xa.style.cssText = 'width:100%;box-sizing:border-box;margin-top:6px;padding:7px 10px;' +
         'resize:vertical;border-radius:8px;font-size:12.5px;line-height:1.45;font-family:inherit;' +
         'background:transparent;color:var(--dsw-alias-label-primary,#f5f5f5);' +
         'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));outline:none';
       var del = document.createElement('button');
-      del.textContent = 'Удалить';
+      del.textContent = T('Удалить', 'Delete');
       del.style.cssText = 'margin-top:6px;padding:5px 10px;cursor:pointer;border-radius:8px;' +
         'font-size:12px;font-family:inherit;color:#ff8f8f;background:transparent;' +
         'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12))';
@@ -1658,36 +1670,95 @@ tree || '(структура недоступна — спросите чере�
       memList.appendChild(wrap);
     }
     (Array.isArray(cfg.memory) ? cfg.memory : []).forEach(addMemCard);
-    card.querySelector('.dsx-mem-add').onclick = function () { addMemCard({ t: '', x: '' }); };
-    card.querySelector('.dsx-set-cancel').onclick = closeModals;
-    card.querySelector('.dsx-set-save').onclick = function () {
+    root.querySelector('.dsx-mem-add').onclick = function () { addMemCard({ t: '', x: '' }); };
+    root.querySelector('.dsx-set-save').onclick = function () {
       cfg.rules = ta.value.slice(0, 4000);
-      cfg.statusRows = !!cb.checked;
-      cfg.jbTest = !!jb.checked;
-      cfg.jbText = jt.value.slice(0, 8000);
-      var limVal = parseInt(limIn.value, 10);
-      cfg.autolimit = (isNaN(limVal) || limVal < 0) ? 12 : Math.min(limVal, 999);
-      var mem = [];
-      card.querySelectorAll('.dsx-mem-card').forEach(function (c2) {
-        var t = c2.querySelector('.dsx-mem-t').value.slice(0, 120);
-        var x = c2.querySelector('.dsx-mem-x').value.slice(0, 12000);
-        if (t.trim() || x.trim()) mem.push({ t: t, x: x });
+      cfg.statusRows = swR.classList.contains('ds-switch--checked');
+      cfg.jbTest = swJ.classList.contains('ds-switch--checked');
+      cfg.jbText = jt.value.slice(0, 3000);
+      var lv = parseInt(limIn.value, 10);
+      cfg.autolimit = (isNaN(lv) || lv < 0) ? 12 : (lv > 999 ? 999 : lv);
+      var notes = [];
+      memList.querySelectorAll('.dsx-mem-card').forEach(function (w) {
+        var t = w.querySelector('.dsx-mem-t').value.trim();
+        var x = w.querySelector('.dsx-mem-x').value.trim();
+        if (t || x) notes.push({ t: t.slice(0, 120), x: x.slice(0, 12000) });
       });
-      cfg.memory = clampMemory(mem);
-      saveCfg(); closeModals();
-      toast('Настройки сохранены');
+      cfg.memory = clampMemory(notes);
+      saveCfg();
       refreshPrompt(); // пересобрать промпт с новыми правилами
+      toast(T('Сохранено', 'Saved'));
+      closeModals();
     };
-    card.querySelector('.dsx-set-forget').onclick = function () {
-      fsCall('forget').then(function () {
-        st.folderReady = false; st.folderName = ''; st.bigPrompt = ''; st.primedOnce = false;
-        sessionStorage.removeItem('dsx:primed');
-        syncNativeToggle(); syncFolderLabels();
-        toast('Папка забыта');
-      });
-    };
-    // «Сменить…» перехватит fsbridge в MAIN-мире (.dsx-modal-pick).
   }
+
+  // ---------------- наша модалка настроек (резервный путь; сайт-таб — основной)
+  function showSettingsModal() {
+    var card = overlayBase(560);
+    card.innerHTML = modalHeader(T('Настройки агента', 'Agent settings')) + agentSettingsHtml();
+    bindModalChrome(card);
+    bindAgentSettings(card);
+  }
+
+  // ---------------- вкладка «Агент» ВНУТРИ нативного Settings сайта
+  function findSiteSettingsModal() {
+    var title = document.querySelector('.ds-modal-content__title');
+    if (!title) return null;
+    var tt = (title.textContent || '').trim();
+    if (tt !== 'Settings' && tt !== 'Настройки') return null;
+    return title.closest('.ds-modal-content');
+  }
+  function ensureSiteSettingsTab() {
+    var modal = findSiteSettingsModal();
+    if (!modal) return;
+    var rail = modal.querySelector('.d316d158');
+    var content = modal.querySelector('.ds-scroll-area__content');
+    if (!rail || !content) return;
+    // миграция: снести старую пилюлю у композера и шестерёнку, если остались
+    document.querySelectorAll('.dsx-pilot-tg,.dsx-gear-btn').forEach(function (n) { n.remove(); });
+    if (rail.querySelector('.dsx-site-tab')) return;
+    var srcBtn = rail.querySelector('.ds-button');
+    if (!srcBtn) return;
+    var tab = srcBtn.cloneNode(true);
+    tab.classList.add('dsx-site-tab');
+    tab.classList.remove('_699d482');
+    var lbl = tab.querySelector('.ds-button__content');
+    if (lbl) lbl.textContent = T('Агент', 'Agent');
+    tab.addEventListener('click', function () {
+      var pane = content.querySelector('.dsx-agent-pane');
+      if (!pane) {
+        pane = document.createElement('div');
+        pane.className = 'dsx-agent-pane';
+        pane.style.cssText = 'font-size:14px;color:var(--dsw-alias-label-primary,#eee)';
+        pane.innerHTML = agentSettingsHtml();
+        bindAgentSettings(pane);
+        content.appendChild(pane);
+      }
+      Array.prototype.forEach.call(content.children, function (c) {
+        if (c === pane) { c.style.display = ''; }
+        else if (c.style.display !== 'none') { c.dataset.dsxHidden = '1'; c.style.display = 'none'; }
+      });
+      rail.querySelectorAll('.ds-button').forEach(function (b) { b.classList.remove('_699d482'); });
+      tab.classList.add('_699d482');
+    });
+    rail.addEventListener('click', function (ev) {
+      var b = ev.target && ev.target.closest ? ev.target.closest('.ds-button') : null;
+      if (!b || b.classList.contains('dsx-site-tab')) return;
+      // клик по родному табу: вернуть сайтовый контент
+      Array.prototype.forEach.call(content.children, function (c) {
+        if (c.classList.contains('dsx-agent-pane')) { c.style.display = 'none'; return; }
+        if (c.dataset.dsxHidden === '1') { c.style.display = ''; delete c.dataset.dsxHidden; }
+      });
+      var our = rail.querySelector('.dsx-site-tab');
+      if (our) our.classList.remove('_699d482');
+    }, true);
+    rail.appendChild(tab);
+    if (!sessionStorage.getItem('dsx:hintTabs')) {
+      sessionStorage.setItem('dsx:hintTabs', '1');
+      toast(T('Настройки агента — вкладка «Агент» здесь же', 'Agent settings — the “Agent” tab right here'));
+    }
+  }
+  setInterval(ensureSiteSettingsTab, 1200);
 
   // ---------------- события моста (папка выбрана жестом в MAIN-мире)
   function onBridgeEvent(m) {
@@ -1695,12 +1766,12 @@ tree || '(структура недоступна — спросите чере�
       st.folderReady = true; st.folderName = m.name || '';
       closeModals(); // модалка «Выбрать папку» уходит сразу после Qt-диалога
       syncNativeToggle(); syncFolderLabels();
-      toast('Проект подключён: ' + st.folderName);
+      toast(T('Проект подключён: ', 'Project connected: ') + st.folderName);
       refreshPrompt();
     } else if (m.ev === 'folderError') {
       var err = String(m.error || '');
       if (err.indexOf('AbortError') < 0 && err.toLowerCase().indexOf('abort') < 0)
-        toast('Не вышло открыть папку: ' + err);
+        toast(T('Не вышло открыть папку: ', 'Could not open the folder: ') + err);
     }
   }
 
@@ -1794,7 +1865,7 @@ tree || '(структура недоступна — спросите чере�
       // подскажем, что делать, и попробуем тихо восстановить в фоне.
       if (Date.now() - lastFolderToast > 15000) {
         lastFolderToast = Date.now();
-        toast('Кликни по «Авто-пилот» — нужен доступ к папке проекта');
+        toast(T('Включи автопилот: Settings → «Агент» (нужна папка проекта)', 'Enable auto-pilot: Settings → “Agent” (a project folder is required)'));
       }
       console.log('[DSX] пропуск: папка не подключена (folderReady=false)');
       fsCall('ensure').then(function (en) {
@@ -1803,13 +1874,13 @@ tree || '(структура недоступна — спросите чере�
       return;
     }
     var prefix, chip;
-    if (st.primedOnce) { prefix = shortPrefix(); chip = 'Автопилот'; }
-    else if (st.bigPrompt) { prefix = st.bigPrompt; chip = 'Контекст проекта загружен'; }
-    else { prefix = shortPrefix(); chip = 'Автопилот'; }
+    if (st.primedOnce) { prefix = shortPrefix(); chip = T('Автопилот', 'Autopilot'); }
+    else if (st.bigPrompt) { prefix = st.bigPrompt; chip = T('Контекст проекта загружен', 'Project context loaded'); }
+    else { prefix = shortPrefix(); chip = T('Автопилот', 'Autopilot'); }
     nativeSetValue(editor, wrapStealth(prefix, chip, v.replace(/^\s+/, '')));
     if (!st.primedOnce && st.bigPrompt) {
       st.primedOnce = true; sessionStorage.setItem('dsx:primed', '1');
-      toast('Контекст проекта подшит к первому сообщению');
+      toast(T('Контекст проекта подшит к первому сообщению', 'Project context attached to the first message'));
     }
     // новое сообщение юзера = новый цикл: дедуп NEED сбрасываем (в т.ч. на диске)
     st.autoCount = 0; st.sentFiles = {}; st.sentSearches = {}; st.sentInfos = {}; st.sentRanges = {}; st.sentWeb = {}; st.sentDl = {}; st.sentGrep = {}; sentSave();
@@ -1924,30 +1995,30 @@ tree || '(структура недоступна — спросите чере�
   }, 1000);
 
   // ---------------- автоклик «Continue/Продолжить» (оборванная генерация)
-  // DeepSeek рисует чип-кнопку, когда ответ обрывается; пока мы ждём хвост
-  // генерации после служебного — жмём её сами, иначе авто-цикл встаёт молча.
   var lastContinueAt = 0;
   function clickContinueIfAny() {
     if (!cfg.pilot) return;
-    if (!st.waitingAnswer && !st.busy) return;       // не наша очередь — не наши кнопки
-    if (Date.now() - lastContinueAt < 8000) return;  // анти-спам
-    var items = document.querySelectorAll('[data-virtual-list-item-key]');
-    if (!items.length) return;
-    var tail = items[items.length - 1];              // только хвост беседы
-    var cands = tail.querySelectorAll('div[role="button"], button');
-    for (var i = cands.length - 1; i >= 0; --i) {
-      var el = cands[i];
-      if (!el || !el.isConnected || el.offsetParent === null) continue;
-      if (el.closest('._871cbca')) continue;         // композер — запретная зона
-      var t = (el.textContent || '').trim();
-      if (t !== 'Continue' && t !== 'Продолжить' && t !== 'Continue generating') continue;
-      var ev = new MouseEvent('click', { bubbles: true });
-      ev.__dsxBypass = true;
-      el.dispatchEvent(ev);
-      lastContinueAt = Date.now();
-      console.log('[DSX] нажал «Continue» — генерация продолжается');
-      break;
+    if (Date.now() - lastContinueAt < 8000) return; // один клик в 8 сек максимум
+    // родной чип «Continue» сайта — точный селектор из разметки
+    var btn = document.querySelector('._8e85838 [role="button"]');
+    if (!btn || !btn.isConnected || btn.offsetParent === null) {
+      btn = null; // fallback: ищем подпись в хвосте чата
+      var cands = document.querySelectorAll('div[role="button"], button');
+      for (var i = cands.length - 1; i >= 0; --i) {
+        var el = cands[i];
+        if (!el || !el.isConnected || el.offsetParent === null) continue;
+        if (el.closest('._871cbca')) continue; // наш индикатор «Думаю…» — не то
+        var t = (el.textContent || '').trim();
+        if (t !== 'Continue' && t !== 'Продолжить' && t !== 'Continue generating') continue;
+        btn = el; break;
+      }
     }
+    if (!btn) return;
+    var ev = new MouseEvent('click', { bubbles: true });
+    ev.__dsxBypass = true;
+    btn.dispatchEvent(ev);
+    lastContinueAt = Date.now();
+    console.log('[DSX] нажал «Continue» — генерация продолжается');
   }
   setInterval(function () { try { clickContinueIfAny(); } catch (e) {} }, 1500);
 
@@ -1955,7 +2026,7 @@ tree || '(структура недоступна — спросите чере�
   // отправки на сервер, чтобы после перезагрузки модель их видела)
   async function injectStealth(real, logTag) {
     var el = findEditor();
-    if (!el) { toast('Не нашёл поле ввода чата'); return false; }
+    if (!el) { toast(T('Не нашёл поле ввода чата', 'Chat input not found')); return false; }
     el.focus();
     nativeSetValue(el, wrapStealth(real, logTag, ''));
     await new Promise(function (r) { setTimeout(r, 320); });
@@ -2099,11 +2170,11 @@ tree || '(структура недоступна — спросите чере�
           }
           out.push('You requested file content of «' + p + '» (lines are numbered; use those numbers with insert_lines/replace_lines).');
           out.push('FILE "' + p + '"\n```\n' + bodyTxt + '\n```');
-          if (!rq.bracket) rows.push('Прочитано: ' + base(p));
+          if (!rq.bracket) rows.push(T('Прочитано: ', 'Read: ') + base(p));
         } else {
           out.push('FILE "' + p + '" — READ ERROR: ' + (r.error || 'не читается') +
                    '\n(проверьте имя через [<{NEED SEARCH: часть имени}>])');
-          if (!rq.bracket) rows.push('Не удалось прочитать: ' + base(p));
+          if (!rq.bracket) rows.push(T('Не удалось прочитать: ', 'Failed to read: ') + base(p));
         }
         done++;
       } else if (rq.kind === 'FILE INFO') {
@@ -2117,10 +2188,10 @@ tree || '(структура недоступна — спросите чере�
                    (inf.data.lines > 600 || inf.data.lines < 0
                      ? ' Large file — read it chunk-by-chunk via [<{READ RANGE: ' + ip + ':1-400}>], [<{READ RANGE: ' + ip + ':401-800}>] etc.'
                      : ''));
-          if (!rq.bracket) rows.push('Размер: ' + base(ip) + ' — ' + lns + ' строк');
+          if (!rq.bracket) rows.push(T('Размер: ', 'Size: ') + base(ip) + ' — ' + lns + ' строк');
         } else {
           out.push('INFO "' + ip + '" — ERROR: ' + (inf.error || 'не читается'));
-          if (!rq.bracket) rows.push('Не удалось осмотреть: ' + base(ip));
+          if (!rq.bracket) rows.push(T('Не удалось осмотреть: ', 'Failed to inspect: ') + base(ip));
         }
         done++;
       } else if (rq.kind === 'READ RANGE') {
@@ -2134,10 +2205,10 @@ tree || '(структура недоступна — спросите чере�
           var bt = rr.data.text;
           if (bt.length > 60000) bt = bt.slice(0, 60000) + '\n…(truncated at 60k chars)';
           out.push('RANGE "' + rp + '" — lines ' + rf + '-' + rt + ' of ' + rr.data.lines + ' total:\n```\n' + bt + '\n```');
-          if (!rq.bracket) rows.push('Прочитано: ' + base(rp) + ' (' + rf + '–' + rt + ')');
+          if (!rq.bracket) rows.push(T('Прочитано: ', 'Read: ') + base(rp) + ' (' + rf + '–' + rt + ')');
         } else {
           out.push('RANGE "' + rp + '" — READ ERROR: ' + (rr.error || 'не читается'));
-          if (!rq.bracket) rows.push('Не удалось прочитать: ' + base(rp));
+          if (!rq.bracket) rows.push(T('Не удалось прочитать: ', 'Failed to read: ') + base(rp));
         }
         done++;
       } else if (rq.kind === 'MEMORY SEARCH') {
@@ -2156,15 +2227,15 @@ tree || '(структура недоступна — спросите чере�
                    (tl ? ' — titles: ' + tl + '. Retry with different or simpler keywords.'
                        : ' and it is EMPTY — ask the user to fill Память in extension settings.'));
         }
-        if (!rq.bracket) rows.push('Память «' + mq + '»' + (hits.length ? ': найдено' : ' — пусто'));
+        if (!rq.bracket) rows.push(T('Память «', 'Memory “') + mq + '»' + (hits.length ? ': найдено' : ' — пусто'));
         done++;
       } else if (rq.kind === 'WEB FETCH') {
         var wu = rq.arg;
         if (st.sentWeb[wu]) continue;
         st.sentWeb[wu] = 1;
-        var fin1 = progress ? progress('Загрузка: ' + hostOf(wu) + '…') : null;
+        var fin1 = progress ? progress(T('Загрузка: ', 'Fetching: ') + hostOf(wu) + '…') : null;
         var wf = await webFetchCall(wu);
-        if (fin1) fin1(wf.ok ? 'Загружено: ' + hostOf(wu) : 'Не загрузилось: ' + hostOf(wu));
+        if (fin1) fin1(wf.ok ? T('Загружено: ', 'Fetched: ') + hostOf(wu) : T('Не загрузилось: ', 'Fetch failed: ') + hostOf(wu));
         if (wf.ok) {
           var wtxt = htmlToText(wf.text || '', wf.type || '');
           if (!wtxt.trim()) {
@@ -2174,10 +2245,10 @@ tree || '(структура недоступна — спросите чере�
             if (wtxt.length > 25000) wtxt = wtxt.slice(0, 25000) + '\n…(truncated at 25k chars; fetch a more specific page if needed)';
             out.push('PAGE "' + wu + '" (HTTP ' + wf.status + ', ' + (wf.type || '?') + '):\n```\n' + wtxt + '\n```');
           }
-          if (!rq.bracket) rows.push('Загружено: ' + hostOf(wu));
+          if (!rq.bracket) rows.push(T('Загружено: ', 'Fetched: ') + hostOf(wu));
         } else {
           out.push('PAGE "' + wu + '": FETCH FAILED — ' + (wf.error || 'сеть недоступна'));
-          if (!rq.bracket) rows.push('Не загрузилось: ' + hostOf(wu));
+          if (!rq.bracket) rows.push(T('Не загрузилось: ', 'Fetch failed: ') + hostOf(wu));
         }
         done++;
       } else if (rq.kind === 'WEB DOWNLOAD') {
@@ -2185,25 +2256,25 @@ tree || '(структура недоступна — спросите чере�
         var dkey = durl + '|' + dpath;
         if (st.sentDl[dkey]) continue;
         st.sentDl[dkey] = 1;
-        var finD = progress ? progress('Скачивает: ' + base(dpath) + ' ← ' + hostOf(durl) + '…') : null;
+        var finD = progress ? progress(T('Скачивает: ', 'Downloading: ') + base(dpath) + ' ← ' + hostOf(durl) + '…') : null;
         var dwn = await webFetchCall(durl, true);
         if (dwn.ok && dwn.b64) {
           var wb = await fsCall('writeB64', { path: dpath, b64: dwn.b64 });
           if (wb.ok) {
             var kb = dwn.size > 1048576 ? (dwn.size / 1048576).toFixed(1) + ' MB' : Math.round(dwn.size / 1024) + ' KB';
             out.push('DOWNLOAD saved: «' + dpath + '» — ' + dwn.size + ' bytes (' + (dwn.type || '?') + ') from ' + durl + '. The file is in the project now.');
-            if (!rq.bracket) rows.push('Скачано: ' + base(dpath) + ' (' + kb + ')');
-            if (finD) finD('Скачано: ' + base(dpath) + ' (' + kb + ')');
+            if (!rq.bracket) rows.push(T('Скачано: ', 'Downloaded: ') + base(dpath) + ' (' + kb + ')');
+            if (finD) finD(T('Скачано: ', 'Downloaded: ') + base(dpath) + ' (' + kb + ')');
             refreshPrompt();
           } else {
             out.push('DOWNLOAD «' + dpath + '»: write FAILED — ' + (wb.error || '?'));
-            if (!rq.bracket) rows.push('Не сохранилось: ' + base(dpath));
-            if (finD) finD('Не сохранилось: ' + base(dpath));
+            if (!rq.bracket) rows.push(T('Не сохранилось: ', 'Save failed: ') + base(dpath));
+            if (finD) finD(T('Не сохранилось: ', 'Save failed: ') + base(dpath));
           }
         } else {
           out.push('DOWNLOAD from ' + durl + ': FETCH FAILED — ' + (dwn.error || '?'));
-          if (!rq.bracket) rows.push('Не скачалось: ' + hostOf(durl));
-          if (finD) finD('Не скачалось: ' + hostOf(durl));
+          if (!rq.bracket) rows.push(T('Не скачалось: ', 'Download failed: ') + hostOf(durl));
+          if (finD) finD(T('Не скачалось: ', 'Download failed: ') + hostOf(durl));
         }
         done++;
       } else if (rq.kind === 'WEB GREP') {
@@ -2211,7 +2282,7 @@ tree || '(структура недоступна — спросите чере�
         var gkey = gurl + '|' + gq.toLowerCase();
         if (st.sentGrep[gkey]) continue;
         st.sentGrep[gkey] = 1;
-        var finG = progress ? progress('Ищет в инете: «' + gq + '» на ' + hostOf(gurl) + '…') : null;
+        var finG = progress ? progress(T('Ищет в инете: «', 'Searching the web: “') + gq + '» на ' + hostOf(gurl) + '…') : null;
         var gp = await webFetchCall(gurl);
         if (gp.ok) {
           var gsrc = String(gp.type || '').indexOf('html') >= 0 ? htmlToText(gp.text || '', gp.type) : String(gp.text || '');
@@ -2222,25 +2293,25 @@ tree || '(структура недоступна — спросите чере�
             for (gi = gf; gi <= gt; ++gi) gout.push('L' + gi + ': ' + glines[gi - 1].slice(0, 300));
             if (+lm[2] > gt) gout.push('…(дальше ' + gt + ' строк нет: всего ' + glines.length + ')');
             out.push('GREP "' + gurl + '" — lines ' + gf + '-' + gt + ' of ' + glines.length + ':\n```\n' + gout.join('\n').slice(0, 20000) + '\n```');
-            if (finG) finG('Прочитано в инете: строки ' + gf + '–' + gt + ' (' + hostOf(gurl) + ')');
-            if (!rq.bracket) rows.push('Строки ' + gf + '–' + gt + ': ' + hostOf(gurl));
+            if (finG) finG(T('Прочитано в инете: строки ', 'Read on the web: lines ') + gf + '–' + gt + ' (' + hostOf(gurl) + ')');
+            if (!rq.bracket) rows.push(T('Строки ', 'Lines ') + gf + '–' + gt + ': ' + hostOf(gurl));
           } else { // подстрока → ПОЛНЫЕ строки с номерами
             for (gi = 0; gi < glines.length && gout.length < 40; ++gi) {
               if (glines[gi].indexOf(gq) >= 0) gout.push('L' + (gi + 1) + ': ' + glines[gi].trim().slice(0, 300));
             }
             if (gout.length) {
               out.push('GREP "' + gurl + '" for «' + gq + '» — ' + gout.length + ' hit(s), FULL lines:\n```\n' + gout.join('\n').slice(0, 20000) + '\n```');
-              if (finG) finG('Найдено в инете: «' + gq + '» — ' + gout.length + ' совпад.');
+              if (finG) finG(T('Найдено в инете: «', 'Found on the web: “') + gq + '» — ' + gout.length + ' совпад.');
             } else {
               out.push('GREP "' + gurl + '" for «' + gq + '» — no hits on the page (' + glines.length + ' lines scanned). Try another spelling or fetch the page first.');
-              if (finG) finG('Не найдено в инете: «' + gq + '»');
+              if (finG) finG(T('Не найдено в инете: «', 'Nothing found on the web: “') + gq + '»');
             }
-            if (!rq.bracket) rows.push('Искал в инете: «' + gq + '»' + (gout.length ? ' — ' + gout.length + ' совпад.' : ' — пусто'));
+            if (!rq.bracket) rows.push(T('Искал в инете: «', 'Searched the web: “') + gq + '»' + (gout.length ? ' — ' + gout.length + ' совпад.' : ' — пусто'));
           }
         } else {
           out.push('GREP "' + gurl + '": FETCH FAILED — ' + (gp.error || '?'));
-          if (finG) finG('Не открылось: ' + hostOf(gurl));
-          if (!rq.bracket) rows.push('Не открылось: ' + hostOf(gurl));
+          if (finG) finG(T('Не открылось: ', 'Couldn’t open: ') + hostOf(gurl));
+          if (!rq.bracket) rows.push(T('Не открылось: ', 'Couldn’t open: ') + hostOf(gurl));
         }
         done++;
       } else if (rq.kind === 'MEMORY ADD') {
@@ -2255,14 +2326,14 @@ tree || '(структура недоступна — спросите чере�
         }
         if (!merged && cfg.memory.length >= 40) {
           out.push('MEMORY ADD «' + mt + '»: REJECTED — knowledge base is full (40 notes). Tell the user, or add the fact into an EXISTING note title.');
-          if (!rq.bracket) rows.push('Память переполнена: ' + mt);
+          if (!rq.bracket) rows.push(T('Память переполнена: ', 'Memory is full: ') + mt);
         } else {
           if (!merged) cfg.memory.push({ t: mt.slice(0, 120), x: mb.slice(0, 2000) });
           cfg.memory = clampMemory(cfg.memory);
           saveCfg();
           out.push('MEMORY SAVED «' + mt + '»' + (merged ? ' (appended to the existing note)' : ' (new note)') +
                    '. Total: ' + cfg.memory.length + ' note(s). It is now searchable via MEMORY SEARCH.');
-          if (!rq.bracket) rows.push('Запомнил: ' + mt);
+          if (!rq.bracket) rows.push(T('Запомнил: ', 'Memorized: ') + mt);
         }
         done++;
       } else if (rq.kind === 'REVERT FILE') {
@@ -2272,19 +2343,19 @@ tree || '(структура недоступна — спросите чере�
           out.push('REVERT "' + vp + '": done — restored its pre-edit state from snapshot «' + (rv.data.label || 'без имени') + '»' +
                    (rv.data.kind === 'created' ? ' (your edit had created it, so the file was REMOVED)' : ' (old content written back)') +
                    '. The file now differs from your last edit — re-read it before editing again.');
-          if (!rq.bracket) rows.push('Откачено: ' + base(vp));
+          if (!rq.bracket) rows.push(T('Откачено: ', 'Reverted: ') + base(vp));
           refreshPrompt(); // содержимое изменилось
         } else {
           out.push('REVERT "' + vp + '": FAILED — ' + ((rv.data && rv.data.error) || rv.error || 'нет снапшота'));
-          if (!rq.bracket) rows.push('Откат не удался: ' + base(vp));
+          if (!rq.bracket) rows.push(T('Откат не удался: ', 'Revert failed: ') + base(vp));
         }
         done++;
       } else if (rq.kind === 'SHELL') {
         shells.push({ cmd: rq.arg });
-        if (!rq.bracket) rows.push('Команда: ' + rq.arg.slice(0, 80));
+        if (!rq.bracket) rows.push(T('Команда: ', 'Command: ') + rq.arg.slice(0, 80));
       } else if (rq.kind === 'ASK' || rq.kind === 'ASK MULTI') {
         asks.push({ q: rq.arg, opts: rq.opts || [], multi: rq.kind === 'ASK MULTI' });
-        if (!rq.bracket) rows.push('Ждёт ответа: ' + rq.arg);
+        if (!rq.bracket) rows.push(T('Ждёт ответа: ', 'Waiting for your reply: ') + rq.arg);
       } else { // NEED SEARCH
         var q = rq.arg;
         if (st.sentSearches[q]) continue;
@@ -2293,7 +2364,7 @@ tree || '(структура недоступна — спросите чере�
         var sb = s.ok ? s.data.text : ('ERROR: ' + (s.error || ''));
         if (sb.length > 60000) sb = sb.slice(0, 60000) + '\n…(truncated)';
         out.push('SEARCH "' + q + '" — substring matches over ALL text files of the project (file:line: text):\n```\n' + sb + '\n```');
-        if (!rq.bracket) rows.push('Поиск «' + q + '»' + (s.ok ? ': ' + s.data.matches + ' совпадений' : ' — ошибка'));
+        if (!rq.bracket) rows.push(T('Поиск «', 'Search “') + q + '»' + (s.ok ? ': ' + s.data.matches + ' совпадений' : ' — ошибка'));
         done++;
       }
     }
@@ -2315,28 +2386,28 @@ tree || '(структура недоступна — спросите чере�
   var BADGE_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH|MEMORY ADD|ASK MULTI|ASK|REVERT FILE|WEB FETCH|WEB DOWNLOAD|WEB GREP|SHELL)\s*:\s*([^<>]*?)\s*\}>\]/gi;
   function badgeText(kind, arg, pending) {
     var K = kind.toUpperCase(), tail = pending ? '…' : '';
-    if (K === 'NEED FILE')    return (pending ? 'Чтение: '        : 'Прочитано: ')      + base(arg) + tail;
-    if (K === 'FILE INFO')    return (pending ? 'Осмотр: '        : 'Размер получен: ') + base(arg) + tail;
+    if (K === 'NEED FILE')    return (pending ? T('Чтение: ', 'Reading: ')       : T('Прочитано: ', 'Read: '))      + base(arg) + tail;
+    if (K === 'FILE INFO')    return (pending ? T('Осмотр: ', 'Inspecting: ')     : T('Размер получен: ', 'Size: ')) + base(arg) + tail;
     if (K === 'READ RANGE') {
       var m = String(arg).match(/^(.+?)\s*:\s*(\d+)\s*[-–—]\s*(\d+)$/);
       var nm = m ? base(m[1]) + ' (' + m[2] + '–' + m[3] + ')' : base(arg);
-      return (pending ? 'Чтение: ' : 'Прочитано: ') + nm + tail;
+      return (pending ? T('Чтение: ', 'Reading: ') : T('Прочитано: ', 'Read: ')) + nm + tail;
     }
-    if (K === 'MEMORY SEARCH') return (pending ? 'Память: ' : 'Найдено в памяти: ') + String(arg).trim() + tail;
-    if (K === 'ASK' || K === 'ASK MULTI') return (pending ? 'Спрашивает: ' : 'Отвечено: ') + String(arg).trim() + tail;
-    if (K === 'WEB FETCH') return (pending ? 'Загрузка: ' : 'Загружено: ') + hostOf(String(arg).trim()) + tail;
+    if (K === 'MEMORY SEARCH') return (pending ? T('Память: ', 'Memory: ') : T('Найдено в памяти: ', 'Found in memory: ')) + String(arg).trim() + tail;
+    if (K === 'ASK' || K === 'ASK MULTI') return (pending ? T('Спрашивает: ', 'Asking: ') : T('Отвечено: ', 'Answered: ')) + String(arg).trim() + tail;
+    if (K === 'WEB FETCH') return (pending ? T('Загрузка: ', 'Fetching: ') : T('Загружено: ', 'Fetched: ')) + hostOf(String(arg).trim()) + tail;
     if (K === 'WEB DOWNLOAD') {
       var dp = String(arg).split('::'); var dn = dp.length > 1 ? base(dp[1].trim()) : hostOf(dp[0].trim());
-      return (pending ? 'Скачивает: ' : 'Скачано: ') + dn + tail;
+      return (pending ? T('Скачивает: ', 'Downloading: ') : T('Скачано: ', 'Downloaded: ')) + dn + tail;
     }
     if (K === 'WEB GREP') {
       var gp2 = String(arg).split('::'); var gq2 = (gp2.length > 1 ? gp2[1] : gp2[0]).trim();
-      return (pending ? 'Ищет в инете: ' : 'Найдено в инете: ') + gq2 + tail;
+      return (pending ? T('Ищет в инете: ', 'Searching the web: ') : T('Найдено в инете: ', 'Found on the web: ')) + gq2 + tail;
     }
-    if (K === 'MEMORY ADD') return (pending ? 'Запоминает: ' : 'Запомнил: ') + String(arg).split('::')[0].trim() + tail;
-    if (K === 'REVERT FILE') return (pending ? 'Откатываю: ' : 'Откачено: ') + base(String(arg).trim()) + tail;
-    if (K === 'SHELL') return (pending ? 'Команда: ' : 'Выполнено: ') + String(arg).trim().slice(0, 90) + tail;
-    return (pending ? 'Поиск: ' : 'Найдено: ') + String(arg).trim() + tail; // NEED SEARCH
+    if (K === 'MEMORY ADD') return (pending ? T('Запоминает: ', 'Memorizing: ') : T('Запомнил: ', 'Memorized: ')) + String(arg).split('::')[0].trim() + tail;
+    if (K === 'REVERT FILE') return (pending ? T('Откатываю: ', 'Reverting: ') : T('Откачено: ', 'Reverted: ')) + base(String(arg).trim()) + tail;
+    if (K === 'SHELL') return (pending ? T('Команда: ', 'Command: ') : T('Выполнено: ', 'Executed: ')) + String(arg).trim().slice(0, 90) + tail;
+    return (pending ? T('Поиск: ', 'Search: ') : T('Найдено: ', 'Found: ')) + String(arg).trim() + tail; // NEED SEARCH
   }
   function eachTextNode(root, fn) {
     var w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
@@ -2382,7 +2453,7 @@ tree || '(структура недоступна — спросите чере�
   function resumeBadges(block) { try { renderBadges(block); } catch (e) {} }
   // после того, как служебное ушло: «Чтение: x…» → «Прочитано: x»
   function finalizeBadges(block) {
-    var swaps = [
+    var swaps = DSX_LANG === 'ru' ? [
       [/Чтение: ([^…\n]+)…/g,        'Прочитано: $1'],
       [/Осмотр: ([^…\n]+)…/g,        'Размер получен: $1'],
       [/Поиск: ([^…\n]+)…/g,         'Найдено: $1'],
@@ -2394,6 +2465,18 @@ tree || '(структура недоступна — спросите чере�
       [/Запоминает: ([^…\n]+)…/g,     'Запомнил: $1'],
       [/Откатываю: ([^…\n]+)…/g,      'Откачено: $1'],
       [/Команда: ([^…\n]+)…/g,        'Выполнено: $1']
+    ] : [
+      [/Reading: ([^…\n]+)…/g,              'Read: $1'],
+      [/Inspecting: ([^…\n]+)…/g,           'Size: $1'],
+      [/Search: ([^…\n]+)…/g,               'Found: $1'],
+      [/Memory: ([^…\n]+)…/g,               'Found in memory: $1'],
+      [/Asking: ([^…\n]+)…/g,               'Answered: $1'],
+      [/Fetching: ([^…\n]+)…/g,             'Fetched: $1'],
+      [/Downloading: ([^…\n]+)…/g,          'Downloaded: $1'],
+      [/Searching the web: ([^…\n]+)…/g,    'Found on the web: $1'],
+      [/Memorizing: ([^…\n]+)…/g,           'Memorized: $1'],
+      [/Reverting: ([^…\n]+)…/g,            'Reverted: $1'],
+      [/Command: ([^…\n]+)…/g,              'Executed: $1']
     ];
     try {
       eachTextNode(block, function (n) {
@@ -2414,7 +2497,7 @@ tree || '(структура недоступна — спросите чере�
     sessionStorage.setItem('dsx:auto', String(st.autoCount));
   }
   async function execShell(block, cmd, statusEl) {
-    if (statusEl) statusEl.textContent = 'Выполняет: ' + cmd.slice(0, 90) + '…';
+    if (statusEl) statusEl.textContent = T('Выполняет: ', 'Running: ') + cmd.slice(0, 90) + '…';
     var r = await dsxSend('shell', { cmd: cmd });
     var report, short;
     if (r && r.ok) {
@@ -2424,12 +2507,12 @@ tree || '(структура недоступна — спросите чере�
                (r.killed ? ' (TIMEOUT 120s — убито)' : '') +
                '\n\nSTDOUT:\n```\n' + (out || '(пусто)') + '\n```' +
                (err ? '\n\nSTDERR:\n```\n' + err + '\n```' : '');
-      short = 'Выполнено (код ' + r.exitCode + '): ' + cmd.slice(0, 70) +
+      short = T('Выполнено (код ', 'Done (exit ') + r.exitCode + '): ' + cmd.slice(0, 70) +
               (out ? ' → ' + out.split('\n')[0].slice(0, 60) : '');
     } else {
-      var er = (r && r.error) || 'нет связи с хостом';
+      var er = (r && r.error) || T('нет связи с хостом', 'no connection to the host');
       report = 'SHELL ERROR: ' + er + '\n(Если хост не установлен/не запущен — подскажи юзеру: shell\\install.bat из репозитория, потом перезапуск Chrome. Не повторяй ту же команду впрок.)';
-      short = 'Ошибка шелла: ' + er.slice(0, 80);
+      short = T('Ошибка шелла: ', 'Shell error: ') + er.slice(0, 80);
     }
     if (statusEl) statusEl.textContent = short;
     await shellSend(cmd, report); shellBookkeep();
@@ -2451,7 +2534,7 @@ tree || '(структура недоступна — спросите чере�
         'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1))';
 
       var cap = document.createElement('div');
-      cap.textContent = 'Модель просит выполнить команду:';
+      cap.textContent = T('Модель просит выполнить команду:', 'The model asks to run a command:');
       cap.style.cssText = 'font-size:12px;margin-bottom:6px;color:var(--dsw-alias-label-tertiary,#888)';
       card.appendChild(cap);
 
@@ -2466,12 +2549,12 @@ tree || '(структура недоступна — спросите чере�
       var row = document.createElement('div');
       row.style.cssText = 'margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap';
       var run = document.createElement('button');
-      run.textContent = 'Выполнить';
+      run.textContent = T('Выполнить', 'Run');
       run.style.cssText = 'padding:8px 16px;border:none;cursor:pointer;border-radius:10px;' +
         'font-size:13px;font-weight:600;font-family:inherit;color:#fff;' +
         'background:var(--dsw-alias-brand-primary,#5686fe)';
       var no = document.createElement('button');
-      no.textContent = 'Отклонить';
+      no.textContent = T('Отклонить', 'Reject');
       no.style.cssText = 'padding:8px 14px;cursor:pointer;border-radius:10px;font-size:13px;' +
         'font-family:inherit;color:var(--dsw-alias-label-primary,#eee);' +
         'background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));' +
@@ -2482,7 +2565,7 @@ tree || '(структура недоступна — спросите чере�
       var autoCb = document.createElement('input');
       autoCb.type = 'checkbox'; autoCb.style.cssText = 'width:14px;height:14px;accent-color:#5686fe;margin:0';
       var autoTx = document.createElement('span');
-      autoTx.textContent = 'авто-разрешать до конца сессии';
+      autoTx.textContent = T('авто-разрешать до конца сессии', 'auto-allow for this session');
       autoLab.appendChild(autoCb); autoLab.appendChild(autoTx);
       row.appendChild(run); row.appendChild(no); row.appendChild(autoLab);
       card.appendChild(row);
@@ -2502,7 +2585,7 @@ tree || '(структура недоступна — спросите чере�
       };
       no.onclick = async function () {
         run.disabled = true; no.disabled = true; card.removeChild(code); card.removeChild(row);
-        statusEl.textContent = 'Отклонено: ' + cmd.slice(0, 90);
+        statusEl.textContent = T('Отклонено: ', 'Rejected: ') + cmd.slice(0, 90);
         await shellSend(cmd, 'The user REJECTED this command in the confirm card. Do NOT retry it; ' +
           'continue without it, or suggest a manual alternative in text.');
         shellBookkeep();
@@ -2556,13 +2639,13 @@ tree || '(структура недоступна — спросите чере�
       card.appendChild(title);
 
       var hint = document.createElement('div');
-      hint.textContent = ask.multi ? 'отметь один или несколько вариантов' : 'выбери один вариант';
+      hint.textContent = ask.multi ? T('отметь один или несколько вариантов', 'check one or more options') : T('выбери один вариант', 'pick one option');
       hint.style.cssText = 'margin-top:2px;font-size:11.5px;color:var(--dsw-alias-label-tertiary,#888)';
       card.appendChild(hint);
 
       var list = document.createElement('div');
       list.style.cssText = 'margin-top:8px;display:flex;flex-direction:column;gap:6px';
-      var options = (ask.opts || []).concat(['Свой ответ…']);
+      var options = (ask.opts || []).concat([T('Свой ответ…', 'Custom answer…')]);
       var name = key + '-grp';
       options.forEach(function (opt, oi) {
         var lab = document.createElement('label');
@@ -2582,7 +2665,7 @@ tree || '(структура недоступна — спросите чере�
       card.appendChild(list);
 
       var customTa = document.createElement('textarea');
-      customTa.rows = 2; customTa.placeholder = 'Напиши свой вариант ответа…';
+      customTa.rows = 2; customTa.placeholder = T('Напиши свой вариант ответа…', 'Type your own answer…');
       customTa.style.cssText = 'display:none;width:100%;box-sizing:border-box;margin-top:8px;' +
         'padding:8px 10px;resize:vertical;border-radius:9px;font-size:13px;line-height:1.45;' +
         'font-family:inherit;background:transparent;color:var(--dsw-alias-label-primary,#f5f5f5);' +
@@ -2590,7 +2673,7 @@ tree || '(структура недоступна — спросите чере�
       card.appendChild(customTa);
 
       var btn = document.createElement('button');
-      btn.textContent = 'Отправить ответ';
+      btn.textContent = T('Отправить ответ', 'Send answer');
       btn.disabled = true;
       btn.style.cssText = 'margin-top:10px;padding:9px 16px;border:none;cursor:pointer;' +
         'border-radius:10px;font-size:13px;font-weight:600;font-family:inherit;color:#fff;' +
@@ -2625,20 +2708,20 @@ tree || '(структура недоступна — спросите чере�
         for (var i = 0; i < l.length - 1; ++i) if (l[i].checked) picked.push(options[i]);
         var customText = (customTa.value || '').trim();
         if (isCustomChecked() && customText) picked.push(customText);
-        if (!picked.length) { toast('Выбери вариант или напиши свой ответ'); return; }
-        btn.disabled = true; btn.style.opacity = '.5'; btn.textContent = 'Отправляю…';
+        if (!picked.length) { toast(T('Выбери вариант или напиши свой ответ', 'Pick an option or write your own')); return; }
+        btn.disabled = true; btn.style.opacity = '.5'; btn.textContent = T('Отправляю…', 'Sending…');
         var answer = 'SYSTEM: the user answered your question (via DeepSeek Extended UI).\n' +
           'QUESTION: «' + ask.q + '»\n' +
           'ANSWER' + (ask.multi ? 'S (several picked)' : '') + ': ' +
           (ask.multi ? '\n- ' + picked.join('\n- ') : picked.join('; '));
         var ok = await injectStealth(answer, 'ответ на вопрос');
-        if (!ok) { btn.disabled = false; btn.style.opacity = '1'; btn.textContent = 'Отправить ответ'; return; }
+        if (!ok) { btn.disabled = false; btn.style.opacity = '1'; btn.textContent = T('Отправить ответ', 'Send answer'); return; }
         st.autoCount++;
         st.waitingAnswer = true; sessionStorage.setItem('dsx:wait', '1');
         sessionStorage.setItem('dsx:auto', String(st.autoCount));
         card.innerHTML = '';
         var doneRow = document.createElement('div');
-        doneRow.textContent = 'Ответ отправлен: ' + picked.join(', ');
+        doneRow.textContent = T('Ответ отправлен: ', 'Answer sent: ') + picked.join(', ');
         doneRow.style.cssText = 'font-size:12.5px;color:var(--dsw-alias-label-tertiary,#888)';
         card.appendChild(doneRow);
         finalizeBadges(block);
@@ -2693,15 +2776,15 @@ tree || '(структура недоступна — спросите чере�
   // ---------------- ЖИВЫЕ статусы: пока модель стримит ops-блок, уже видно,
   // ЧТО она делает («Пишет: index.html…»); сама стена голого JSON сворачивается.
   var OP_VERBS = {
-    write_file:   ['Пишет: ', 'Записано: '],
-    edit_file:    ['Правит: ', 'Изменено: '],
-    append_file:  ['Дописывает: ', 'Дописано: '],
-    insert_lines: ['Вставляет в ', 'Вставлено в '],
-    replace_lines:['Заменяет в ', 'Заменено в '],
-    make_dir:     ['Создаёт папку ', 'Папка создана: '],
-    delete_path:  ['Удаляет ', 'Удалено: '],
-    copy_file:    ['Копирует ', 'Скопировано: '],
-    move_file:    ['Перемещает ', 'Перемещено: ']
+    write_file:   [T('Пишет: ', 'Writing: '), T('Записано: ', 'Written: ')],
+    edit_file:    [T('Правит: ', 'Editing: '), T('Изменено: ', 'Edited: ')],
+    append_file:  [T('Дописывает: ', 'Appending: '), T('Дописано: ', 'Appended: ')],
+    insert_lines: [T('Вставляет в ', 'Inserting into '), T('Вставлено в ', 'Inserted into ')],
+    replace_lines:[T('Заменяет в ', 'Replacing in '), T('Заменено в ', 'Replaced in ')],
+    make_dir:     [T('Создаёт папку ', 'Creating folder '), T('Папка создана: ', 'Folder created: ')],
+    delete_path:  [T('Удаляет ', 'Deleting '), T('Удалено: ', 'Deleted: ')],
+    copy_file:    [T('Копирует ', 'Copying '), T('Скопировано: ', 'Copied: ')],
+    move_file:    [T('Перемещает ', 'Moving '), T('Перемещено: ', 'Moved: ')]
   };
   function opsBlockPres(block) {
     var pres = [];
@@ -2799,7 +2882,7 @@ tree || '(структура недоступна — спросите чере�
         var t = row.textContent || '';
         if (t.slice(-1) !== '…') return;
         var fin = row.getAttribute('data-dsx-final');
-        row.textContent = ok ? fin : (t.slice(0, -1) + ' (ОШИБКА)');
+        row.textContent = ok ? fin : (t.slice(0, -1) + T(' (ОШИБКА)', ' (ERROR)'));
       });
     } catch (e) {}
   }
@@ -2876,8 +2959,8 @@ tree || '(структура недоступна — спросите чере�
           });
           if (r.ok) {
             var sum = r.data.done === r.data.total
-              ? 'Применено: ' + r.data.done + ' из ' + r.data.total + ' операций'
-              : 'Применено ' + r.data.done + ' из ' + r.data.total + ' — есть ошибки';
+              ? T('Применено: ', 'Applied: ') + r.data.done + ' / ' + r.data.total + T(' операций', ' ops')
+              : T('Применено ', 'Applied ') + r.data.done + ' / ' + r.data.total + T(' — есть ошибки', ' — with errors');
             toast(sum);
             rows.push(sum);
             finalizeLiveOps(block, true);
@@ -2885,8 +2968,8 @@ tree || '(структура недоступна — спросите чере�
                    r.data.report + '\n```\n';
             refreshPrompt(); // дерево изменилось
           } else {
-            toast('Ошибка применения: ' + (r.error || '?'));
-            rows.push('Ошибка применения правок');
+            toast(T('Ошибка применения: ', 'Apply error: ') + (r.error || '?'));
+            rows.push(T('Ошибка применения правок', 'Failed to apply edits'));
             finalizeLiveOps(block, false);
           }
         }
@@ -2929,7 +3012,7 @@ tree || '(структура недоступна — спросите чере�
         if (note) {
           var __dsxLim = (cfg.autolimit === 0) ? Infinity : (cfg.autolimit > 0 ? cfg.autolimit : 12);
           if (st.autoCount >= __dsxLim) {
-            toast('Потолок авто-сообщений (' + __dsxLim + ') — ваш ход; 0 в настройках = без лимита');
+            toast(T('Потолок авто-сообщений (', 'Auto-message cap reached (') + __dsxLim + T(') — ваш ход; 0 в настройках = без лимита', ') — your turn; 0 in settings = unlimited'));
           } else if (await injectStealth(note, 'служебное')) {
             if (svcReq) { finalizeBadges(block); hideActionBar(block); }
             st.autoCount++;
@@ -2969,77 +3052,7 @@ tree || '(структура недоступна — спросите чере�
     }
     return null;
   }
-  function syncNativeToggle(el) {
-    el = el || document.querySelector('.dsx-pilot-tg');
-    if (!el) return;
-    var on = cfg.pilot;
-    el.classList.toggle('ds-toggle-button--selected', on);
-    el.setAttribute('aria-pressed', on ? 'true' : 'false');
-    el.title = !on ? 'Авто-пилот выкл: обычный чат. Включи — подключишь папку проекта.'
-      : st.folderReady
-        ? 'Авто-пилот ВКЛ: проект «' + st.folderName + '». Промпт подмешивается незаметно.'
-        : 'Авто-пилот ВКЛ — ожидает выбор папки проекта';
-  }
-  function ensureNativeToggle() {
-    var host = findToggleHost();
-    if (!host) return;
-    var el = host.querySelector('.dsx-pilot-tg');
-    if (!el) {
-      el = document.createElement('div');
-      el.className = 'dsx-native dsx-pilot-tg f79352dc ds-toggle-button ds-toggle-button--m';
-      el.tabIndex = 0;
-      el.setAttribute('role', 'button');
-      el.style.cssText = 'transform:translateZ(0px);position:relative';
-      el.innerHTML =
-        '<div class="ds-toggle-button__icon"><div class="ds-icon" style="font-size:inherit">' +
-        '<div style="width:14px;height:14px">' +
-        '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">' +
-        '<path d="M8 1.6c.9 0 1.6.7 1.6 1.6 0 .5-.2.9-.6 1.2l2.2 4.4c.5-.3.6-.2.9-.1 1.7.9 1.9 3 .9 4.2-1 1.1-2.7 1-3.8-.1l-2.7-1.3-2.7 1.3c-1.1 1.1-2.8 1.2-3.8.1-1-1.2-.8-3.3.9-4.2.3-.1.5-.2.9.1L4.6 4.6c-.4-.3-.6-.7-.6-1.2C4 2.3 4.6 1.6 5.5 1.6c.7 0 1.3.4 1.5 1 .2-.1.5-.2 1-.2Z" fill="currentColor"/>' +
-        '</svg></div></div></div>' +
-        '<span class="_6dbc175">Авто-пилот</span>' +
-        '<div class="ds-focus-ring" style="--dsl-focus-ring-offset:-1px"></div>';
-      el.addEventListener('click', function () {
-        if (!cfg.pilot) {
-          cfg.pilot = true; saveCfg(); syncNativeToggle(el);
-          if (!st.folderReady) showFolderModal();
-        } else {
-          cfg.pilot = false; saveCfg(); syncNativeToggle(el);
-        }
-      });
-      el.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') el.click(); });
-      host.appendChild(el);
-    }
-    syncNativeToggle(el);
-  }
-  // шестерёнка — В ПРАВОМ кластере (.bf38813a), непосредственно слева от
-  // скрепки (attacher). Точная копия разметки icon-кнопки сайта: Никакого
-  // аутлайна-пилюли, обычный значок, как у кнопки аттача.
-  function ensureGearButton() {
-    var cluster = document.querySelector('.bf38813a');
-    // миграция: если старая шестерёнка осталась в левом ряду — сносим
-    document.querySelectorAll('._58b31c9 .dsx-gear-btn').forEach(function (n) { n.remove(); });
-    if (!cluster) return;
-    if (cluster.querySelector('.dsx-gear-btn')) return;
-    var g = document.createElement('div');
-    g.setAttribute('role', 'button');
-    g.className = 'ds-button ds-button--iconLabelPrimary ds-button--icon ds-button--capsule ' +
-                  'ds-button--s ds-button--icon-relative-m dsx-gear-btn';
-    g.tabIndex = 0;
-    g.title = 'DeepSeek Extended — настройки';
-    g.style.cssText = '--dsl-button-height: 34px;';
-    g.innerHTML =
-      '<div class="ds-button__background"></div>' +
-      '<div class="ds-button__icon ds-button__icon--last-child">' +
-      '<div class="ds-icon" style="font-size: inherit;">' +
-      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
-      '<path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 0 0-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 0 0-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 0 0-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 0 0-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 0 0 1.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>' +
-      '<path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>' +
-      '</svg></div></div>';
-    g.addEventListener('click', showSettingsModal);
-    g.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') g.click(); });
-    cluster.insertBefore(g, cluster.firstChild); // левее скрепки
-  }
-  setInterval(function () { ensureNativeToggle(); ensureGearButton(); }, 1400);
+  // (пилюля и шестерёнка у композера удалены: настройки — вкладка «Агент» в Settings сайта)
 
   // ---------------- сторож URL (новая беседа = новый прайм)
   setInterval(function () {
@@ -3094,7 +3107,7 @@ tree || '(структура недоступна — спросите чере�
       if (isUserTail) {
         if (!st.reloadHint) {
           st.reloadHint = 1;
-          toast('Ответ модели оборвался — напиши «продолжи»');
+          toast(T('Ответ модели оборвался — автопилот попробует Continue сам', 'The model’s reply got cut — autopilot will try Continue itself'));
           console.log('[DSX] хвост беседы — сообщение без ответа (после перезагрузки)');
         }
       } else if (st.folderReady) {
@@ -3407,6 +3420,12 @@ def run_app():
     print('[DSX] DeepSeekIDE started (UA: Chrome 140). Если Google отказывается логинить — входи по почте/телефону на той же странице.')
     window = DeepSeekApp()
     window.show()
+    if os.name == 'nt':
+        try:  # закругления frameless-окна через DWM (33 = corner preference, 2 = ROUND)
+            import ctypes
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(int(window.winId()), 33, ctypes.byref(ctypes.c_int(2)), 4)
+        except Exception as e:
+            print('[DSX] DWM corners:', e)
     sys.exit(app.exec())
 
 
