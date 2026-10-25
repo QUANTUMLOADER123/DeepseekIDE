@@ -1663,8 +1663,8 @@ tree || '(структура недоступна — спросите чере�
     var jt = root.querySelector('.dsx-set-jbtext');
     ta.value = cfg.rules || ''; jt.value = cfg.jbText || '';
     var saveText = dsxDebounce(function () {
-      cfg.rules = ta.value.slice(0, 4000);
-      cfg.jbText = jt.value.slice(0, 3000);
+      cfg.rules = ta.value;        // без лимита символов
+      cfg.jbText = jt.value;       // без лимита символов
       saveCfg(); refreshPrompt();
     }, 450);
     ta.addEventListener('input', saveText);
