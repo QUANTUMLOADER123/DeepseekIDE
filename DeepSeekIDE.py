@@ -1555,6 +1555,17 @@ tree || '(структура недоступна — спросите чере�
         'background:var(--dsw-alias-bg-layer-2,#1d1f24);color:var(--dsw-alias-label-primary,#f5f5f5);' +
         'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1));outline:none"></textarea>' +
       '</div>' +
+      // --- раздел: авто-лимит ходов
+      '<div style="padding:18px 20px 0">' +
+        '<div style="font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#eee)">Лимит авто-ходов за сессию</div>' +
+        '<div style="margin-top:4px;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-tertiary,#888)">' +
+          'Сколько служебных реплик агент может слать подряд без тебя. 0 = без лимита.' +
+        '</div>' +
+        '<input class="dsx-set-limit" type="number" min="0" max="999" step="1" ' +
+        'style="margin-top:8px;width:110px;padding:8px 10px;border-radius:10px;font-size:13px;font-family:inherit;' +
+        'background:var(--dsw-alias-bg-layer-2,#1d1f24);color:var(--dsw-alias-label-primary,#f5f5f5);' +
+        'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1));outline:none">' +
+      '</div>' +
       // --- раздел: ПАМЯТЬ (заметки для ИИ)
       '<div style="padding:18px 20px 0">' +
         '<div style="font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#eee)">Память проекта (заметки для ИИ)</div>' +
@@ -1613,6 +1624,8 @@ tree || '(структура недоступна — спросите чере�
     cb.checked = cfg.statusRows !== false;
     jb.checked = !!cfg.jbTest;
     jt.value = cfg.jbText || '';
+    var limIn = card.querySelector('.dsx-set-limit');
+    limIn.value = (cfg.autolimit === 0) ? '0' : String(cfg.autolimit || 12);
     var memList = card.querySelector('.dsx-mem-list');
     function addMemCard(n) {
       var wrap = document.createElement('div');
@@ -1652,6 +1665,8 @@ tree || '(структура недоступна — спросите чере�
       cfg.statusRows = !!cb.checked;
       cfg.jbTest = !!jb.checked;
       cfg.jbText = jt.value.slice(0, 8000);
+      var limVal = parseInt(limIn.value, 10);
+      cfg.autolimit = (isNaN(limVal) || limVal < 0) ? 12 : Math.min(limVal, 999);
       var mem = [];
       card.querySelectorAll('.dsx-mem-card').forEach(function (c2) {
         var t = c2.querySelector('.dsx-mem-t').value.slice(0, 120);
@@ -1678,7 +1693,7 @@ tree || '(структура недоступна — спросите чере�
   function onBridgeEvent(m) {
     if (m.ev === 'folder') {
       st.folderReady = true; st.folderName = m.name || '';
-      // закрываем только приветственную модалку; в настройках просто обновим подпись
+      closeModals(); // модалка «Выбрать папку» уходит сразу после Qt-диалога
       syncNativeToggle(); syncFolderLabels();
       toast('Проект подключён: ' + st.folderName);
       refreshPrompt();
@@ -2497,6 +2512,28 @@ tree || '(структура недоступна — спросите чере�
     } catch (e) { console.warn('[DSX] shell card error', e); }
   }
 
+  // ---------------- служебные user-бабблы автопилота — юзер от них чист
+  // Сообщение юзера со скрытыми правилами (маркер ВНАЧАЛЕ + его текст после) НЕ трогаем;
+  // прячем только пузыри, где после ⟦/DSX⟧ ничего нет (= целиком служебные).
+  function hideSvcUserMsgs() {
+    try {
+      document.querySelectorAll('._9663006').forEach(function (r) {
+        if (r.__dsxUserSeen || r.style.display === 'none') return;
+        var t = (r.textContent || '');
+        if (t.indexOf(MARK) < 0) { r.__dsxUserSeen = 1; return; }
+        if (t.trim().indexOf(MARK) !== 0) { r.__dsxUserSeen = 1; return; }
+        var after = t.split(END).slice(1).join(END).replace(/\s+/g, '');
+        if (!after) {
+          r.style.display = 'none';
+          r.__dsxUserSeen = 1;
+          return;
+        }
+        r.__dsxUserSeen = 1; // юзерское сообщение + скрытые правила — остаётся видимым
+      });
+    } catch (e) {}
+  }
+  setInterval(function () { hideSvcUserMsgs(); }, 900);
+
   // ---------------- карточка-опрос (ASK / ASK MULTI): варианты → клик → ответ
   // сам уезжает модели служебным сообщением; последний вариант всегда «Свой ответ»
   function renderAskCard(block, ask) {
@@ -2776,6 +2813,7 @@ tree || '(структура недоступна — спросите чере�
     renderBadges(block);   // маркеры [<{...}>] мгновенно превращаем в «Ищет в инете: …»
     updateLiveOps(block);  // живые строки «Пишет: файл…»
     hideThinkBlocks(block); // think-блоки юзеру не видны
+    hideSvcUserMsgs();      // служебные user-пузыри — тоже
   }
 
   // ---------------- главный цикл: ответ устоялся → применить → ответить
@@ -2889,8 +2927,9 @@ tree || '(структура недоступна — спросите чере�
         }
 
         if (note) {
-          if (st.autoCount >= 12) {
-            toast('Потолок авто-сообщений (12) — ваш ход');
+          var __dsxLim = (cfg.autolimit === 0) ? Infinity : (cfg.autolimit > 0 ? cfg.autolimit : 12);
+          if (st.autoCount >= __dsxLim) {
+            toast('Потолок авто-сообщений (' + __dsxLim + ') — ваш ход; 0 в настройках = без лимита');
           } else if (await injectStealth(note, 'служебное')) {
             if (svcReq) { finalizeBadges(block); hideActionBar(block); }
             st.autoCount++;
@@ -3207,7 +3246,8 @@ def run_app():
 
             self.setStyleSheet("""
                 QMainWindow { background: #0d0d0d; }
-                #overlay { background: rgba(20,22,26,215); border-radius: 10px; }
+                #overlay { background: transparent; border-radius: 10px; }
+                /* фон пилюли = фон сайта под ней */
                 #projChip { color: #9aa4b2; font-family: "Segoe UI"; font-size: 11px;
                             background: #262b34; border-radius: 8px; padding: 3px 10px; }
                 QPushButton { background: transparent; border: none; border-radius: 7px; color: #d5d9e0;
@@ -3304,11 +3344,20 @@ def run_app():
         def resizeEvent(self, event):
             if not self.isFullScreen():
                 self.normal_geometry = self.geometry()  # бэкап размера на лету
-            # оверлей-контролы: правый верхний угол поверх страницы
-            self.overlay.move(self.view.width() - self.overlay.width() - 14, 14)
-            self.overlay.raise_()
+            self._reposition_overlay()
             if event:
                 super().resizeEvent(event)
+
+        def _reposition_overlay(self):
+            # пилюля — строго правый верхний угол поверх страницы
+            self.overlay.adjustSize()
+            self.overlay.move(self.view.width() - self.overlay.width() - 14, 14)
+            self.overlay.raise_()
+
+        def showEvent(self, event):
+            super().showEvent(event)
+            QTimer.singleShot(0, self._reposition_overlay)
+            QTimer.singleShot(300, self._reposition_overlay)
 
         def moveEvent(self, event):
             if not self.isFullScreen():
