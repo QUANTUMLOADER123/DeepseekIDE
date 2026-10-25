@@ -1138,6 +1138,38 @@ tree || '(структура недоступна — спросите чере�
     throw new Error('неизвестная операция: ' + name);
   }
 
+  function dsxCountLines(s) { return s ? s.split('\n').length : 0; }
+  function dsxDiffLines(a, b) {
+    var map = {}, i, la = a.split('\n'), lb = b.split('\n');
+    for (i = 0; i < la.length; ++i) map[la[i]] = (map[la[i]] || 0) + 1;
+    var add = 0;
+    for (i = 0; i < lb.length; ++i) { var k = lb[i]; if (map[k]) map[k]--; else add++; }
+    var del = 0;
+    for (var k2 in map) { if (Object.prototype.hasOwnProperty.call(map, k2)) del += map[k2]; }
+    return [add, del];
+  }
+  async function dsxOpStat(name, args) {
+    try {
+      if (name === 'write_file') {
+        var old = '';
+        try { old = await readText(args.path); } catch (e0) {}
+        var d1 = dsxDiffLines(old, String(args.content || args.text || ''));
+        return ' [+' + d1[0] + ' -' + d1[1] + ']';
+      }
+      if (name === 'edit_file') {
+        var d2 = dsxDiffLines(String(args.old_string || ''), String(args.new_string || ''));
+        return ' [+' + d2[0] + ' -' + d2[1] + ']';
+      }
+      if (name === 'append_file') return ' [+' + dsxCountLines(String(args.content || args.text || '')) + ' -0]';
+      if (name === 'insert_lines') return ' [+' + dsxCountLines(String(args.content || '')) + ' -0]';
+      if (name === 'replace_lines') {
+        var rm = (args.end_line | 0) - (args.start_line | 0) + 1; if (rm < 0) rm = 0;
+        return ' [+' + dsxCountLines(String(args.content || '')) + ' -' + rm + ']';
+      }
+    } catch (e3) {}
+    return '';
+  }
+
   OPS.mutateBatch = async function (args) {
     // args: { label, ops: [{name,args}] } — всё под ОДНИМ снапшотом.
     await snapBegin(args.label);
@@ -1145,8 +1177,9 @@ tree || '(структура недоступна — спросите чере�
     for (var i = 0; i < args.ops.length; ++i) {
       var op = args.ops[i];
       try {
+        var sfx = await dsxOpStat(op.name, op.args || {});
         var msg = await mutate(op.name, op.args || {});
-        report.push('✓ ' + msg);
+        report.push('✓ ' + msg + sfx);
         ++okCount;
       } catch (e) {
         report.push('✗ ' + op.name + ' ' + (op.args && (op.args.path || op.args.from) || '') +
@@ -1415,7 +1448,10 @@ tree || '(структура недоступна — спросите чере�
     return out;
   }
   function saveCfg() {
-    try { chrome.storage.local.set({ v: CFG_VERSION, pilot: cfg.pilot, rules: cfg.rules, statusRows: cfg.statusRows, jbTest: cfg.jbTest, jbText: cfg.jbText, memory: cfg.memory }); } catch (e) {}
+    try {
+      if (window.__DSX_QT) { localStorage.setItem('dsx:cfg', JSON.stringify(cfg)); return; }
+      chrome.storage.local.set({ v: CFG_VERSION, pilot: cfg.pilot, rules: cfg.rules, statusRows: cfg.statusRows, jbTest: cfg.jbTest, jbText: cfg.jbText, memory: cfg.memory, autolimit: cfg.autolimit, shellAuto: cfg.shellAuto, autoContinue: cfg.autoContinue });
+    } catch (e) {}
   }
 
   // ---- ops-дедуп v30: скипаем повтор ТОЛЬКО того же ответа (тот же блок/ключ),
@@ -1529,116 +1565,122 @@ tree || '(структура недоступна — спросите чере�
     };
   }
 
-  // ---------------- нативный ds-switch сайта для нашего автопилота
+  // ---------------- нативный ds-switch сайта для наших переключателей
   function setDsSwitch(sw, on) {
+    if (!sw) return;
     sw.classList.toggle('ds-switch--checked', on);
     sw.setAttribute('aria-checked', on ? 'true' : 'false');
   }
 
   function syncNativeToggle() {
-    var sw = document.querySelector('.dsx-set-pilot');
-    if (sw) setDsSwitch(sw, !!cfg.pilot);
+    document.querySelectorAll('.dsx-set-pilot').forEach(function (sw) { setDsSwitch(sw, !!cfg.pilot); });
   }
 
-  // ---------------- тело настроек агента (общее: и наш оверлей, и вкладка сайта)
-  function agentSettingsHtml() {
-    var ROW = 'display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 0;min-height:60px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.06))';
-    var TXT = 'flex:1;min-width:0';
-    var TIT = 'font-size:14px;font-weight:600;color:var(--dsw-alias-label-primary,#eee)';
-    var SUB = 'margin-top:2px;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-tertiary,#888)';
-    var INP = 'background:var(--dsw-alias-bg-layer-2,#1d1f24);color:var(--dsw-alias-label-primary,#f5f5f5);border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1));outline:none;border-radius:10px;font-family:inherit;font-size:13px';
-    var BTN = 'padding:8px 14px;border:none;cursor:pointer;border-radius:10px;font-size:13px;font-weight:600;font-family:inherit;color:#fff;flex-shrink:0;background:var(--dsw-alias-brand-primary,#5686fe)';
-    var GHOST = 'padding:8px 12px;cursor:pointer;border-radius:10px;font-size:13px;font-family:inherit;flex-shrink:0;color:var(--dsw-alias-label-primary,#eee);background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1))';
+  // ---------------- настройки: строки как у нативных Settings сайта, автосейв
+  var SET_ROW = 'display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 0;min-height:52px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.06))';
+  var SET_TIT = 'font-size:14px;font-weight:500;color:var(--dsw-alias-label-primary,#eee)';
+  var SET_INP = 'background:var(--dsw-alias-bg-layer-2,#1d1f24);color:var(--dsw-alias-label-primary,#f5f5f5);border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1));outline:none;border-radius:10px;font-family:inherit;font-size:13px';
+  var SET_BTN = 'padding:8px 14px;border:none;cursor:pointer;border-radius:10px;font-size:13px;font-weight:600;font-family:inherit;color:#fff;flex-shrink:0;background:var(--dsw-alias-brand-primary,#5686fe)';
+  var SET_GHOST = 'padding:8px 12px;cursor:pointer;border-radius:10px;font-size:13px;font-family:inherit;flex-shrink:0;color:var(--dsw-alias-label-primary,#eee);background:var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07));border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1))';
+
+  function sw(cls) {
+    return '<button type="button" role="switch" class="ds-switch ' + cls + '"><div class="ds-switch-thumb"></div></button>';
+  }
+  function bindSwitch(root, cls, get, set) {
+    var s = root.querySelector(cls);
+    if (!s) return null;
+    setDsSwitch(s, get());
+    s.onclick = function () { set(!get()); setDsSwitch(s, get()); saveCfg(); };
+    return s;
+  }
+  function debounce(fn, ms) { var t; return function () { clearTimeout(t); t = setTimeout(fn, ms); }; }
+
+  // ====== вкладка «Агент»
+  function agentPaneHtml() {
     return '' +
-      '<div style="padding:2px 20px 18px">' +
-        // --- автопилот
-        '<div style="' + ROW + '">' +
-          '<div style="' + TXT + '"><div style="' + TIT + '">' + T('Авто-пилот', 'Auto-pilot') + '</div>' +
-          '<div style="' + SUB + '">' + T('Агент редактирует проект напрямую: читает, пишет, запускает команды', 'Agent edits your project directly: reads files, writes changes, runs commands') + '</div></div>' +
-          '<button type="button" role="switch" aria-checked="false" class="ds-switch dsx-set-pilot">' +
-            '<div class="ds-switch-thumb"></div></button>' +
+      '<div style="' + SET_ROW + '"><div style="' + SET_TIT + '">' + T('Авто-пилот', 'Auto-pilot') + '</div>' + sw('dsx-set-pilot') + '</div>' +
+      '<div style="' + SET_ROW + '">' +
+        '<div style="' + SET_TIT + ';flex:1;min-width:0">' + T('Папка проекта', 'Project folder') +
+          '<div class="dsx-cur-folder" style="font-size:12px;font-weight:400;color:var(--dsw-alias-label-tertiary,#888);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>' +
         '</div>' +
-        // --- папка проекта
-        '<div style="' + ROW + '">' +
-          '<div style="' + TXT + '"><div style="' + TIT + '">' + T('Папка проекта', 'Project folder') + '</div>' +
-          '<div class="dsx-cur-folder" style="' + SUB + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div></div>' +
-          '<button class="dsx-modal-pick" style="' + BTN + '">' + T('Сменить…', 'Change…') + '</button>' +
-          '<button class="dsx-set-forget" title="' + T('Убрать сохранённый доступ к папке', 'Drop saved folder access') + '" style="' + GHOST + '">' + T('Забыть', 'Forget') + '</button>' +
-        '</div>' +
-        // --- правила
-        '<div style="padding:14px 0;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.06))">' +
-          '<div style="' + TIT + '">' + T('Начальный промпт (правила для ИИ)', 'Initial prompt (rules for the AI)') + '</div>' +
-          '<div style="' + SUB + '">' + T('Уходит скрытно с каждым сообщением при включённом автопилоте: стиль кода, язык, запреты. Например: «Отвечай коротко. Код — C++17, комментарии на русском, отступы 4 пробела».',
-            'Sent invisibly with every message while auto-pilot is on: code style, language, bans. E.g. “Answer briefly. C++17 code, Russian comments, 4-space indent”.') + '</div>' +
-          '<textarea class="dsx-set-rules" rows="5" placeholder="' + T('Твои правила для DeepSeek… (можно пусто)', 'Your rules for DeepSeek… (can be empty)') + '" style="width:100%;box-sizing:border-box;margin-top:8px;padding:10px 12px;resize:vertical;line-height:1.5;' + INP + '"></textarea>' +
-        '</div>' +
-        // --- лимит авто-ходов
-        '<div style="' + ROW + '">' +
-          '<div style="' + TXT + '"><div style="' + TIT + '">' + T('Лимит авто-ходов за сессию', 'Auto-turn limit per session') + '</div>' +
-          '<div style="' + SUB + '">' + T('Сколько служебных реплик агент может слать подряд без тебя. 0 = без лимита.', 'How many service replies the agent may send in a row by itself. 0 = unlimited.') + '</div></div>' +
-          '<input class="dsx-set-limit" type="number" min="0" max="999" step="1" style="width:96px;padding:8px 10px;text-align:center;flex-shrink:0;' + INP + '">' +
-        '</div>' +
-        // --- память
-        '<div style="padding:14px 0;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.06))">' +
-          '<div style="' + TIT + '">' + T('Память проекта (заметки для ИИ)', 'Project memory (notes for the AI)') + '</div>' +
-          '<div style="' + SUB + '">' + T('Загрузи знания: поля, структуры, протоколы, как устроен проект. Контекст не раздувается — модель сама заглядывает сюда маркером MEMORY SEARCH; в промпте лишь оглавление.',
-            'Preload knowledge: fields, structures, protocols, how the project works. The context stays slim — the model pulls details via MEMORY SEARCH; only the index lives in the prompt.') + '</div>' +
-          '<div class="dsx-mem-list" style="margin-top:8px;max-height:230px;overflow-y:auto;display:flex;flex-direction:column;gap:8px"></div>' +
-          '<button class="dsx-mem-add" style="margin-top:8px;' + GHOST + '">' + T('+ Добавить заметку', '+ Add note') + '</button>' +
-        '</div>' +
-        // --- строки о ходе работы
-        '<div style="' + ROW + '">' +
-          '<div style="' + TXT + '"><div style="' + TIT + '">' + T('Строки о ходе работы', 'Work-status lines') + '</div>' +
-          '<div style="' + SUB + '">' + T('«Прочитано: app.py», «Команда: …» под ответами модели', '“Read: app.py”, “Command: …” lines under model replies') + '</div></div>' +
-          '<button type="button" role="switch" aria-checked="false" class="ds-switch dsx-set-rows">' +
-            '<div class="ds-switch-thumb"></div></button>' +
-        '</div>' +
-        // --- jailbreak-check
-        '<div style="padding:14px 0 6px">' +
-          '<div style="' + ROW + ';border-bottom:none;min-height:0;padding:0 0 8px">' +
-            '<div style="' + TXT + '"><div style="' + TIT + '">' + T('Тест устойчивости (jailbreak-check)', 'Robustness test (jailbreak-check)') + '</div>' +
-            '<div style="' + SUB + '">' + T('Для проверки СВОЕЙ модели: тестовый промпт подшивается в конец скрытого контекста — смотри, поддаётся ли модель. Пустое поле = ничего не уходит.',
-              'For testing YOUR model: the test prompt is appended to the hidden context — see if the model gives in. Empty field = nothing is sent.') + '</div></div>' +
-            '<button type="button" role="switch" aria-checked="false" class="ds-switch dsx-set-jb">' +
-              '<div class="ds-switch-thumb"></div></button>' +
-          '</div>' +
-          '<textarea class="dsx-set-jbtext" rows="4" placeholder="' + T('Твой тестовый промпт для jailbreak-check…', 'Your test prompt for the jailbreak-check…') + '" style="width:100%;box-sizing:border-box;margin-top:6px;padding:10px 12px;resize:vertical;line-height:1.5;' + INP + '"></textarea>' +
-        '</div>' +
-        // --- футер
-        '<div style="display:flex;align-items:center;gap:10px;padding-top:12px">' +
-          '<div style="flex:1;font-size:12px;color:var(--dsw-alias-label-tertiary,#777)">DeepSeek IDE · built-in agent</div>' +
-          '<button class="dsx-set-save" style="' + BTN + ';padding:10px 18px;border-radius:12px;font-size:14px">' + T('Сохранить', 'Save') + '</button>' +
-        '</div>' +
+        '<button class="dsx-modal-pick" style="' + SET_BTN + '">' + T('Сменить…', 'Change…') + '</button>' +
+        '<button class="dsx-set-forget" style="' + SET_GHOST + '">' + T('Забыть', 'Forget') + '</button>' +
+      '</div>' +
+      '<div style="' + SET_ROW + '"><div style="' + SET_TIT + '">' + T('Шелл без подтверждения', 'Run shell without asking') + '</div>' + sw('dsx-set-shellauto') + '</div>' +
+      '<div style="' + SET_ROW + '"><div style="' + SET_TIT + '">' + T('Авто-нажатие «Continue»', 'Auto-press “Continue”') + '</div>' + sw('dsx-set-cont') + '</div>' +
+      '<div style="' + SET_ROW + '"><div style="' + SET_TIT + '">' + T('Строки о ходе работы', 'Work-status lines') + '</div>' + sw('dsx-set-rows') + '</div>' +
+      '<div style="' + SET_ROW + '"><div style="' + SET_TIT + '">' + T('Лимит авто-ходов (0 — без лимита)', 'Auto-turn limit (0 — unlimited)') + '</div>' +
+        '<input class="dsx-set-limit" type="number" min="0" max="999" step="1" style="width:84px;padding:7px 10px;text-align:center;flex-shrink:0;' + SET_INP + '">' +
       '</div>';
   }
-
-  function bindAgentSettings(root) {
+  function bindAgentPane(root) {
     syncFolderLabels();
-    var swP = root.querySelector('.dsx-set-pilot');
-    setDsSwitch(swP, !!cfg.pilot);
-    swP.onclick = function () {
-      cfg.pilot = !cfg.pilot; saveCfg(); setDsSwitch(swP, cfg.pilot);
-      if (cfg.pilot && !st.folderReady) showFolderModal();
+    bindSwitch(root, '.dsx-set-pilot', function () { return cfg.pilot; }, function (v) {
+      cfg.pilot = v;
+      if (v && !st.folderReady) showFolderModal();
+    });
+    bindSwitch(root, '.dsx-set-shellauto', function () { return cfg.shellAuto === true; }, function (v) { cfg.shellAuto = v; });
+    bindSwitch(root, '.dsx-set-cont', function () { return cfg.autoContinue !== false; }, function (v) { cfg.autoContinue = v; });
+    bindSwitch(root, '.dsx-set-rows', function () { return cfg.statusRows !== false; }, function (v) { cfg.statusRows = v; });
+    var limIn = root.querySelector('.dsx-set-limit');
+    limIn.value = (cfg.autolimit === 0) ? '0' : String(cfg.autolimit || 12);
+    limIn.onchange = function () {
+      var lv = parseInt(limIn.value, 10);
+      cfg.autolimit = (isNaN(lv) || lv < 0) ? 12 : (lv > 999 ? 999 : lv);
+      limIn.value = String(cfg.autolimit);
+      saveCfg();
     };
     root.querySelector('.dsx-set-forget').onclick = function () {
       fsCall('forget').then(function () {
         st.folderReady = false; st.folderName = ''; st.bigPrompt = ''; st.primedOnce = false;
         sessionStorage.removeItem('dsx:primed');
         syncNativeToggle(); syncFolderLabels();
-        toast(T('Папка забыта', 'Folder forgotten'));
       });
     };
+  }
+
+  // ====== вкладка «Контекст»
+  function contextPaneHtml() {
+    return '' +
+      '<div style="padding:12px 0;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.06))">' +
+        '<div style="' + SET_TIT + ';margin-bottom:8px">' + T('Начальный промпт', 'Initial prompt') + '</div>' +
+        '<textarea class="dsx-set-rules" rows="6" placeholder="' + T('Правила для DeepSeek… (можно пусто)', 'Rules for DeepSeek… (can be empty)') + '" style="width:100%;box-sizing:border-box;padding:10px 12px;resize:vertical;line-height:1.5;' + SET_INP + '"></textarea>' +
+      '</div>' +
+      '<div style="padding:12px 0;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.06))">' +
+        '<div style="' + SET_TIT + ';margin-bottom:8px">' + T('Память проекта', 'Project memory') + '</div>' +
+        '<div class="dsx-mem-list" style="max-height:240px;overflow-y:auto;display:flex;flex-direction:column;gap:8px"></div>' +
+        '<button class="dsx-mem-add" style="margin-top:8px;' + SET_GHOST + '">' + T('+ Добавить заметку', '+ Add note') + '</button>' +
+      '</div>' +
+      '<div style="padding:12px 0">' +
+        '<div style="' + SET_ROW + ';border-bottom:none;min-height:0;padding:0 0 10px">' +
+          '<div style="' + SET_TIT + '">' + T('Тест устойчивости (jailbreak-check)', 'Robustness test (jailbreak-check)') + '</div>' + sw('dsx-set-jb') +
+        '</div>' +
+        '<textarea class="dsx-set-jbtext" rows="4" placeholder="' + T('Тестовый промпт…', 'Test prompt…') + '" style="width:100%;box-sizing:border-box;padding:10px 12px;resize:vertical;line-height:1.5;' + SET_INP + '"></textarea>' +
+      '</div>';
+  }
+  function bindContextPane(root) {
     var ta = root.querySelector('.dsx-set-rules');
-    var swR = root.querySelector('.dsx-set-rows');
-    var swJ = root.querySelector('.dsx-set-jb');
     var jt = root.querySelector('.dsx-set-jbtext');
-    ta.value = cfg.rules || '';
-    setDsSwitch(swR, cfg.statusRows !== false);
-    setDsSwitch(swJ, !!cfg.jbTest);
-    jt.value = cfg.jbText || '';
-    var limIn = root.querySelector('.dsx-set-limit');
-    limIn.value = (cfg.autolimit === 0) ? '0' : String(cfg.autolimit || 12);
+    ta.value = cfg.rules || ''; jt.value = cfg.jbText || '';
+    var saveText = debounce(function () {
+      cfg.rules = ta.value.slice(0, 4000);
+      cfg.jbText = jt.value.slice(0, 3000);
+      saveCfg(); refreshPrompt();
+    }, 450);
+    ta.addEventListener('input', saveText);
+    jt.addEventListener('input', saveText);
+    bindSwitch(root, '.dsx-set-jb', function () { return !!cfg.jbTest; }, function (v) { cfg.jbTest = v; refreshPrompt(); });
     var memList = root.querySelector('.dsx-mem-list');
+    var saveMem = debounce(function () {
+      var notes = [];
+      memList.querySelectorAll('.dsx-mem-card').forEach(function (w) {
+        var t = w.querySelector('.dsx-mem-t').value.trim();
+        var x = w.querySelector('.dsx-mem-x').value.trim();
+        if (t || x) notes.push({ t: t.slice(0, 120), x: x.slice(0, 12000) });
+      });
+      cfg.memory = clampMemory(notes);
+      saveCfg(); refreshPrompt();
+    }, 450);
     function addMemCard(n) {
       var wrap = document.createElement('div');
       wrap.className = 'dsx-mem-card';
@@ -1646,7 +1688,7 @@ tree || '(структура недоступна — спросите чере�
         'border-radius:10px;padding:8px;background:var(--dsw-alias-bg-layer-2,#1d1f24)';
       var ti = document.createElement('input');
       ti.className = 'dsx-mem-t'; ti.type = 'text';
-      ti.placeholder = T('Заголовок («Пакеты протокола», «Структуры данных»…)', 'Title (“Protocol packets”, “Data structures”…)');
+      ti.placeholder = T('Заголовок', 'Title');
       ti.value = (n && n.t) || '';
       ti.style.cssText = 'width:100%;box-sizing:border-box;padding:7px 10px;border-radius:8px;' +
         'font-size:12.5px;font-family:inherit;background:transparent;' +
@@ -1654,7 +1696,7 @@ tree || '(структура недоступна — спросите чере�
         'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));outline:none';
       var xa = document.createElement('textarea');
       xa.className = 'dsx-mem-x'; xa.rows = 3;
-      xa.placeholder = T('Суть: поля, форматы, как что работает…', 'Core info: fields, formats, how things work…');
+      xa.placeholder = T('Суть…', 'The core…');
       xa.value = (n && n.x) || '';
       xa.style.cssText = 'width:100%;box-sizing:border-box;margin-top:6px;padding:7px 10px;' +
         'resize:vertical;border-radius:8px;font-size:12.5px;line-height:1.45;font-family:inherit;' +
@@ -1665,48 +1707,67 @@ tree || '(структура недоступна — спросите чере�
       del.style.cssText = 'margin-top:6px;padding:5px 10px;cursor:pointer;border-radius:8px;' +
         'font-size:12px;font-family:inherit;color:#ff8f8f;background:transparent;' +
         'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12))';
-      del.onclick = function () { wrap.remove(); };
+      del.onclick = function () { wrap.remove(); saveMem(); };
+      ti.addEventListener('input', saveMem); xa.addEventListener('input', saveMem);
       wrap.appendChild(ti); wrap.appendChild(xa); wrap.appendChild(del);
       memList.appendChild(wrap);
     }
     (Array.isArray(cfg.memory) ? cfg.memory : []).forEach(addMemCard);
-    root.querySelector('.dsx-mem-add').onclick = function () { addMemCard({ t: '', x: '' }); };
-    root.querySelector('.dsx-set-save').onclick = function () {
-      cfg.rules = ta.value.slice(0, 4000);
-      cfg.statusRows = swR.classList.contains('ds-switch--checked');
-      cfg.jbTest = swJ.classList.contains('ds-switch--checked');
-      cfg.jbText = jt.value.slice(0, 3000);
-      var lv = parseInt(limIn.value, 10);
-      cfg.autolimit = (isNaN(lv) || lv < 0) ? 12 : (lv > 999 ? 999 : lv);
-      var notes = [];
-      memList.querySelectorAll('.dsx-mem-card').forEach(function (w) {
-        var t = w.querySelector('.dsx-mem-t').value.trim();
-        var x = w.querySelector('.dsx-mem-x').value.trim();
-        if (t || x) notes.push({ t: t.slice(0, 120), x: x.slice(0, 12000) });
-      });
-      cfg.memory = clampMemory(notes);
-      saveCfg();
-      refreshPrompt(); // пересобрать промпт с новыми правилами
-      toast(T('Сохранено', 'Saved'));
-      closeModals();
-    };
+    root.querySelector('.dsx-mem-add').onclick = function () { addMemCard({ t: '', x: '' }); saveMem(); };
   }
 
-  // ---------------- наша модалка настроек (резервный путь; сайт-таб — основной)
+  // ---------------- наша модалка настроек (резерв; сайт-табы — основной путь)
   function showSettingsModal() {
     var card = overlayBase(560);
-    card.innerHTML = modalHeader(T('Настройки агента', 'Agent settings')) + agentSettingsHtml();
+    card.innerHTML = modalHeader(T('Настройки агента', 'Agent settings')) +
+      '<div style="padding:0 20px"><div style="font-size:16px;font-weight:600;padding:12px 0 2px">' + T('Агент', 'Agent') + '</div></div>' +
+      '<div class="dsx-pane-agent" style="padding:0 20px"></div>' +
+      '<div style="padding:0 20px"><div style="font-size:16px;font-weight:600;padding:12px 0 2px">' + T('Контекст', 'Context') + '</div></div>' +
+      '<div class="dsx-pane-context" style="padding:0 20px 18px"></div>';
     bindModalChrome(card);
-    bindAgentSettings(card);
+    var pa = card.querySelector('.dsx-pane-agent'); pa.innerHTML = agentPaneHtml(); bindAgentPane(pa);
+    var pc = card.querySelector('.dsx-pane-context'); pc.innerHTML = contextPaneHtml(); bindContextPane(pc);
   }
 
-  // ---------------- вкладка «Агент» ВНУТРИ нативного Settings сайта
+  // ---------------- две вкладки ВНУТРИ нативного Settings сайта
   function findSiteSettingsModal() {
     var title = document.querySelector('.ds-modal-content__title');
     if (!title) return null;
     var tt = (title.textContent || '').trim();
     if (tt !== 'Settings' && tt !== 'Настройки') return null;
     return title.closest('.ds-modal-content');
+  }
+  function openDsxPane(modal, content, tab, kind) {
+    var pane = content.querySelector('.dsx-agent-pane[data-kind="' + kind + '"]');
+    if (!pane) {
+      pane = document.createElement('div');
+      pane.className = 'dsx-agent-pane';
+      pane.setAttribute('data-kind', kind);
+      pane.style.cssText = 'font-size:14px;color:var(--dsw-alias-label-primary,#eee);padding:4px 2px 16px';
+      if (kind === 'agent') { pane.innerHTML = agentPaneHtml(); bindAgentPane(pane); }
+      else { pane.innerHTML = contextPaneHtml(); bindContextPane(pane); }
+      content.appendChild(pane);
+    }
+    Array.prototype.forEach.call(content.children, function (c) {
+      if (c === pane) { c.style.display = ''; }
+      else if (c.classList.contains('dsx-agent-pane')) { c.style.display = 'none'; }
+      else if (c.style.display !== 'none') { c.dataset.dsxHidden = '1'; c.style.display = 'none'; }
+    });
+    var rail = modal.querySelector('.d316d158');
+    if (rail) {
+      rail.querySelectorAll('.ds-button').forEach(function (b) { b.classList.remove('_699d482'); });
+    }
+    tab.classList.add('_699d482');
+  }
+  function addSiteTab(modal, rail, content, label, kind) {
+    var srcBtn = rail.querySelector('.ds-button');
+    var tab = srcBtn.cloneNode(true);
+    tab.classList.add('dsx-site-tab');
+    tab.classList.remove('_699d482');
+    var lbl = tab.querySelector('.ds-button__content');
+    if (lbl) lbl.textContent = label;
+    tab.addEventListener('click', function () { openDsxPane(modal, content, tab, kind); });
+    rail.appendChild(tab);
   }
   function ensureSiteSettingsTab() {
     var modal = findSiteSettingsModal();
@@ -1716,49 +1777,27 @@ tree || '(структура недоступна — спросите чере�
     if (!rail || !content) return;
     // миграция: снести старую пилюлю у композера и шестерёнку, если остались
     document.querySelectorAll('.dsx-pilot-tg,.dsx-gear-btn').forEach(function (n) { n.remove(); });
-    if (rail.querySelector('.dsx-site-tab')) return;
-    var srcBtn = rail.querySelector('.ds-button');
-    if (!srcBtn) return;
-    var tab = srcBtn.cloneNode(true);
-    tab.classList.add('dsx-site-tab');
-    tab.classList.remove('_699d482');
-    var lbl = tab.querySelector('.ds-button__content');
-    if (lbl) lbl.textContent = T('Агент', 'Agent');
-    tab.addEventListener('click', function () {
-      var pane = content.querySelector('.dsx-agent-pane');
-      if (!pane) {
-        pane = document.createElement('div');
-        pane.className = 'dsx-agent-pane';
-        pane.style.cssText = 'font-size:14px;color:var(--dsw-alias-label-primary,#eee)';
-        pane.innerHTML = agentSettingsHtml();
-        bindAgentSettings(pane);
-        content.appendChild(pane);
-      }
-      Array.prototype.forEach.call(content.children, function (c) {
-        if (c === pane) { c.style.display = ''; }
-        else if (c.style.display !== 'none') { c.dataset.dsxHidden = '1'; c.style.display = 'none'; }
-      });
-      rail.querySelectorAll('.ds-button').forEach(function (b) { b.classList.remove('_699d482'); });
-      tab.classList.add('_699d482');
-    });
-    rail.addEventListener('click', function (ev) {
-      var b = ev.target && ev.target.closest ? ev.target.closest('.ds-button') : null;
-      if (!b || b.classList.contains('dsx-site-tab')) return;
-      // клик по родному табу: вернуть сайтовый контент
-      Array.prototype.forEach.call(content.children, function (c) {
-        if (c.classList.contains('dsx-agent-pane')) { c.style.display = 'none'; return; }
-        if (c.dataset.dsxHidden === '1') { c.style.display = ''; delete c.dataset.dsxHidden; }
-      });
-      var our = rail.querySelector('.dsx-site-tab');
-      if (our) our.classList.remove('_699d482');
-    }, true);
-    rail.appendChild(tab);
-    if (!sessionStorage.getItem('dsx:hintTabs')) {
-      sessionStorage.setItem('dsx:hintTabs', '1');
-      toast(T('Настройки агента — вкладка «Агент» здесь же', 'Agent settings — the “Agent” tab right here'));
+    if (!rail.dataset.dsxTabs) {
+      rail.dataset.dsxTabs = '1';
+      addSiteTab(modal, rail, content, T('Агент', 'Agent'), 'agent');
+      addSiteTab(modal, rail, content, T('Контекст', 'Context'), 'context');
+      rail.addEventListener('click', function (ev) {
+        var b = ev.target && ev.target.closest ? ev.target.closest('.ds-button') : null;
+        if (!b || b.classList.contains('dsx-site-tab')) return;
+        // клик по родному табу: вернуть сайтовый контент
+        Array.prototype.forEach.call(content.children, function (c) {
+          if (c.classList.contains('dsx-agent-pane')) { c.style.display = 'none'; return; }
+          if (c.dataset.dsxHidden === '1') { c.style.display = ''; delete c.dataset.dsxHidden; }
+        });
+        rail.querySelectorAll('.dsx-site-tab').forEach(function (t2) { t2.classList.remove('_699d482'); });
+      }, true);
     }
   }
-  setInterval(ensureSiteSettingsTab, 1200);
+  try {
+    new MutationObserver(function () { try { ensureSiteSettingsTab(); } catch (e) {} })
+      .observe(document.documentElement, { childList: true, subtree: true });
+  } catch (e) {}
+  setInterval(ensureSiteSettingsTab, 1500); // страховка
 
   // ---------------- события моста (папка выбрана жестом в MAIN-мире)
   function onBridgeEvent(m) {
@@ -1880,7 +1919,7 @@ tree || '(структура недоступна — спросите чере�
     nativeSetValue(editor, wrapStealth(prefix, chip, v.replace(/^\s+/, '')));
     if (!st.primedOnce && st.bigPrompt) {
       st.primedOnce = true; sessionStorage.setItem('dsx:primed', '1');
-      toast(T('Контекст проекта подшит к первому сообщению', 'Project context attached to the first message'));
+      // без тоста: юзеру тихо
     }
     // новое сообщение юзера = новый цикл: дедуп NEED сбрасываем (в т.ч. на диске)
     st.autoCount = 0; st.sentFiles = {}; st.sentSearches = {}; st.sentInfos = {}; st.sentRanges = {}; st.sentWeb = {}; st.sentDl = {}; st.sentGrep = {}; sentSave();
@@ -1994,10 +2033,43 @@ tree || '(структура недоступна — спросите чере�
     } catch (e) {}
   }, 1000);
 
+  // ---------------- защита от повторов (скролл/перерисовка списка не должна
+  // перезапускать выполненное: ops, shell, ask — всё по ключу ответа)
+  function actRead() {
+    try { var a = JSON.parse(sessionStorage.getItem('dsx:acts') || 'null'); if (a) return a; } catch (e) {}
+    return { ops: [], sh: [], ask: [] };
+  }
+  function actSeen(bucket, key) { return actRead()[bucket].indexOf(key) >= 0; }
+  function actMark(bucket, key) {
+    var a = actRead();
+    if (a[bucket].indexOf(key) >= 0) return;
+    a[bucket].push(key);
+    if (a[bucket].length > 500) a[bucket] = a[bucket].slice(-500);
+    try { sessionStorage.setItem('dsx:acts', JSON.stringify(a)); } catch (e) {}
+  }
+  function actReset() { try { sessionStorage.removeItem('dsx:acts'); } catch (e) {} }
+
+  // ---------------- групповая отправка: несколько карточек = ОДИН ответ модели
+  async function groupOrSend(block, card, text, logTag) {
+    card.setAttribute('data-done', '1');
+    block.__dsxOut = block.__dsxOut || [];
+    block.__dsxOut.push(text);
+    var host = block.closest('._4f9bf79') || block.parentElement;
+    var pend = host ? host.querySelectorAll('[data-dsx-card]:not([data-done])').length : 0;
+    if (pend > 0) return 'wait';
+    var parts = block.__dsxOut; block.__dsxOut = [];
+    var ok = await injectStealth(parts.join('\n\n'), logTag);
+    if (!ok) return 'fail';
+    st.autoCount++;
+    st.waitingAnswer = true; sessionStorage.setItem('dsx:wait', '1');
+    sessionStorage.setItem('dsx:auto', String(st.autoCount));
+    return 'sent';
+  }
+
   // ---------------- автоклик «Continue/Продолжить» (оборванная генерация)
   var lastContinueAt = 0;
   function clickContinueIfAny() {
-    if (!cfg.pilot) return;
+    if (!cfg.pilot || cfg.autoContinue === false) return;
     if (Date.now() - lastContinueAt < 8000) return; // один клик в 8 сек максимум
     // родной чип «Continue» сайта — точный селектор из разметки
     var btn = document.querySelector('._8e85838 [role="button"]');
@@ -2028,6 +2100,7 @@ tree || '(структура недоступна — спросите чере�
     var el = findEditor();
     if (!el) { toast(T('Не нашёл поле ввода чата', 'Chat input not found')); return false; }
     el.focus();
+    el.style.visibility = 'hidden'; // юзер не видит вливаемый служебный текст
     nativeSetValue(el, wrapStealth(real, logTag, ''));
     await new Promise(function (r) { setTimeout(r, 320); });
     var clicked = false;
@@ -2051,6 +2124,7 @@ tree || '(структура недоступна — спросите чере�
         ke.__dsxBypass = true; el.dispatchEvent(ke);
       });
     }
+    setTimeout(function () { el.style.visibility = ''; }, 450);
     console.log('[DSX] service-send:', logTag, real.length, 'chars');
     return true;
   }
@@ -2496,7 +2570,7 @@ tree || '(структура недоступна — спросите чере�
     st.waitingAnswer = true; sessionStorage.setItem('dsx:wait', '1');
     sessionStorage.setItem('dsx:auto', String(st.autoCount));
   }
-  async function execShell(block, cmd, statusEl) {
+  async function execShell(block, cmd, statusEl, defer) {
     if (statusEl) statusEl.textContent = T('Выполняет: ', 'Running: ') + cmd.slice(0, 90) + '…';
     var r = await dsxSend('shell', { cmd: cmd });
     var report, short;
@@ -2515,12 +2589,16 @@ tree || '(структура недоступна — спросите чере�
       short = T('Ошибка шелла: ', 'Shell error: ') + er.slice(0, 80);
     }
     if (statusEl) statusEl.textContent = short;
+    if (defer) return 'SYSTEM: shell result for ' + cmd + '\n' + report;
     await shellSend(cmd, report); shellBookkeep();
     finalizeBadges(block); hideActionBar(block);
+    return '';
   }
   function runShellCmd(block, cmd) {
-    // авто-режим (галка в карточке): исполняем без вопроса
-    if (st.shellAuto) { execShell(block, cmd, null); return; }
+    var shKey = hashStr((block.textContent || '').slice(0, 500) + '|sh|' + cmd);
+    if (actSeen('sh', shKey)) return; // уже выполняли — не второй раз
+    // авто-режим: настройка «Шелл без подтверждения» или галка сессии
+    if (st.shellAuto || cfg.shellAuto === true) { actMark('sh', shKey); execShell(block, cmd, null); return; }
     try {
       var host = block.closest('._4f9bf79') || block.parentElement;
       if (!host) return;
@@ -2529,6 +2607,7 @@ tree || '(структура недоступна — спросите чере�
 
       var card = document.createElement('div');
       card.setAttribute('data-key', key);
+      card.setAttribute('data-dsx-card', '1');
       card.style.cssText = 'margin-top:10px;padding:12px 14px;border-radius:12px;max-width:560px;' +
         'background:var(--dsw-alias-bg-layer-2,#1d1f24);' +
         'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1))';
@@ -2563,7 +2642,8 @@ tree || '(структура недоступна — спросите чере�
       autoLab.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;' +
         'color:var(--dsw-alias-label-tertiary,#888)';
       var autoCb = document.createElement('input');
-      autoCb.type = 'checkbox'; autoCb.style.cssText = 'width:14px;height:14px;accent-color:#5686fe;margin:0';
+      autoCb.type = 'checkbox'; autoCb.checked = cfg.shellAuto === true;
+      autoCb.style.cssText = 'width:14px;height:14px;accent-color:#5686fe;margin:0';
       var autoTx = document.createElement('span');
       autoTx.textContent = T('авто-разрешать до конца сессии', 'auto-allow for this session');
       autoLab.appendChild(autoCb); autoLab.appendChild(autoTx);
@@ -2576,20 +2656,26 @@ tree || '(структура недоступна — спросите чере�
       host.appendChild(card);
 
       run.onclick = function () {
-        if (autoCb.checked) st.shellAuto = true;
+        cfg.shellAuto = !!autoCb.checked; saveCfg();
         run.disabled = true; no.disabled = true;
         code.style.opacity = '.6';
-        execShell(block, cmd, statusEl).then(function () {
+        actMark('sh', shKey);
+        execShell(block, cmd, statusEl, true).then(function (payload) {
           card.removeChild(code); card.removeChild(row);
+          groupOrSend(block, card, payload, 'шелл').then(function (res) {
+            if (res === 'sent') { finalizeBadges(block); hideActionBar(block); }
+            else if (res === 'wait') statusEl.textContent = T('Выполнено — жду остальные карточки…', 'Done — waiting for the other cards…');
+          });
         });
       };
       no.onclick = async function () {
-        run.disabled = true; no.disabled = true; card.removeChild(code); card.removeChild(row);
+        run.disabled = true; no.disabled = true;
+        card.removeChild(code); card.removeChild(row);
         statusEl.textContent = T('Отклонено: ', 'Rejected: ') + cmd.slice(0, 90);
-        await shellSend(cmd, 'The user REJECTED this command in the confirm card. Do NOT retry it; ' +
-          'continue without it, or suggest a manual alternative in text.');
-        shellBookkeep();
-        finalizeBadges(block); hideActionBar(block);
+        var txt = 'SYSTEM: shell command was REJECTED by the user in the confirm card. ' +
+          'Do NOT retry it; continue without it, or suggest a manual alternative in text.\nCOMMAND: ' + cmd;
+        var res = await groupOrSend(block, card, txt, 'шелл-отказ');
+        if (res === 'sent') { finalizeBadges(block); hideActionBar(block); }
       };
       console.log('[DSX] shell-карточка: «' + cmd.slice(0, 60) + '»');
     } catch (e) { console.warn('[DSX] shell card error', e); }
@@ -2625,9 +2711,12 @@ tree || '(структура недоступна — спросите чере�
       if (!host) return;
       var key = 'dsx-ask-' + hashStr(ask.q + '|' + (ask.opts || []).join(';')).slice(0, 24);
       if (host.querySelector('[data-key="' + key + '"]')) return;
+      var aKey = hashStr((block.textContent || '').slice(0, 300) + '|ask|' + ask.q);
+      if (actSeen('ask', aKey)) return; // отвечали — не дублим карточку после перерисовки
 
       var card = document.createElement('div');
       card.setAttribute('data-key', key);
+      card.setAttribute('data-dsx-card', '1');
       card.style.cssText = 'margin-top:10px;padding:12px 14px;border-radius:12px;' +
         'background:var(--dsw-alias-bg-layer-2,#1d1f24);' +
         'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1));max-width:520px';
@@ -2714,18 +2803,17 @@ tree || '(структура недоступна — спросите чере�
           'QUESTION: «' + ask.q + '»\n' +
           'ANSWER' + (ask.multi ? 'S (several picked)' : '') + ': ' +
           (ask.multi ? '\n- ' + picked.join('\n- ') : picked.join('; '));
-        var ok = await injectStealth(answer, 'ответ на вопрос');
-        if (!ok) { btn.disabled = false; btn.style.opacity = '1'; btn.textContent = T('Отправить ответ', 'Send answer'); return; }
-        st.autoCount++;
-        st.waitingAnswer = true; sessionStorage.setItem('dsx:wait', '1');
-        sessionStorage.setItem('dsx:auto', String(st.autoCount));
+        actMark('ask', aKey);
+        var res = await groupOrSend(block, card, answer, 'ответ на вопрос');
+        if (res === 'fail') { btn.disabled = false; btn.style.opacity = '1'; btn.textContent = T('Отправить ответ', 'Send answer'); return; }
         card.innerHTML = '';
         var doneRow = document.createElement('div');
-        doneRow.textContent = T('Ответ отправлен: ', 'Answer sent: ') + picked.join(', ');
+        doneRow.textContent = (res === 'wait'
+          ? T('Ответ принят (жду остальные карточки): ', 'Answer accepted (waiting for the other cards): ')
+          : T('Ответ отправлен: ', 'Answer sent: ')) + picked.join(', ');
         doneRow.style.cssText = 'font-size:12.5px;color:var(--dsw-alias-label-tertiary,#888)';
         card.appendChild(doneRow);
-        finalizeBadges(block);
-        hideActionBar(block);
+        if (res === 'sent') { finalizeBadges(block); hideActionBar(block); }
       };
 
       host.appendChild(card);
@@ -2764,7 +2852,17 @@ tree || '(структура недоступна — спросите чере�
       rows.forEach(function (t) {
         var p = document.createElement('p');
         p.className = 'dsx-row-line';
-        p.textContent = t;
+        var safe = String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        safe = safe
+          .replace(/^([✓✗]) /, function (m, ch) {
+            return '<span style="color:' + (ch === '✓' ? '#3fb950' : '#f85149') + ';font-weight:600">' + ch + '</span> ';
+          })
+          .replace(/\[(\+\d+)(?: -(\d+))?\]/g, function (m, a2, d2) {
+            var s2 = ' <span style="color:#3fb950;font-weight:600">' + a2 + '</span>';
+            if (d2) s2 += ' <span style="color:#f85149;font-weight:600">-' + d2 + '</span>';
+            return s2;
+          });
+        p.innerHTML = safe;
         p.style.cssText = 'margin:2px 0;font-size:13px;line-height:1.5;' +
           'color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary,#999));' +
           'font-family:var(--dsw-font-family,inherit)';
@@ -2946,7 +3044,11 @@ tree || '(структура недоступна — спросите чере�
           var vh = block.closest('[data-virtual-list-item-key]');
           vKey = vh ? (vh.getAttribute('data-virtual-list-item-key') || '') : '';
         } catch (e) {}
-        if (outp.ops.length && (answHash !== st.opsMeta.h || vKey !== st.opsMeta.k)) {
+        if (outp.ops.length && actSeen('ops', answHash)) {
+          // скролл вверх/перерисовка вирт-листа: эти правки УЖЕ применены — пропуск
+          rows.push(T('Правки этого ответа уже применены — пропуск', 'Edits of this reply were applied already — skipped'));
+          finalizeLiveOps(block, true);
+        } else if (outp.ops.length && (answHash !== st.opsMeta.h || vKey !== st.opsMeta.k)) {
           st.opsMeta = { h: answHash, k: vKey };
           sessionStorage.setItem('dsx:opsh', JSON.stringify(st.opsMeta));
           outp.ops = outp.ops.filter(function (o) {
@@ -2963,7 +3065,11 @@ tree || '(структура недоступна — спросите чере�
               : T('Применено ', 'Applied ') + r.data.done + ' / ' + r.data.total + T(' — есть ошибки', ' — with errors');
             toast(sum);
             rows.push(sum);
+            String(r.data.report || '').split('\n').forEach(function (ln) {
+              if (/^[✓✗] /.test(ln)) rows.push(ln); // «✓ app.py [+12 -3]» — покрасивше
+            });
             finalizeLiveOps(block, true);
+            actMark('ops', answHash);
             note = 'SYSTEM: ops applied automatically by DeepSeek Extended:\n\n```\n' +
                    r.data.report + '\n```\n';
             refreshPrompt(); // дерево изменилось
@@ -3061,6 +3167,7 @@ tree || '(структура недоступна — спросите чере�
       st.primedOnce = false; st.lastAnswer = ''; st.lastBlock = null; st.opsMeta = { h: '', k: '' };
       st.sentFiles = {}; st.sentSearches = {}; st.sentInfos = {}; st.sentRanges = {}; st.sentWeb = {}; st.sentDl = {}; st.sentGrep = {}; sentLoad(); // дедуп новой беседы
       st.liveSeen = {};
+      actReset(); // новый чат — выполненное снова доступно
       st.autoCount = 0; sessionStorage.setItem('dsx:auto', '0');
       sessionStorage.removeItem('dsx:primed');
       sessionStorage.removeItem('dsx:opsh');
@@ -3107,7 +3214,7 @@ tree || '(структура недоступна — спросите чере�
       if (isUserTail) {
         if (!st.reloadHint) {
           st.reloadHint = 1;
-          toast(T('Ответ модели оборвался — автопилот попробует Continue сам', 'The model’s reply got cut — autopilot will try Continue itself'));
+          /* тихо: Continue сам жмём */
           console.log('[DSX] хвост беседы — сообщение без ответа (после перезагрузки)');
         }
       } else if (st.folderReady) {
@@ -3346,7 +3453,7 @@ def run_app():
             self.page.runJavaScript('navigator.userAgent', lambda ua: print('[DSX] UA -> ' + str(ua)))
 
         def update_project_chip(self, name):
-            self.proj_chip.setText('Папка: ' + str(name))
+            self.proj_chip.setText('')
 
         def center_window(self):
             screen = QApplication.primaryScreen().availableGeometry()
