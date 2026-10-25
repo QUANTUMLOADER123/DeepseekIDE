@@ -1593,7 +1593,7 @@ tree || '(структура недоступна — спросите чере�
     s.onclick = function () { set(!get()); setDsSwitch(s, get()); saveCfg(); };
     return s;
   }
-  function debounce(fn, ms) { var t; return function () { clearTimeout(t); t = setTimeout(fn, ms); }; }
+  function dsxDebounce(fn, ms) { var t; return function () { clearTimeout(t); t = setTimeout(fn, ms); }; }
 
   // ====== вкладка «Агент»
   function agentPaneHtml() {
@@ -1662,7 +1662,7 @@ tree || '(структура недоступна — спросите чере�
     var ta = root.querySelector('.dsx-set-rules');
     var jt = root.querySelector('.dsx-set-jbtext');
     ta.value = cfg.rules || ''; jt.value = cfg.jbText || '';
-    var saveText = debounce(function () {
+    var saveText = dsxDebounce(function () {
       cfg.rules = ta.value.slice(0, 4000);
       cfg.jbText = jt.value.slice(0, 3000);
       saveCfg(); refreshPrompt();
@@ -1671,7 +1671,7 @@ tree || '(структура недоступна — спросите чере�
     jt.addEventListener('input', saveText);
     bindSwitch(root, '.dsx-set-jb', function () { return !!cfg.jbTest; }, function (v) { cfg.jbTest = v; refreshPrompt(); });
     var memList = root.querySelector('.dsx-mem-list');
-    var saveMem = debounce(function () {
+    var saveMem = dsxDebounce(function () {
       var notes = [];
       memList.querySelectorAll('.dsx-mem-card').forEach(function (w) {
         var t = w.querySelector('.dsx-mem-t').value.trim();
