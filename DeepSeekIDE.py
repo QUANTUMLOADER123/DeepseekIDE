@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # ======================================================================
-# DeepSeekIDE.py — DeepSeek как десктоп-IDE в ОДНОМ файле (PyQt6 WebEngine).
-# БЕЗ браузерных расширений, БЕЗ native messaging host: весь агент
-# (пилот, чтение/правка файлов, память, интернет, SHELL) встроен:
-#   JS-агент инжектится в страницу DeepSeek; «транспорт» (файлы, шелл,
-#   интернет, диалог выбора папки) делает Python через QWebChannel.
+# DeepSeekIDE.py — DeepSeek как десктоп-IDE в ОДНОМ ФАЙЛЕ (PyQt6 WebEngine).
+# НИЧЕГО БОЛЬШЕ НЕ НУЖНО: ни браузерных расширений, ни native messaging,
+# ни внешних js/qwebchannel-файлов:
+#   * окно = frameless PyQt6 + QWebEngineView со страницей DeepSeek;
+#   * агент (пилот, правки файлов, память, интернет, SHELL) = JS-код,
+#     встроенный ниже строкой AGENT_JS и заинжекченный в страницу;
+#   * транспорт JS<->Python — polling: JS кладёт вызовы в __dsxOutbox,
+#     Python каждые 150 мс забирает их runJavaScript'ом, ответы шлёт
+#     вызовом window.dsxReplyFromPython(...) (файлы на диск, шелл —
+#     subprocess cmd /c, интернет — urllib; никакого CORS-кошмара);
+#   * папка проекта — нативный Qt-диалог.
 # Запуск:  pip install PyQt6 PyQt6-WebEngine  &&  python DeepSeekIDE.py
 # Проверка без GUI:  python DeepSeekIDE.py --selftest
 # ======================================================================
 import base64
 import ctypes
-import html.parser
 import json
 import os
 import re
@@ -21,15 +26,19 @@ import threading
 import time
 import urllib.request
 
-os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-logging"
+os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--enable-gpu-rasterization --enable-zero-copy"
 
 APP_NAME = "DeepSeekIDE"
-START_URL = "https://chat.deepseek.com/"
+START_URL = "https://chat.deepseek.com/sign_in"
+POLL_MS = 150
 TIMEOUT_SHELL = 120          # сек
 TIMEOUT_FETCH = 20           # сек (dl = 60)
 CAP_STDOUT, CAP_STDERR = 65536, 16384
 CAP_PAGE_TEXT = 300000
 CAP_DOWNLOAD = 16 * 1024 * 1024
+
+UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+      '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36')
 
 
 def app_data_dir():
@@ -292,10 +301,6 @@ def shell_run(args):
 # ======================================================================
 # Интернет: WEB FETCH / WEB DOWNLOAD (без CORS-ограничений браузера)
 # ======================================================================
-UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-      '(KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36')
-
-
 def web_fetch(args):
     url = str(args.get('url', '')).strip()
     dl = bool(args.get('dl'))
@@ -334,44 +339,34 @@ FS_OPS = {
 
 
 # ======================================================================
-# JS-агент (сборка из extension/ через tools/build_single.py):
-#   qt-клей + opp.js + fsbridge.js + content.js, qwebchannel.js грузится
-#   из установленного PyQt6 в момент инжекции.
+# JS-агент (встроен): qt-клей (polling outbox) + opp.js + fsbridge.js +
+# content.js из старого расширения. Инжектится одним runJavaScript.
 # ======================================================================
-AGENT_JS = r"""/* DeepSeekIDE Qt-клей: единый вызов в Python через QWebChannel (асинхронно).
- * window.dsxCall(kind, data) -> Promise(object)  — его дергают content.js
- * (webfetch/shell) и fsbridge.js (все fs-опы). */
+AGENT_JS = r"""/* DeepSeekIDE Qt-клей без внешних файлов: outbox-поллинг.
+ * window.dsxCall(kind, data) -> Promise(object); Python каждые ~150ms
+ * сливает window.__dsxOutbox, отвечает вызовом dsxReplyFromPython. */
 window.__DSX_QT = true;
+window.__dsxOutbox = window.__dsxOutbox || [];
 (function () {
-  var pend = {}, tok = 0, ready = false, queue = [], bridge = null;
+  var pend = {}, tok = 0;
   window.dsxCall = function (kind, data) {
     return new Promise(function (res, rej) {
-      var t = 'qt' + (++tok) + '_' + Date.now();
+      var t = 'q' + (++tok) + '_' + Date.now();
       pend[t] = { res: res, rej: rej };
-      var go = function () {
-        try { bridge.invokeOp(t, kind, JSON.stringify(data || {})); }
-        catch (e) { delete pend[t]; rej(e); }
-      };
-      if (ready) go(); else queue.push(go);
+      window.__dsxOutbox.push({ t: t, kind: kind, payload: data || {} });
       setTimeout(function () {
-        if (pend[t]) { delete pend[t]; rej(new Error('qt bridge timeout')); }
+        if (pend[t]) { delete pend[t]; rej(new Error('host timeout')); }
       }, 185000);
     });
   };
-  try {
-    new QWebChannel(qt.webChannelTransport, function (ch) {
-      bridge = ch.objects.dsx;
-      bridge.reply.connect(function (t, json) {
-        var p = pend[t]; if (!p) return; delete pend[t];
-        try { p.res(JSON.parse(json)); } catch (e) { p.rej(e); }
-      });
-      ready = true;
-      queue.forEach(function (f) { f(); });
-      queue = [];
-      console.log('[DSX] qt-bridge ready');
-    });
-  } catch (e) { console.warn('[DSX] qt-bridge init failed', e); }
+  window.dsxReplyFromPython = function (m) {
+    if (!m) return;
+    var p = pend[m.t]; if (!p) return; delete pend[m.t];
+    p.res(m.out);
+  };
+  console.log('[DSX] qt-bridge ready (polling)');
 })();
+
 ;
 /* =====================================================================
  * opp.js — «мозг» DeepSeek Extended: парсер deepseekide-ops, математика
@@ -3091,24 +3086,12 @@ tree || '(структура недоступна — спросите чере�
 """
 
 
-def load_qwebchannel_js():
-    """qwebchannel.js лежит в установленном PyQt6 — поднимаем оттуда."""
-    import pathlib
-    import PyQt6
-    base = pathlib.Path(PyQt6.__file__).resolve().parent
-    hits = list(base.glob('**/qtwebchannel/qwebchannel.js'))
-    if not hits:
-        raise RuntimeError('qwebchannel.js не найден в PyQt6 — переустанови: pip install -U PyQt6-WebEngine')
-    return hits[0].read_text(encoding='utf-8')
-
-
 # ======================================================================
-# Самотест без GUI: FS-пайплайн + shell + webfetch (сеть опциональна)
+# Самотest без GUI: FS-пайплайн + shell (интернет проверяется вживую)
 # ======================================================================
 def selftest():
     import tempfile
     root = tempfile.mkdtemp(prefix='dsx_selftest_')
-    cfg = load_cfg(); cfg['_selftest_folder'] = root
     global project_root
     _orig = project_root
     project_root = lambda: root  # noqa: E731 — временно подменяем корень
@@ -3131,59 +3114,74 @@ def selftest():
 
 
 # ======================================================================
-# Qt: окно + WebChannel-мост
+# Qt: окно + polling-мост
 # ======================================================================
 def run_app():
-    from PyQt6.QtCore import QUrl, Qt
+    from PyQt6.QtCore import QUrl, Qt, QTimer, QObject, pyqtSignal
     from PyQt6.QtGui import QMouseEvent, QRegion
-    from PyQt6.QtWebChannel import QWebChannel
     from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEngineSettings, QWebEnginePage
     from PyQt6.QtWebEngineWidgets import QWebEngineView
     from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QHBoxLayout, QVBoxLayout, QWidget, QLabel, QFileDialog
-    from PyQt6.QtCore import QObject, pyqtSlot, pyqtSignal
 
     class Bridge(QObject):
-        reply = pyqtSignal(str, str)
+        """Никаких qwebchannel: outbox-поллер сливает вызовы JS -> Python;
+        ответы уезжают обратно page.runJavaScript(dsxReplyFromPython(...))."""
+        pushResult = pyqtSignal(str)
 
-        def __init__(self_obj, win):
+        def __init__(self, page, win):
             super().__init__()
-            self_obj.win = win
+            self.page = page
+            self.win = win
+            self.pushResult.connect(self._emit_to_js)
 
-        @pyqtSlot(str, str, str)
-        def invokeOp(self_obj, token, kind, payload):
-            try:
-                args = json.loads(payload or '{}')
-            except Exception:
-                args = {}
-            # выбор папки — только из GUI-потока (модальный диалог), отвечаем сразу
-            if kind == 'fs' and args.get('op') == 'pick':
-                path = QFileDialog.getExistingDirectory(self_obj.win, 'Папка проекта') or ''
+        def _emit_to_js(self, blob):
+            self.page.runJavaScript('(window.dsxReplyFromPython||function(){})(%s);' % blob)
+
+        def handle_item(self, item):
+            t = item.get('t'); kind = item.get('kind')
+            payload = item.get('payload') or {}
+            # выбор папки — GUI-поток, модальный диалог, отвечаем сразу
+            if kind == 'fs' and payload.get('op') == 'pick':
+                path = QFileDialog.getExistingDirectory(self.win, 'Папка проекта') or ''
                 if path:
                     cfg = load_cfg(); cfg['folder'] = path; save_cfg(cfg)
                     out = {'ok': True, 'path': path, 'name': os.path.basename(os.path.normpath(path))}
                 else:
                     out = {'ok': False, 'error': 'папка не выбрана'}
-                self_obj.reply.emit(token, json.dumps(out, ensure_ascii=False))
+                self.pushResult.emit(json.dumps({'t': t, 'out': out}, ensure_ascii=False))
                 return
 
             def work():
                 try:
                     if kind == 'fs':
-                        op = args.get('op')
-                        if op not in FS_OPS:
-                            out = {'ok': False, 'error': 'unknown fs op: %s' % op}
-                        else:
-                            out = FS_OPS[op](args)
+                        op = payload.get('op')
+                        fn = FS_OPS.get(op)
+                        out = fn(payload) if fn else {'ok': False, 'error': 'unknown fs op: %s' % op}
                     elif kind == 'shell':
-                        out = shell_run(args)
+                        out = shell_run(payload)
                     elif kind == 'webfetch':
-                        out = web_fetch(args)
+                        out = web_fetch(payload)
                     else:
                         out = {'ok': False, 'error': 'unknown kind: %s' % kind}
                 except Exception as e:
                     out = {'ok': False, 'error': str(e)}
-                self_obj.reply.emit(token, json.dumps(out, ensure_ascii=False))
+                self.pushResult.emit(json.dumps({'t': t, 'out': out}, ensure_ascii=False))
             threading.Thread(target=work, daemon=True).start()
+
+        def poll(self):
+            self.page.runJavaScript(
+                'window.__dsxOutbox ? JSON.stringify(window.__dsxOutbox.splice(0, window.__dsxOutbox.length)) : "[]"',
+                self._got_items)
+
+        def _got_items(self, text):
+            if not text or text == '[]':
+                return
+            try:
+                items = json.loads(text)
+            except Exception:
+                return
+            for item in items or []:
+                self.handle_item(item)
 
     class DeepSeekApp(QMainWindow):
         def __init__(self):
@@ -3195,7 +3193,6 @@ def run_app():
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
             self.drag_position = None
             self.normal_geometry = None
-            self._agent_js = None
 
             self.setStyleSheet("""
                 QMainWindow { background: transparent; }
@@ -3218,16 +3215,16 @@ def run_app():
             settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
             settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
 
-            # WebChannel: объект 'dsx' виден странице
-            self.bridge = Bridge(self)
-            self.channel = QWebChannel(self.page)
-            self.channel.registerObject('dsx', self.bridge)
-            self.page.setWebChannel(self.channel)
-
             self.view = QWebEngineView()
             self.view.setPage(self.page)
             self.page.loadFinished.connect(self.inject_agent)
             self.view.load(QUrl(START_URL))
+
+            self.bridge = Bridge(self.page, self)
+            self.poll_timer = QTimer(self)
+            self.poll_timer.setInterval(POLL_MS)
+            self.poll_timer.timeout.connect(self.bridge.poll)
+            self.poll_timer.start()
 
             header = QWidget(objectName="header")
             header.setFixedHeight(40)
@@ -3274,15 +3271,7 @@ def run_app():
             self.resizeEvent(None)
 
         def inject_agent(self):
-            """Полный бандл агента: qwebchannel.js + qt-клей + opp/fsbridge/content."""
-            if self._agent_js is None:
-                try:
-                    qweb_js = load_qwebchannel_js()
-                except Exception as e:
-                    print('[DSX] ' + str(e))
-                    return
-                self._agent_js = qweb_js + '\n;\n' + AGENT_JS
-            self.page.runJavaScript(self._agent_js)
+            self.page.runJavaScript(AGENT_JS)
 
         def center_window(self):
             screen = QApplication.primaryScreen().availableGeometry()
