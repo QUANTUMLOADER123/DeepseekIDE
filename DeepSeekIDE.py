@@ -3118,7 +3118,7 @@ def selftest():
 # ======================================================================
 def run_app():
     from PyQt6.QtCore import QUrl, Qt, QTimer, QObject, pyqtSignal
-    from PyQt6.QtGui import QMouseEvent, QRegion
+    from PyQt6.QtGui import QFont, QMouseEvent, QRegion
     from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEngineSettings, QWebEnginePage
     from PyQt6.QtWebEngineWidgets import QWebEngineView
     from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QHBoxLayout, QVBoxLayout, QWidget, QLabel, QFileDialog
@@ -3145,7 +3145,9 @@ def run_app():
                 path = QFileDialog.getExistingDirectory(self.win, 'Папка проекта') or ''
                 if path:
                     cfg = load_cfg(); cfg['folder'] = path; save_cfg(cfg)
-                    out = {'ok': True, 'path': path, 'name': os.path.basename(os.path.normpath(path))}
+                    name = os.path.basename(os.path.normpath(path))
+                    self.win.update_project_chip(name)
+                    out = {'ok': True, 'path': path, 'name': name}
                 else:
                     out = {'ok': False, 'error': 'папка не выбрана'}
                 self.pushResult.emit(json.dumps({'t': t, 'out': out}, ensure_ascii=False))
@@ -3183,6 +3185,13 @@ def run_app():
             for item in items or []:
                 self.handle_item(item)
 
+    class QuietPage(QWebEnginePage):
+        def javaScriptConsoleMessage(self, level, msg, line, src_):
+            s = str(msg)
+            if 'WebGPU' in s or 'WebAssembly' in s or 'MIME type' in s:
+                return  # шум движка самого сайта — в консоль не тащим
+            super().javaScriptConsoleMessage(level, msg, line, src_)
+
     class DeepSeekApp(QMainWindow):
         def __init__(self):
             super().__init__()
@@ -3196,12 +3205,16 @@ def run_app():
 
             self.setStyleSheet("""
                 QMainWindow { background: transparent; }
-                #header { background: #1a1a1a; }
-                #title { color: rgb(71, 107, 197); font-size: 13px; font-weight: bold; }
-                QPushButton {
-                    background: transparent; color: white; border: none; font-size: 16px; padding: 4px 8px;
-                }
-                QPushButton:hover { background: rgba(255,255,255,0.1); border-radius: 6px; }
+                #header { background: #15171c; }
+                #title { color: #e8eaed; font-family: "Segoe UI Semibold", "Segoe UI", sans-serif;
+                         font-size: 13px; font-weight: 600; letter-spacing: .3px; }
+                #brandDot { color: #4d7cfe; font-size: 14px; }
+                #projChip { color: #9aa4b2; font-family: "Segoe UI"; font-size: 11px;
+                            background: #22262e; border-radius: 9px; padding: 3px 12px; }
+                QPushButton { background: transparent; border: none; border-radius: 8px;
+                              min-width: 34px; max-width: 34px; min-height: 26px; max-height: 26px; }
+                QPushButton:hover { background: rgba(255,255,255,0.10); }
+                QPushButton#closeBtn:hover { background: #e81123; }
                 QWebEngineView { background: #0d0d0d; }
             """)
 
@@ -3210,7 +3223,7 @@ def run_app():
             self.profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
             self.profile.setHttpUserAgent(UA)
 
-            self.page = QWebEnginePage(self.profile, self)
+            self.page = QuietPage(self.profile, self)
             settings = self.page.settings()
             settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
             settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
@@ -3232,24 +3245,49 @@ def run_app():
             header_layout.setContentsMargins(16, 0, 16, 0)
             header_layout.setSpacing(0)
 
-            title = QLabel("deepseek ide")
+            icon_font = QFont("Segoe MDL2 Assets", 9)
+
+            dot = QLabel("◉")
+            dot.setObjectName("brandDot")
+
+            title = QLabel("DeepSeek IDE")
             title.setObjectName("title")
 
-            minimize_btn = QPushButton("−")
+            self.proj_chip = QLabel("папка не выбрана")
+            self.proj_chip.setObjectName("projChip")
+            _init_folder = load_cfg().get('folder')
+            if _init_folder:
+                self.update_project_chip(os.path.basename(os.path.normpath(_init_folder)))
+
+            refresh_btn = QPushButton("")  # refresh
+            refresh_btn.setFont(icon_font)
+            refresh_btn.setToolTip("Обновить страницу")
+            refresh_btn.clicked.connect(lambda: self.view.reload())
+            minimize_btn = QPushButton("")  # minimize
+            minimize_btn.setFont(icon_font)
             minimize_btn.clicked.connect(self.showMinimized)
-            fullscreen_btn = QPushButton("□")
+            fullscreen_btn = QPushButton("")  # maximize/fullscreen
+            fullscreen_btn.setFont(icon_font)
+            fullscreen_btn.setToolTip("На весь экран / обратно")
             fullscreen_btn.clicked.connect(self.toggle_fullscreen)
-            close_btn = QPushButton("✕")
+            close_btn = QPushButton("")      # close (hover — красный по-виндовому)
+            close_btn.setObjectName("closeBtn")
+            close_btn.setFont(icon_font)
             close_btn.clicked.connect(self.close)
 
             btn_layout = QHBoxLayout()
-            btn_layout.setSpacing(8)
+            btn_layout.setSpacing(4)
+            btn_layout.addWidget(refresh_btn)
             btn_layout.addWidget(minimize_btn)
             btn_layout.addWidget(fullscreen_btn)
             btn_layout.addWidget(close_btn)
 
+            header_layout.addWidget(dot)
+            header_layout.addSpacing(8)
             header_layout.addWidget(title)
             header_layout.addStretch()
+            header_layout.addWidget(self.proj_chip)
+            header_layout.addSpacing(10)
             header_layout.addLayout(btn_layout)
 
             main_layout = QVBoxLayout()
@@ -3275,6 +3313,9 @@ def run_app():
             # диагностика: смотрим, что движок видит сайту (в консоль приложения)
             self.page.runJavaScript('navigator.userAgent', lambda ua: print('[DSX] UA -> ' + str(ua)))
 
+        def update_project_chip(self, name):
+            self.proj_chip.setText('Папка: ' + str(name))
+
         def center_window(self):
             screen = QApplication.primaryScreen().availableGeometry()
             window_rect = self.frameGeometry()
@@ -3296,9 +3337,16 @@ def run_app():
             return region
 
         def resizeEvent(self, event):
+            if not self.isFullScreen():
+                self.normal_geometry = self.geometry()  # бэкап размера на лету
             self.setMask(self.rounded_rect_region())
             if event:
                 super().resizeEvent(event)
+
+        def moveEvent(self, event):
+            if not self.isFullScreen():
+                self.normal_geometry = self.geometry()
+            super().moveEvent(event)
 
         def toggle_fullscreen(self):
             if self.isFullScreen():
