@@ -799,8 +799,9 @@ tree || '(структура недоступна — спросите чере�
   function qfs(op, args) {
     var a = {}; for (var k in (args || {})) a[k] = args[k]; a.op = op;
     return window.dsxCall('fs', a).then(function (r) {
-      if (r && r.ok === false) throw new Error(r.error || 'qt fs error: ' + op);
-      return r;
+      if (!r) throw new Error('qt fs: пустой ответ (' + op + ')');
+      if (typeof r.error === 'string' && r.error) throw new Error(r.error);
+      return r;  // {ok:false, needPick:true} — нормальный ответ, НЕ исключение
     });
   }
 
@@ -3199,22 +3200,20 @@ def run_app():
             self.setGeometry(0, 0, 1400, 700)
             self.setMinimumSize(1000, 500)
             self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
-            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+            # БЕЗ setMask: 1-битная маска давала пиксельные «зубцы» на закруглениях.
+            # Гладкие углы окна рисует сам DWM (Windows 11).
             self.drag_position = None
             self.normal_geometry = None
 
             self.setStyleSheet("""
-                QMainWindow { background: transparent; }
-                #header { background: #15171c; }
-                #title { color: #e8eaed; font-family: "Segoe UI Semibold", "Segoe UI", sans-serif;
-                         font-size: 13px; font-weight: 600; letter-spacing: .3px; }
-                #brandDot { color: #4d7cfe; font-size: 14px; }
+                QMainWindow { background: #0d0d0d; }
+                #overlay { background: rgba(20,22,26,215); border-radius: 10px; }
                 #projChip { color: #9aa4b2; font-family: "Segoe UI"; font-size: 11px;
-                            background: #22262e; border-radius: 9px; padding: 3px 12px; }
-                QPushButton { background: transparent; border: none; border-radius: 8px;
-                              min-width: 34px; max-width: 34px; min-height: 26px; max-height: 26px; }
-                QPushButton:hover { background: rgba(255,255,255,0.10); }
-                QPushButton#closeBtn:hover { background: #e81123; }
+                            background: #262b34; border-radius: 8px; padding: 3px 10px; }
+                QPushButton { background: transparent; border: none; border-radius: 7px; color: #d5d9e0;
+                              min-width: 30px; max-width: 30px; min-height: 24px; max-height: 24px; }
+                QPushButton:hover { background: rgba(255,255,255,0.12); }
+                QPushButton#closeBtn:hover { background: #e81123; color: #fff; }
                 QWebEngineView { background: #0d0d0d; }
             """)
 
@@ -3239,19 +3238,7 @@ def run_app():
             self.poll_timer.timeout.connect(self.bridge.poll)
             self.poll_timer.start()
 
-            header = QWidget(objectName="header")
-            header.setFixedHeight(40)
-            header_layout = QHBoxLayout(header)
-            header_layout.setContentsMargins(16, 0, 16, 0)
-            header_layout.setSpacing(0)
-
             icon_font = QFont("Segoe MDL2 Assets", 9)
-
-            dot = QLabel("◉")
-            dot.setObjectName("brandDot")
-
-            title = QLabel("DeepSeek IDE")
-            title.setObjectName("title")
 
             self.proj_chip = QLabel("папка не выбрана")
             self.proj_chip.setObjectName("projChip")
@@ -3259,41 +3246,33 @@ def run_app():
             if _init_folder:
                 self.update_project_chip(os.path.basename(os.path.normpath(_init_folder)))
 
-            refresh_btn = QPushButton("")  # refresh
-            refresh_btn.setFont(icon_font)
-            refresh_btn.setToolTip("Обновить страницу")
-            refresh_btn.clicked.connect(lambda: self.view.reload())
-            minimize_btn = QPushButton("")  # minimize
-            minimize_btn.setFont(icon_font)
-            minimize_btn.clicked.connect(self.showMinimized)
-            fullscreen_btn = QPushButton("")  # maximize/fullscreen
-            fullscreen_btn.setFont(icon_font)
-            fullscreen_btn.setToolTip("На весь экран / обратно")
-            fullscreen_btn.clicked.connect(self.toggle_fullscreen)
-            close_btn = QPushButton("")      # close (hover — красный по-виндовому)
-            close_btn.setObjectName("closeBtn")
-            close_btn.setFont(icon_font)
-            close_btn.clicked.connect(self.close)
+            overlay = QWidget(self.view)          # пилюля ПОВЕРХ страницы (не в HTML)
+            overlay.setObjectName("overlay")
+            ov = QHBoxLayout(overlay)
+            ov.setContentsMargins(10, 6, 8, 6)
+            ov.setSpacing(6)
+            ov.addWidget(self.proj_chip)
 
-            btn_layout = QHBoxLayout()
-            btn_layout.setSpacing(4)
-            btn_layout.addWidget(refresh_btn)
-            btn_layout.addWidget(minimize_btn)
-            btn_layout.addWidget(fullscreen_btn)
-            btn_layout.addWidget(close_btn)
+            def mkbtn(glyph, tip, cb, close_=False):
+                btn = QPushButton(glyph)
+                btn.setFont(icon_font)
+                if tip:
+                    btn.setToolTip(tip)
+                if close_:
+                    btn.setObjectName("closeBtn")
+                btn.clicked.connect(cb)
+                return btn
 
-            header_layout.addWidget(dot)
-            header_layout.addSpacing(8)
-            header_layout.addWidget(title)
-            header_layout.addStretch()
-            header_layout.addWidget(self.proj_chip)
-            header_layout.addSpacing(10)
-            header_layout.addLayout(btn_layout)
+            ov.addWidget(mkbtn("\uE72C", "Обновить страницу", lambda: self.view.reload()))
+            ov.addWidget(mkbtn("\uE921", "Свернуть", self.showMinimized))
+            ov.addWidget(mkbtn("\uE922", "Во весь экран / обратно", self.toggle_fullscreen))
+            ov.addWidget(mkbtn("\uE8BB", "Закрыть", self.close, close_=True))
+            overlay.adjustSize()
+            self.overlay = overlay
 
             main_layout = QVBoxLayout()
             main_layout.setContentsMargins(0, 0, 0, 0)
             main_layout.setSpacing(0)
-            main_layout.addWidget(header)
             main_layout.addWidget(self.view, 1)
 
             container = QWidget()
@@ -3322,24 +3301,12 @@ def run_app():
             window_rect.moveCenter(screen.center())
             self.move(window_rect.topLeft())
 
-        def rounded_rect_region(self):
-            rect = self.rect()
-            radius = 24
-            region = QRegion()
-            region += QRegion(rect.left() + radius, rect.top(), rect.width() - 2*radius, 40, QRegion.RegionType.Rectangle)
-            region += QRegion(rect.left(), rect.top() + radius, rect.width(), 40 - radius, QRegion.RegionType.Rectangle)
-            region += QRegion(rect.left(), rect.top(), radius*2, radius*2, QRegion.RegionType.Ellipse)
-            region += QRegion(rect.right() - radius*2, rect.top(), radius*2, radius*2, QRegion.RegionType.Ellipse)
-            region += QRegion(rect.left(), rect.top() + 40, rect.width(), rect.height() - 40 - radius, QRegion.RegionType.Rectangle)
-            region += QRegion(rect.left() + radius, rect.bottom() - radius, rect.width() - 2*radius, radius, QRegion.RegionType.Rectangle)
-            region += QRegion(rect.left(), rect.bottom() - radius*2, radius*2, radius*2, QRegion.RegionType.Ellipse)
-            region += QRegion(rect.right() - radius*2, rect.bottom() - radius*2, radius*2, radius*2, QRegion.RegionType.Ellipse)
-            return region
-
         def resizeEvent(self, event):
             if not self.isFullScreen():
                 self.normal_geometry = self.geometry()  # бэкап размера на лету
-            self.setMask(self.rounded_rect_region())
+            # оверлей-контролы: правый верхний угол поверх страницы
+            self.overlay.move(self.view.width() - self.overlay.width() - 14, 14)
+            self.overlay.raise_()
             if event:
                 super().resizeEvent(event)
 
@@ -3353,11 +3320,10 @@ def run_app():
                 self.showNormal()
                 if self.normal_geometry:
                     self.setGeometry(self.normal_geometry)
-                self.setMask(self.rounded_rect_region())
             else:
                 self.normal_geometry = self.geometry()
                 self.showFullScreen()
-                self.setMask(QRegion())
+            self.resizeEvent(None)  # переставить оверлей
 
         def keyPressEvent(self, event):
             if event.key() == Qt.Key.Key_Escape and self.isFullScreen():
@@ -3367,7 +3333,8 @@ def run_app():
         def mousePressEvent(self, event: QMouseEvent):
             if event.button() == Qt.MouseButton.LeftButton:
                 clicked = self.childAt(event.position().toPoint())
-                if clicked and clicked.objectName() == "header":
+                if clicked is self.overlay or (clicked and clicked.objectName() == "projChip"):
+                    # окно тащим за пилюлю-оверлей (кнопки сами проглатывают клик)
                     self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             super().mousePressEvent(event)
 
