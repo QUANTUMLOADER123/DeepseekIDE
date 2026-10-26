@@ -1170,26 +1170,72 @@ tree || '(структура недоступна — спросите чере�
     return '';
   }
 
+  function dsxSplit(s) { return String(s == null ? '' : s).split('\n'); }
+  function dsxCapDet(arr, capN) {
+    if (arr.length > capN) return arr.slice(0, capN).concat([{ t: '@', s: '…(' + (arr.length - capN) + ' more lines)' }]);
+    return arr;
+  }
+  async function dsxOpDetail(name, args) {
+    var out = [];
+    try {
+      if (name === 'edit_file') {
+        dsxSplit(args.old_string).forEach(function (l) { out.push({ t: '-', s: l }); });
+        dsxSplit(args.new_string).forEach(function (l) { out.push({ t: '+', s: l }); });
+      } else if (name === 'insert_lines') {
+        out.push({ t: '@', s: '@ line ' + (args.line | 0) });
+        dsxSplit(args.content).forEach(function (l) { out.push({ t: '+', s: l }); });
+      } else if (name === 'replace_lines') {
+        out.push({ t: '@', s: '@ lines ' + (args.start_line | 0) + '–' + (args.end_line | 0) });
+        dsxSplit(args.content).forEach(function (l) { out.push({ t: '+', s: l }); });
+      } else if (name === 'append_file') {
+        out.push({ t: '@', s: '@ end of file' });
+        dsxSplit(args.content || args.text || '').forEach(function (l) { out.push({ t: '+', s: l }); });
+      } else if (name === 'write_file') {
+        var oldT = '';
+        try { oldT = await readText(args.path); } catch (e0) {}
+        var om = {}, i, lo = oldT ? oldT.split('\n') : [], ln = dsxSplit(args.content || '');
+        for (i = 0; i < lo.length; ++i) om[lo[i]] = (om[lo[i]] || 0) + 1;
+        var addLs = [];
+        for (i = 0; i < ln.length; ++i) { var k = ln[i]; if (om[k]) om[k]--; else addLs.push(k); }
+        var delLs = [];
+        for (var kk in om) {
+          if (!Object.prototype.hasOwnProperty.call(om, kk) || om[kk] <= 0) continue;
+          for (i = 0; i < om[kk]; ++i) delLs.push(kk);
+        }
+        delLs.forEach(function (l) { out.push({ t: '-', s: l }); });
+        addLs.forEach(function (l) { out.push({ t: '+', s: l }); });
+        if (!out.length) out.push({ t: '@', s: '(content identical)' });
+      }
+    } catch (e3) {}
+    return dsxCapDet(out, 120);
+  }
+
   OPS.mutateBatch = async function (args) {
     // args: { label, ops: [{name,args}] } — всё под ОДНИМ снапшотом.
     await snapBegin(args.label);
-    var report = [], okCount = 0;
+    var report = [], okCount = 0, items = [];
     for (var i = 0; i < args.ops.length; ++i) {
       var op = args.ops[i];
       try {
         var sfx = await dsxOpStat(op.name, op.args || {});
+        var det = await dsxOpDetail(op.name, op.args || {}); // ДО mutate (читает старое содержимое)
+        var t0 = Date.now();
         var msg = await mutate(op.name, op.args || {});
+        var ms = Date.now() - t0;
         report.push('✓ ' + msg + sfx);
+        items.push({ name: op.name, msg: msg, stat: sfx.trim(), ok: true, ms: ms, detail: det });
         ++okCount;
       } catch (e) {
-        report.push('✗ ' + op.name + ' ' + (op.args && (op.args.path || op.args.from) || '') +
-                    ' — ' + (e && e.message ? e.message : e));
+        var em = e && e.message ? e.message : String(e);
+        report.push('✗ ' + op.name + ' ' + (op.args && (op.args.path || op.args.from) || '') + ' — ' + em);
+        items.push({ name: op.name, msg: String(op.name) + ' ' + (op.args && (op.args.path || op.args.from) || ''),
+                     stat: '', ok: false, ms: 0, detail: [], err: em });
       }
     }
     await snapCommit();
     report.push('Готово: ' + okCount + ' из ' + args.ops.length +
                 ' операций успешно.' + (okCount < args.ops.length ? ' Остальные пропущены.' : ''));
-    return { done: okCount, total: args.ops.length, report: report.join('\n') };
+    return { done: okCount, total: args.ops.length, report: report.join('\n'), items: items };
   };
 
   OPS.snapList = async function () {
@@ -2572,6 +2618,8 @@ tree || '(структура недоступна — спросите чере�
   }
   async function execShell(block, cmd, statusEl, defer) {
     if (statusEl) statusEl.textContent = T('Выполняет: ', 'Running: ') + cmd.slice(0, 90) + '…';
+    var hrow = toolRowStart(block.closest('._4f9bf79') || block.parentElement, 'Bash', cmd, { expandable: true });
+    var sok = false, detail = '';
     var r = await dsxSend('shell', { cmd: cmd });
     var report, short;
     if (r && r.ok) {
@@ -2581,13 +2629,19 @@ tree || '(структура недоступна — спросите чере�
                (r.killed ? ' (TIMEOUT 120s — убито)' : '') +
                '\n\nSTDOUT:\n```\n' + (out || '(пусто)') + '\n```' +
                (err ? '\n\nSTDERR:\n```\n' + err + '\n```' : '');
+      sok = (r.exitCode === 0) && !r.killed;
+      detail = '<span class="dsx-dl-at">$ ' + esc(cmd) + '</span>' +
+               esc('\n' + (out || '(no output)')) +
+               (err ? '\n\n<span class="dsx-tool-err">' + esc('STDERR:\n' + err) + '</span>' : '');
       short = T('Выполнено (код ', 'Done (exit ') + r.exitCode + '): ' + cmd.slice(0, 70) +
               (out ? ' → ' + out.split('\n')[0].slice(0, 60) : '');
     } else {
       var er = (r && r.error) || T('нет связи с хостом', 'no connection to the host');
       report = 'SHELL ERROR: ' + er + '\n(Если хост не установлен/не запущен — подскажи юзеру: shell\\install.bat из репозитория, потом перезапуск Chrome. Не повторяй ту же команду впрок.)';
       short = T('Ошибка шелла: ', 'Shell error: ') + er.slice(0, 80);
+      detail = '<span class="dsx-tool-err">' + esc(report) + '</span>';
     }
+    hrow.finish(sok ? 'ok' : 'bad', detail);
     if (statusEl) statusEl.textContent = short;
     if (defer) return 'SYSTEM: shell result for ' + cmd + '\n' + report;
     await shellSend(cmd, report); shellBookkeep();
@@ -2672,6 +2726,8 @@ tree || '(структура недоступна — спросите чере�
         run.disabled = true; no.disabled = true;
         card.removeChild(code); card.removeChild(row);
         statusEl.textContent = T('Отклонено: ', 'Rejected: ') + cmd.slice(0, 90);
+        toolRowStart(block.closest('._4f9bf79') || block.parentElement, 'Bash', cmd, { expandable: false })
+          .finish('rej', null, null, 0);
         var txt = 'SYSTEM: shell command was REJECTED by the user in the confirm card. ' +
           'Do NOT retry it; continue without it, or suggest a manual alternative in text.\nCOMMAND: ' + cmd;
         var res = await groupOrSend(block, card, txt, 'шелл-отказ');
@@ -2834,6 +2890,97 @@ tree || '(структура недоступна — спросите чере�
     } catch (e) {}
   }
 
+  // ---------------- ТУЛ-СТРОКИ как в IDE: ▸ Bash ● executing 0.8s → ✓ 1.2s; клик — детали
+  function dsxToolCss() {
+    if (document.getElementById('dsx-tool-css')) return;
+    var s = document.createElement('style');
+    s.id = 'dsx-tool-css';
+    s.textContent = '' +
+      '.dsx-tool{margin:6px 0;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.08));' +
+        'border-radius:10px;background:var(--dsw-alias-bg-layer-2,#1d1f24);overflow:hidden;' +
+        'font-size:12.5px;font-family:var(--dsw-font-family,inherit);max-width:660px}' +
+      '.dsx-tool-h{display:flex;align-items:center;gap:8px;padding:7px 10px;user-select:none}' +
+      '.dsx-tool-x{cursor:pointer}' +
+      '.dsx-tool-che{width:12px;flex-shrink:0;color:var(--dsw-alias-label-tertiary,#888);font-size:11px;transition:transform .15s}' +
+      '.dsx-tool-open .dsx-tool-che{transform:rotate(90deg)}' +
+      '.dsx-tool-nm{font-family:Consolas,Menlo,monospace;font-weight:600;font-size:12px;color:var(--dsw-alias-label-primary,#eee);white-space:nowrap}' +
+      '.dsx-tool-sub{font-family:Consolas,Menlo,monospace;font-size:11.5px;overflow:hidden;text-overflow:ellipsis;' +
+        'white-space:nowrap;color:var(--dsw-alias-label-tertiary,#999);flex:1;min-width:0}' +
+      '.dsx-tool-stat{margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0;font-family:Consolas,monospace;font-size:11px}' +
+      '.dsx-tool-diff{font-variant-numeric:tabular-nums;white-space:nowrap}' +
+      '.dsx-tool-dur{color:var(--dsw-alias-label-tertiary,#999);font-variant-numeric:tabular-nums;min-width:44px;text-align:right}' +
+      '.dsx-tool-dot{width:8px;height:8px;border-radius:50%;background:#8a9199;flex-shrink:0}' +
+      '.dsx-tool-run{background:#e8b339;animation:dsxPulse 1s infinite}' +
+      '.dsx-tool-std-ok{background:#3fb950}' +
+      '.dsx-tool-std-bad{background:#f85149}' +
+      '.dsx-tool-std-rej{background:#8a9199}' +
+      '@keyframes dsxPulse{0%,100%{opacity:1}55%{opacity:.3}}' +
+      '.dsx-tool-b{display:none;border-top:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.08));' +
+        'padding:8px 10px;max-height:260px;overflow:auto;background:rgba(0,0,0,.18)}' +
+      '.dsx-tool-open .dsx-tool-b{display:block}' +
+      '.dsx-tool-pre{margin:0;font-family:Consolas,Menlo,monospace;font-size:11.5px;line-height:1.55;' +
+        'white-space:pre-wrap;word-break:break-word;color:var(--dsw-alias-label-secondary,#ccc)}' +
+      '.dsx-dl-add{color:#3fb950;background:rgba(63,185,80,.08);display:block}' +
+      '.dsx-dl-del{color:#f85149;background:rgba(248,81,73,.08);display:block}' +
+      '.dsx-dl-at{color:#8a9199;display:block}' +
+      '.dsx-tool-err{color:#f85149}';
+    document.head.appendChild(s);
+  }
+  function fmtDur(ms) { return ms < 1000 ? (ms | 0) + 'ms' : (ms / 1000).toFixed(1) + 's'; }
+  function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+  // старт тул-строки: name — вид (Bash/Edit…), sub — команда / путь файла
+  function toolRowStart(host, name, sub, opts) {
+    dsxToolCss();
+    if (!host) return { el: null, finish: function () {} };
+    var box = host.querySelector('.dsx-tool-box');
+    if (!box) { box = document.createElement('div'); box.className = 'dsx-tool-box'; host.appendChild(box); }
+    if (!box.isConnected) host.appendChild(box);
+    var expandable = !!(opts && opts.expandable);
+    var el = document.createElement('div');
+    el.className = 'dsx-tool';
+    el.innerHTML =
+      '<div class="dsx-tool-h' + (expandable ? ' dsx-tool-x' : '') + '">' +
+        '<span class="dsx-tool-che">' + (expandable ? '\u25B8' : '') + '</span>' +
+        '<span class="dsx-tool-nm">' + esc(name) + '</span>' +
+        '<span class="dsx-tool-sub">' + esc(sub || '') + '</span>' +
+        '<span class="dsx-tool-stat">' +
+          '<span class="dsx-tool-diff" data-diff></span>' +
+          '<span class="dsx-tool-dot dsx-tool-run"></span>' +
+          '<span class="dsx-tool-dur" data-dur>0.0s</span>' +
+        '</span>' +
+      '</div>' +
+      (expandable ? '<div class="dsx-tool-b"><pre class="dsx-tool-pre"></pre></div>' : '');
+    var t0 = Date.now(), durEl = el.querySelector('[data-dur]');
+    el.__dsxTimer = setInterval(function () {
+      if (!el.isConnected) { clearInterval(el.__dsxTimer); return; }
+      durEl.textContent = fmtDur(Date.now() - t0);
+    }, 200);
+    if (expandable) {
+      el.querySelector('.dsx-tool-h').addEventListener('click', function () { el.classList.toggle('dsx-tool-open'); });
+    }
+    box.appendChild(el);
+    return {
+      el: el,
+      finish: function (status, detailHtml, diffTxt, fixedMs) {
+        clearInterval(el.__dsxTimer);
+        durEl.textContent = fmtDur(typeof fixedMs === 'number' ? fixedMs : (Date.now() - t0));
+        var dot = el.querySelector('.dsx-tool-dot');
+        dot.classList.remove('dsx-tool-run');
+        dot.classList.add(status === 'ok' ? 'dsx-tool-std-ok' : status === 'rej' ? 'dsx-tool-std-rej' : 'dsx-tool-std-bad');
+        if (diffTxt) {
+          var dd = el.querySelector('[data-diff]');
+          dd.innerHTML = esc(diffTxt).replace(/\+\d+/g, '<span style="color:#3fb950">$&</span>')
+                                     .replace(/-\d+/g, '<span style="color:#f85149">$&</span>');
+        }
+        if (detailHtml) {
+          var b = el.querySelector('.dsx-tool-b pre');
+          if (b) b.innerHTML = detailHtml;
+        }
+      }
+    };
+  }
+
   // ---------------- строки статуса под ответом DeepSeek
   // Добавляем СВОЙ контейнер в конец родного сообщения (append-only — React-safe).
   function appendAssistantRows(block, rows) {
@@ -2962,6 +3109,7 @@ tree || '(структура недоступна — спросите чере�
         if (!box.isConnected) { host.appendChild(box); }
         var row = document.createElement('p');
         row.className = 'dsx-live-line';
+        row.setAttribute('data-t0', String(Date.now()));
         row.setAttribute('data-dsx-final', vb[1] + base(pth) + (to ? ' → ' + base(to) : ''));
         row.textContent = label + '…';
         row.style.cssText = LIVE_ROW_CSS;
@@ -2980,7 +3128,9 @@ tree || '(структура недоступна — спросите чере�
         var t = row.textContent || '';
         if (t.slice(-1) !== '…') return;
         var fin = row.getAttribute('data-dsx-final');
-        row.textContent = ok ? fin : (t.slice(0, -1) + T(' (ОШИБКА)', ' (ERROR)'));
+        var t0r = +row.getAttribute('data-t0') || 0;
+        var dur = t0r ? ' · ' + fmtDur(Date.now() - t0r) : '';
+        row.textContent = (ok ? fin : (t.slice(0, -1) + T(' (ОШИБКА)', ' (ERROR)'))) + dur;
       });
     } catch (e) {}
   }
@@ -3065,9 +3215,30 @@ tree || '(структура недоступна — спросите чере�
               : T('Применено ', 'Applied ') + r.data.done + ' / ' + r.data.total + T(' — есть ошибки', ' — with errors');
             toast(sum);
             rows.push(sum);
-            String(r.data.report || '').split('\n').forEach(function (ln) {
-              if (/^[✓✗] /.test(ln)) rows.push(ln); // «✓ app.py [+12 -3]» — покрасивше
-            });
+            var hostBox = block.closest('._4f9bf79') || block.parentElement;
+            var items = (r.data && r.data.items) || [];
+            if (items.length) {
+              var OPLBL = { write_file: 'Write', edit_file: 'Edit', append_file: 'Append',
+                            insert_lines: 'Insert', replace_lines: 'Replace', make_dir: 'Mkdir',
+                            delete_path: 'Delete', copy_file: 'Copy', move_file: 'Move' };
+              items.forEach(function (it) {
+                var dh = '';
+                if (!it.ok) {
+                  dh = '<span class="dsx-tool-err">' + esc(it.err || 'error') + '</span>';
+                } else if (it.detail && it.detail.length) {
+                  it.detail.forEach(function (d) {
+                    var cls = d.t === '+' ? 'dsx-dl-add' : d.t === '-' ? 'dsx-dl-del' : 'dsx-dl-at';
+                    dh += '<span class="' + cls + '">' + esc((d.t === '@' ? '' : d.t + ' ') + d.s) + '</span>';
+                  });
+                }
+                var hr2 = toolRowStart(hostBox, OPLBL[it.name] || it.name, it.msg || '', { expandable: !!dh });
+                hr2.finish(it.ok ? 'ok' : 'bad', dh || null, it.stat ? it.stat : '', it.ms || 0);
+              });
+            } else { // старый MAIN без items — плоские строки
+              String(r.data.report || '').split('\n').forEach(function (ln) {
+                if (/^[✓✗] /.test(ln)) rows.push(ln);
+              });
+            }
             finalizeLiveOps(block, true);
             actMark('ops', answHash);
             note = 'SYSTEM: ops applied automatically by DeepSeek Extended:\n\n```\n' +
@@ -3094,10 +3265,14 @@ tree || '(структура недоступна — спросите чере�
               var boxL = ensureLiveBox(host);
               var row = document.createElement('p');
               row.className = 'dsx-live-line dsx-svc-live';
+              row.setAttribute('data-t0', String(Date.now()));
               row.textContent = pending;
               row.style.cssText = LIVE_ROW_CSS;
               boxL.appendChild(row);
-              return function (fin) { row.textContent = fin; };
+              return function (fin) {
+                var t0r = +row.getAttribute('data-t0') || Date.now();
+                row.textContent = fin + ' · ' + fmtDur(Date.now() - t0r);
+              };
             } catch (e) { return function () {}; }
           });
           if (svc.text) {
