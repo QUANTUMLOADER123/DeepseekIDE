@@ -331,6 +331,33 @@ def web_fetch(args):
         return {'ok': False, 'error': msg}
 
 
+def img_fetch(args):
+    prompt = str(args.get('prompt', '')).strip()
+    model = str(args.get('model', '')).strip() or 'black-forest-labs/flux.1-schnell'
+    key = str(args.get('key', '')).strip()
+    if not prompt:
+        return {'ok': False, 'error': 'empty prompt'}
+    url = ('https://gen.pollinations.ai/image/' + urllib.parse.quote(prompt, safe='') +
+           '?model=' + urllib.parse.quote(model, safe='') + '&width=1024&height=1024&nologo=true')
+    req = urllib.request.Request(url, headers={
+        'Authorization': 'Bearer ' + key,
+        'User-Agent': UA,
+    })
+    try:
+        resp = urllib.request.urlopen(req, timeout=150)
+        data = resp.read()
+        return {'ok': True, 'status': getattr(resp, 'status', 200),
+                'type': resp.headers.get('Content-Type', 'image/jpeg'),
+                'size': len(data), 'b64': base64.b64encode(data).decode('ascii')}
+    except Exception as e:
+        msg = str(e)
+        try:
+            msg += ' :: ' + e.read(300).decode('utf-8', errors='replace')  # API отвечает текстом ошибки
+        except Exception:
+            pass
+        return {'ok': False, 'error': msg}
+
+
 FS_OPS = {
     'ensure': fs_ensure, 'forget': fs_forget, 'read': fs_read, 'write': fs_write,
     'mkdir': fs_mkdir, 'remove': fs_remove, 'stat': fs_stat, 'tree': fs_tree,
@@ -712,6 +739,14 @@ window.__dsxOutbox = window.__dsxOutbox || [];
 "# GETTING CONTEXT (self-service, automatic — never ask the human for file contents)",
 "Missing information? Emit requests INSIDE the special bracket marker, ONE per line, OUTSIDE ops blocks and code fences. The extension answers them automatically within seconds and shows the user an inline status chip; the answer arrives as a hidden SYSTEM message and your flow continues automatically.",
 "Syntax (copy EXACTLY, including the brackets):",
+"# MARKER SYNTAX — STRICT CONTRACT (the automation regex is unforgiving about these):",
+"- Write markers EXACTLY as [<{NAME: argument}>] — canonically closed }>]. The tail }] also parses, but }>] is the rule.",
+"- One marker per LINE, plain text. NEVER inside ``` fences (fenced = human example = ignored).",
+"- NEVER HTML-escape: write < > & literally, never &lt; &gt; &amp;. NEVER use <｜DSML｜>, <function_calls> or any XML tool syntax — invalid, never executes.",
+"- Quotes, >, &, && INSIDE the argument are fine: [<{SHELL: cmd /c \"dir \"C:\\Program Files\" && echo ok\" 2>&1}>] is a VALID marker.",
+"- Paths in markers are project-relative with forward slashes. drive:// absolute paths only inside SHELL commands.",
+"- Markers fire automatically; results arrive as SYSTEM messages. Do not announce or narrate them (\"now I will request...\"), just emit the marker line and keep writing your reply normally.",
+"",
 "[<{FILE INFO: <project-relative path>}>]          -> file size in bytes + total line count.",
 "[<{READ RANGE: <project-relative path>:<from>-<to>}>] -> numbered lines from..to (1-based, inclusive, up to 1200 lines at once).",
 "[<{NEED FILE: <project-relative path>}>]         -> WHOLE file with line numbers (hard cap ~4000 lines / 120k chars; the rest is TRUNCATED).",
@@ -722,6 +757,8 @@ window.__dsxOutbox = window.__dsxOutbox || [];
 "[<{REVERT FILE: <project-relative path>}>]                 -> restores the file to the snapshot taken right before its last edit by you (if your edit created it, the file is removed). The undo is permanent.",
 "[<{WEB GREP: <url> :: <substring or from-to>}>]               -> downloads the page RAW/CLEANED and returns FULL matching lines (e.g. \u0027m_modelState\u0027 -> whole \u0027constexpr ... = 0x140;\u0027 lines with numbers). Use \u0027144-150\u0027 instead of a substring to get that line range.",
 "[<{WEB DOWNLOAD: <url> :: <project-relative path>}>]          -> downloads a file (binary ok, ≤16 MB) straight into the project folder. Use for dumps/SDK snapshots the task needs; confirm the path in your summary.",
+"[<{IMAGE SHOW: <image prompt>}>]              -> generates an image with the owner's image API and shows it INLINE right where the marker stands (the skeleton/shimmer is replaced by the picture). Write rich visual descriptions (style, light, mood, composition); text-on-image is unreliable, avoid it. If generation is off or the key is missing, the SYSTEM reply says so — continue in text then.",
+"[<{IMAGE FILE: <image prompt> :: <project-relative path.png>}>] -> generates the same way but SAVES the bytes into the project file instead of showing it in chat (assets, mockups, textures).",
 "[<{SHELL: <one-line command>}>] -> runs the command in the project folder via the native shell bridge: the HUMAN sees it in a confirm card (or has auto-allow on); you receive stdout+stderr+exit code. For builds, tests, scripts, package managers, compilers. One line only (chain with && or &), non-interactive, 120s timeout. HARD LIMIT: at most ONE SHELL command per reply — the human must confirm each card (or has auto-allow), a flood of cards jams the loop. Need several steps? Chain them in the one line (cmd1 && cmd2), or take this result and send the next command in the NEXT reply. If the reply says the bridge is offline, do NOT retry — give the human run instructions in text instead.",
 
 "[<{ASK: <dilemma> :: <option1> ; <option2> ; <option3>}>]      -> asks the HUMAN through a clickable card: single choice (one option).",
@@ -1689,6 +1726,44 @@ tree || '(структура недоступна — спросите чере�
     };
   }
 
+  // ====== вкладка «Изображения» (эксперимент)
+  function imagesPaneHtml() {
+    return '' +
+      '<div style="' + SET_ROW + '"><div style="' + SET_TIT + '">' + T('[EXP] Генерация изображений', '[EXPERIMENTAL] Image generation') + '</div>' + sw('dsx-set-imgon') + '</div>' +
+      '<div style="' + SET_ROW + ';min-height:52px">' +
+        '<div style="' + SET_TIT + '">' + T('Модель', 'Model') + '</div>' +
+        '<div style="display:flex;gap:8px;flex-shrink:0">' +
+          '<button type="button" class="dsx-imgmodel" data-v="default" style="' + SET_GHOST + '">Default</button>' +
+          '<button type="button" class="dsx-imgmodel" data-v="text" style="' + SET_GHOST + '">Text</button>' +
+        '</div>' +
+      '</div>' +
+      '<div style="padding:12px 0 2px">' +
+        '<div style="' + SET_TIT + ';margin-bottom:8px">' + T('API-ключ (pollinations)', 'API key (pollinations)') + '</div>' +
+        '<input class="dsx-set-imgkey" type="password" placeholder="sk_…" autocomplete="off" spellcheck="false" ' +
+        'style="width:100%;box-sizing:border-box;padding:9px 12px;' + SET_INP + '">' +
+      '</div>';
+  }
+  function paintImgModels(root) {
+    var cur = cfg.imgModel || 'default';
+    root.querySelectorAll('.dsx-imgmodel').forEach(function (b) {
+      var on = b.getAttribute('data-v') === cur;
+      b.style.background = on ? 'var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.14))'
+                              : 'var(--dsw-alias-button-ghost-active-fill,rgba(255,255,255,.07))';
+      b.style.fontWeight = on ? '600' : '400';
+      b.style.borderColor = on ? 'var(--dsw-alias-brand-primary,#5686fe)' : 'var(--dsw-alias-border-l2,rgba(255,255,255,.1))';
+    });
+  }
+  function bindImagesPane(root) {
+    bindSwitch(root, '.dsx-set-imgon', function () { return !!cfg.imgOn; }, function (v) { cfg.imgOn = v; });
+    var key = root.querySelector('.dsx-set-imgkey');
+    key.value = cfg.imgKey || '';
+    key.addEventListener('input', dsxDebounce(function () { cfg.imgKey = key.value.trim(); saveCfg(); }, 450));
+    root.querySelectorAll('.dsx-imgmodel').forEach(function (b) {
+      b.onclick = function () { cfg.imgModel = b.getAttribute('data-v'); saveCfg(); paintImgModels(root); };
+    });
+    paintImgModels(root);
+  }
+
   // ====== вкладка «Контекст»
   function contextPaneHtml() {
     return '' +
@@ -1772,10 +1847,13 @@ tree || '(структура недоступна — спросите чере�
     card.innerHTML = modalHeader(T('Настройки агента', 'Agent settings')) +
       '<div style="padding:0 20px"><div style="font-size:16px;font-weight:600;padding:12px 0 2px">' + T('Агент', 'Agent') + '</div></div>' +
       '<div class="dsx-pane-agent" style="padding:0 20px"></div>' +
+      '<div style="padding:0 20px"><div style="font-size:16px;font-weight:600;padding:12px 0 2px">' + T('Изображения', 'Images') + '</div></div>' +
+      '<div class="dsx-pane-images" style="padding:0 20px"></div>' +
       '<div style="padding:0 20px"><div style="font-size:16px;font-weight:600;padding:12px 0 2px">' + T('Контекст', 'Context') + '</div></div>' +
       '<div class="dsx-pane-context" style="padding:0 20px 18px"></div>';
     bindModalChrome(card);
     var pa = card.querySelector('.dsx-pane-agent'); pa.innerHTML = agentPaneHtml(); bindAgentPane(pa);
+    var pi = card.querySelector('.dsx-pane-images'); pi.innerHTML = imagesPaneHtml(); bindImagesPane(pi);
     var pc = card.querySelector('.dsx-pane-context'); pc.innerHTML = contextPaneHtml(); bindContextPane(pc);
   }
 
@@ -1795,6 +1873,7 @@ tree || '(структура недоступна — спросите чере�
       pane.setAttribute('data-kind', kind);
       pane.style.cssText = 'font-size:14px;color:var(--dsw-alias-label-primary,#eee);padding:4px 2px 16px';
       if (kind === 'agent') { pane.innerHTML = agentPaneHtml(); bindAgentPane(pane); }
+      else if (kind === 'images') { pane.innerHTML = imagesPaneHtml(); bindImagesPane(pane); }
       else { pane.innerHTML = contextPaneHtml(); bindContextPane(pane); }
       content.appendChild(pane);
     }
@@ -1805,9 +1884,13 @@ tree || '(структура недоступна — спросите чере�
     });
     var rail = modal.querySelector('.d316d158');
     if (rail) {
-      rail.querySelectorAll('.ds-button').forEach(function (b) { b.classList.remove('_699d482'); });
+      rail.querySelectorAll('.ds-button').forEach(function (b) {
+        b.classList.remove('_699d482');
+        b.style.removeProperty('--dsl-button-color'); // нативный актив держится ещё и на css-var
+      });
     }
     tab.classList.add('_699d482');
+    tab.style.setProperty('--dsl-button-color', 'var(--dsw-alias-interactive-bg-hover)');
   }
   function addSiteTab(modal, rail, content, label, kind) {
     var srcBtn = rail.querySelector('.ds-button');
@@ -1830,6 +1913,7 @@ tree || '(структура недоступна — спросите чере�
     if (!rail.dataset.dsxTabs) {
       rail.dataset.dsxTabs = '1';
       addSiteTab(modal, rail, content, T('Агент', 'Agent'), 'agent');
+      addSiteTab(modal, rail, content, T('Изображения', 'Images'), 'images');
       addSiteTab(modal, rail, content, T('Контекст', 'Context'), 'context');
       rail.addEventListener('click', function (ev) {
         var b = ev.target && ev.target.closest ? ev.target.closest('.ds-button') : null;
@@ -1839,7 +1923,10 @@ tree || '(структура недоступна — спросите чере�
           if (c.classList.contains('dsx-agent-pane')) { c.style.display = 'none'; return; }
           if (c.dataset.dsxHidden === '1') { c.style.display = ''; delete c.dataset.dsxHidden; }
         });
-        rail.querySelectorAll('.dsx-site-tab').forEach(function (t2) { t2.classList.remove('_699d482'); });
+        rail.querySelectorAll('.dsx-site-tab').forEach(function (t2) {
+          t2.classList.remove('_699d482');
+          t2.style.removeProperty('--dsl-button-color');
+        });
       }, true);
     }
   }
@@ -2284,7 +2371,7 @@ tree || '(структура недоступна — спросите чере�
     reqs.forEach(function (r) { if (!seen[r.key]) { seen[r.key] = 1; uniq.push(r); } });
     if (!uniq.length) return { text: '', rows: [] };
 
-    var out = ['SYSTEM: auto-reply from DeepSeek Extended.'], rows = [], asks = [], shells = [];
+    var out = ['SYSTEM: auto-reply from DeepSeek Extended.'], rows = [], asks = [], shells = [], imgs = [];
     var done = 0, i;
     for (i = 0; i < uniq.length; ++i) {
       var rq = uniq[i];
@@ -2490,6 +2577,21 @@ tree || '(структура недоступна — спросите чере�
       } else if (rq.kind === 'SHELL') {
         shells.push({ cmd: rq.arg });
         if (!rq.bracket) rows.push(T('Команда: ', 'Command: ') + rq.arg.slice(0, 80));
+      } else if (rq.kind === 'IMAGE FILE' || rq.kind === 'IMAGE SHOW') {
+        var ik = (rq.kind === 'IMAGE FILE' ? 'if|' + (rq.extra || '') : 'is|' + rq.arg).toLowerCase();
+        st.sentImgs = st.sentImgs || {};
+        if (st.sentImgs[ik]) continue;
+        st.sentImgs[ik] = 1;
+        if (!cfg.imgOn || !cfg.imgKey) {
+          done++;
+          out.push('IMAGE request NOT executed: image generation is ' + (!cfg.imgOn ? 'DISABLED' : 'missing the API key') +
+                   ' (owner panel: Settings → Images). Briefly tell the user and continue without the image.');
+          rows.push(T('Картинка пропущена (выкл. или нет ключа)', 'Image skipped (off or no key)'));
+          continue;
+        }
+        var imodel = cfg.imgModel === 'text' ? 'microsoft/mai-image-2.6-flash' : 'black-forest-labs/flux.1-schnell';
+        imgs.push({ kindg: rq.kind === 'IMAGE FILE' ? 'file' : 'show', prompt: rq.arg, path: rq.extra || '', model: imodel });
+        if (!rq.bracket) rows.push(T('Рисует картинку…', 'Painting an image…'));
       } else if (rq.kind === 'ASK' || rq.kind === 'ASK MULTI') {
         asks.push({ q: rq.arg, opts: rq.opts || [], multi: rq.kind === 'ASK MULTI' });
         if (!rq.bracket) rows.push(T('Ждёт ответа: ', 'Waiting for your reply: ') + rq.arg);
@@ -2506,7 +2608,7 @@ tree || '(структура недоступна — спросите чере�
       }
     }
     sentSave();
-    if ((asks.length || shells.length) && !done) return { text: '', rows: rows, asks: asks, shells: shells }; // вопросы/команды — ждёт человек
+    if ((asks.length || shells.length || imgs.length) && !done) return { text: '', rows: rows, asks: asks, shells: shells, imgs: imgs }; // вопросы/команды/картинки — ждут
     if (!done) {
       // ВСЁ запрошенное уже отправлялось раньше: молчать НЕЛЬЗЯ (модель ждёт
       // ответ и встаёт навсегда) — шлём короткое напоминание.
@@ -2515,7 +2617,7 @@ tree || '(структура недоступна — спросите чере�
                '[<{READ RANGE: <path>:<other-from>-<other-to>}>]; for size, [<{FILE INFO: <path>}>].');
       return { text: out.join('\n\n'), rows: [] };
     }
-    return { text: out.join('\n\n'), rows: rows, asks: asks, shells: shells };
+    return { text: out.join('\n\n'), rows: rows, asks: asks, shells: shells, imgs: imgs };
   }
 
   // ---------------- бейджи: [<{…}>] в ответе модели превращаем в строки-статусы
@@ -2541,6 +2643,8 @@ tree || '(структура недоступна — спросите чере�
       var gp2 = String(arg).split('::'); var gq2 = (gp2.length > 1 ? gp2[1] : gp2[0]).trim();
       return (pending ? T('Ищет в инете: ', 'Searching the web: ') : T('Найдено в инете: ', 'Found on the web: ')) + gq2 + tail;
     }
+    if (K === 'IMAGE FILE') return (pending ? T('Рисует в файл: ', 'Painting to file: ') : T('Картинка сохранена: ', 'Image saved: ')) + base(String(arg).trim()) + tail;
+    if (K === 'IMAGE SHOW') return (pending ? T('Рисует картинку: «', 'Painting an image: “') : T('Картинка: «', 'Image: “')) + String(arg).trim().slice(0, 60) + '»' + tail;
     if (K === 'MEMORY ADD') return (pending ? T('Запоминает: ', 'Memorizing: ') : T('Запомнил: ', 'Memorized: ')) + String(arg).split('::')[0].trim() + tail;
     if (K === 'REVERT FILE') return (pending ? T('Откатываю: ', 'Reverting: ') : T('Откачено: ', 'Reverted: ')) + base(String(arg).trim()) + tail;
     if (K === 'SHELL') return (pending ? T('Команда: ', 'Command: ') : T('Выполнено: ', 'Executed: ')) + String(arg).trim().slice(0, 90) + tail;
@@ -2622,7 +2726,9 @@ tree || '(структура недоступна — спросите чере�
       [/Ищет в инете: ([^…\n]+)…/g,   'Найдено в инете: $1'],
       [/Запоминает: ([^…\n]+)…/g,     'Запомнил: $1'],
       [/Откатываю: ([^…\n]+)…/g,      'Откачено: $1'],
-      [/Команда: ([^…\n]+)…/g,        'Выполнено: $1']
+      [/Команда: ([^…\n]+)…/g,        'Выполнено: $1'],
+      [/Рисует в файл: ([^…\n]+)…/g,   'Картинка сохранена: $1'],
+      [/Рисует картинку: «([^…\n]+)…/g, 'Картинка: «$1']
     ] : [
       [/Reading: ([^…\n]+)…/g,              'Read: $1'],
       [/Inspecting: ([^…\n]+)…/g,           'Size: $1'],
@@ -2634,7 +2740,9 @@ tree || '(структура недоступна — спросите чере�
       [/Searching the web: ([^…\n]+)…/g,    'Found on the web: $1'],
       [/Memorizing: ([^…\n]+)…/g,           'Memorized: $1'],
       [/Reverting: ([^…\n]+)…/g,            'Reverted: $1'],
-      [/Command: ([^…\n]+)…/g,              'Executed: $1']
+      [/Command: ([^…\n]+)…/g,              'Executed: $1'],
+      [/Painting to file: ([^…\n]+)…/g,       'Image saved: $1'],
+      [/Painting an image: “([^…\n]+)…/g,    'Image: “$1']
     ];
     try {
       eachTextNode(block, function (n) {
@@ -3036,6 +3144,104 @@ tree || '(структура недоступна — спросите чере�
     };
   }
 
+  // вставить элемент СРАЗУ после текстового фрагмента (позиция бейджа в ответе)
+  function insertAfterTextNode(block, needle, el) {
+    var done = false;
+    try {
+      eachTextNode(block, function (n) {
+        if (done) return;
+        var i = n.nodeValue.indexOf(needle);
+        if (i < 0) return;
+        var after = n.splitText(i + needle.length);
+        n.parentNode.insertBefore(el, after);
+        done = true;
+      });
+    } catch (e) {}
+    return done;
+  }
+
+  // ---------------- генерация изображений (pollinations, ключ юзера) ----------
+  function dsxImgCss() {
+    if (document.getElementById('dsx-img-css')) return;
+    var s = document.createElement('style');
+    s.id = 'dsx-img-css';
+    s.textContent = '' +
+      '.dsx-imgbox{display:block;margin:8px 0;max-width:min(560px,100%);border-radius:14px;overflow:hidden;' +
+        'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1));background:var(--dsw-alias-bg-layer-2,#1d1f24)}' +
+      '.dsx-img-skel{height:340px;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;' +
+        'color:var(--dsw-alias-label-tertiary,#999);font-size:12.5px}' +
+      '.dsx-img-skel:before{content:"";position:absolute;inset:0;' +
+        'background:linear-gradient(110deg,transparent 30%,rgba(255,255,255,.07) 50%,transparent 70%);' +
+        'background-size:220% 100%;animation:dsxSweep 1.4s linear infinite}' +
+      '.dsx-imgbox img{display:block;width:100%;height:auto;opacity:0;transition:opacity .35s}' +
+      '.dsx-imgbox img.dsx-img-ready{opacity:1}';
+    document.head.appendChild(s);
+  }
+  function dsxBlobToB64(blob) {
+    return new Promise(function (res, rej) {
+      var fr = new FileReader();
+      fr.onload = function () { res(String(fr.result).split(',')[1] || ''); };
+      fr.onerror = rej;
+      fr.readAsDataURL(blob);
+    });
+  }
+  async function dsxGenImage(prompt, model, key) {
+    var url = 'https://gen.pollinations.ai/image/' + encodeURIComponent(prompt) +
+      '?model=' + encodeURIComponent(model) + '&width=1024&height=1024&nologo=true';
+    try {
+      var r = await fetch(url, { headers: { 'Authorization': 'Bearer ' + key } });
+      if (!r.ok) throw new Error('HTTP ' + r.status + ': ' + (await r.text()).slice(0, 160));
+      var blob = await r.blob();
+      return { ok: true, blobUrl: URL.createObjectURL(blob), b64: await dsxBlobToB64(blob), size: blob.size };
+    } catch (e) {
+      var r2 = await dsxSend('imgfetch', { prompt: prompt, model: model, key: key });
+      if (r2 && r2.ok && r2.b64) return { ok: true, b64: r2.b64, type: r2.type, size: r2.size };
+      return { ok: false, error: (r2 && r2.error) || String(e && e.message || e) };
+    }
+  }
+  async function runImageJob(block, im) {
+    var host = block.closest('._4f9bf79') || block.parentElement;
+    var skel = null;
+    if (im.kindg === 'show') {
+      dsxImgCss();
+      skel = document.createElement('div');
+      skel.className = 'dsx-imgbox';
+      skel.innerHTML = '<div class="dsx-img-skel">' + esc(T('Генерирую картинку…', 'Generating image…')) + '</div>';
+      // точно В тексте ответа: сразу за бейджем маркера; запасной — перед тул-строками
+      var needle = T('Рисует картинку: «', 'Painting an image: “');
+      if (!insertAfterTextNode(block, needle, skel) && host) {
+        host.insertBefore(skel, host.querySelector('.dsx-tool-box') || null);
+      }
+    }
+    var hr = toolRowStart(host, 'Image', im.prompt.slice(0, 80), { expandable: false });
+    var res = await dsxGenImage(im.prompt, im.model, cfg.imgKey);
+    if (!res.ok) {
+      hr.finish('bad', null, null, 0);
+      if (skel) {
+        var sk = skel.querySelector('.dsx-img-skel');
+        sk.classList.add('dsx-tool-err');
+        sk.textContent = T('Не удалось сгенерировать', 'Generation failed');
+      }
+      return 'ERROR: image generation failed — ' + (res.error || 'unknown');
+    }
+    var statKB = res.size ? Math.round(res.size / 1024) + ' KB' : '';
+    if (im.kindg === 'file') {
+      var w = await fsCall('write_b64', { path: im.path, b64: res.b64 });
+      hr.finish(w && w.ok ? 'ok' : 'bad', null, statKB, 0);
+      if (w && w.ok) refreshPrompt();
+      return w && w.ok
+        ? 'IMAGE saved into the project: ' + im.path + ' (' + (res.size || 0) + ' bytes). NOT shown in chat, as requested.'
+        : 'ERROR saving image to ' + im.path + ': ' + (w && w.error);
+    }
+    var imEl = new Image();
+    imEl.onload = function () { imEl.classList.add('dsx-img-ready'); };
+    imEl.src = res.blobUrl || ('data:' + (res.type || 'image/jpeg') + ';base64,' + res.b64);
+    imEl.alt = im.prompt;
+    skel.innerHTML = ''; skel.appendChild(imEl);
+    hr.finish('ok', null, statKB, 0);
+    return 'IMAGE generated and shown INLINE in your message (the user sees it). Continue the reply naturally around it.';
+  }
+
   // ---------------- строки статуса под ответом DeepSeek
   // Добавляем СВОЙ контейнер в конец родного сообщения (append-only — React-safe).
   function appendAssistantRows(block, rows) {
@@ -3345,6 +3551,19 @@ tree || '(структура недоступна — спросите чере�
             svc.shells.forEach(function (s) { runShellCmd(block, s.cmd); });
             hideActionBar(block); // и у сообщения с командами
           }
+          if (svc.imgs && svc.imgs.length) {
+            svc.imgs.forEach(function (im) {
+              runImageJob(block, im).then(function (report) {
+                return injectStealth(report, 'картинка');
+              }).then(function (ok) {
+                if (ok) {
+                  st.autoCount++;
+                  st.waitingAnswer = true; sessionStorage.setItem('dsx:wait', '1');
+                  sessionStorage.setItem('dsx:auto', String(st.autoCount));
+                }
+              });
+            });
+          }
         }
 
         if (note) {
@@ -3555,6 +3774,8 @@ def run_app():
                         out = shell_run(payload)
                     elif kind == 'webfetch':
                         out = web_fetch(payload)
+                    elif kind == 'imgfetch':
+                        out = img_fetch(payload)
                     else:
                         out = {'ok': False, 'error': 'unknown kind: %s' % kind}
                 except Exception as e:
