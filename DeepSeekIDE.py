@@ -532,10 +532,13 @@ window.__dsxOutbox = window.__dsxOutbox || [];
   // «<{» не трактуется HTML-токенайзером как тег (после < идёт {), поэтому
   // разметка доживает до DOM-текста нетронутой и видна пользователю.
   // Маркеры внутри ```-ограждённого кода игнорируются (это могут быть примеры).
-  var BRACKET_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH|MEMORY ADD|ASK MULTI|ASK|REVERT FILE|WEB FETCH|WEB DOWNLOAD|WEB GREP|SHELL)\s*:\s*([^<>]*?)\s*\}>\]/gi;
+  // модель иногда рисует HTML-сущности (&lt;&gt;&amp;), вложенные кавычки в аргументе,
+  // а закрытие портит: «}]» вместо «}>]» — всё это жуём.
+  var BRACKET_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH|MEMORY ADD|ASK MULTI|ASK|REVERT FILE|WEB FETCH|WEB DOWNLOAD|WEB GREP|SHELL)\s*[:：]\s*([\s\S]*?)(?:\s*\}>\]|\s*\}\])/gi;
   function findBracketRequests(answer) {
+    answer = unescapeHtml(String(answer)); // &lt;{SHELL…2&gt;&amp;1}] -> [<{SHELL…2>&1}]
     var out = [], inFence = false;
-    var lines = String(answer).split('\n');
+    var lines = answer.split('\n');
     for (var li = 0; li < lines.length && out.length < 12; ++li) {
       var line = lines[li];
       if (line.slice(0, 3) === '```') { inFence = !inFence; continue; }
@@ -738,6 +741,7 @@ window.__dsxOutbox = window.__dsxOutbox || [];
 "- Working with open dumps (offsets, schemas, SDKs)? Do NOT guess fields: WEB GREP the raw dump page for the member name to get its exact line, then MEMORY ADD the verified result.",
 "- Prove your work: after code edits prefer VERIFYING with SHELL (compiler check, tests, lint) when a suitable command exists. Destructive/irreversible actions (mass deletes, force-push...) must go through the ASK card instead.",
 "- Prefer acting on your own defaults; but when a fork genuinely depends on the HUMAN\u2019s intent (which framework, keep-or-delete, which of two APIs...), ask via [<{ASK: ...}>] / [<{ASK MULTI: ...}>] instead of plain-text questions or stalling. Plain-text questions are invisible to the automation and dead-end the loop.",
+"- NEVER emit XML/framework tool syntax like <｜DSML｜>, <function_calls>, <antml:...>, ```tool_code or similar — those formats are INVALID here and never execute. The ONLY working tool syntax is the [<{...}>] markers above, closed EXACTLY as }] or }>] on the same intent.",
 "- Batch all requests you need into ONE message, then wait — do not narrate them.",
 "- NEVER repeat a request that was already answered in this chat: re-use what you already received. Repeating wastes a whole round-trip and is treated as an error.",
 "# PRIVATE SCRATCHPAD (hidden thinking — RARE, extreme cases only)",
@@ -1932,6 +1936,16 @@ tree || '(структура недоступна — спросите чере�
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(el, text);
     el.dispatchEvent(new Event('input', { bubbles: true }));
   }
+  // сайт автоматически раздувает textarea по input — при служебных инжектах лочим высоту
+  function clampComposer(el) {
+    var h = el.clientHeight || 46;
+    el.style.height = h + 'px';
+    el.style.maxHeight = h + 'px';
+    el.style.overflow = 'hidden';
+    return function () {
+      el.style.height = ''; el.style.maxHeight = ''; el.style.overflow = '';
+    };
+  }
   function findSendBtn() {
     var b = document.querySelector('._52c986b');
     if (b && b.offsetParent !== null) return b.closest('button,[role="button"]') || b;
@@ -1962,7 +1976,9 @@ tree || '(структура недоступна — спросите чере�
     if (st.primedOnce) { prefix = shortPrefix(); chip = T('Автопилот', 'Autopilot'); }
     else if (st.bigPrompt) { prefix = st.bigPrompt; chip = T('Контекст проекта загружен', 'Project context loaded'); }
     else { prefix = shortPrefix(); chip = T('Автопилот', 'Autopilot'); }
+    var unclampU = clampComposer(editor); // прайминг пользовательского мессаджа тоже не раздувает
     nativeSetValue(editor, wrapStealth(prefix, chip, v.replace(/^\s+/, '')));
+    setTimeout(unclampU, 600);
     if (!st.primedOnce && st.bigPrompt) {
       st.primedOnce = true; sessionStorage.setItem('dsx:primed', '1');
       // без тоста: юзеру тихо
@@ -2127,7 +2143,7 @@ tree || '(структура недоступна — спросите чере�
         if (!el || !el.isConnected || el.offsetParent === null) continue;
         if (el.closest('._871cbca')) continue; // наш индикатор «Думаю…» — не то
         var t = (el.textContent || '').trim();
-        if (t !== 'Continue' && t !== 'Продолжить' && t !== 'Continue generating') continue;
+        if (t !== 'Continue' && t !== 'Продолжить' && t !== 'Повторить' && t !== 'Continue generating') continue;
         btn = el; break;
       }
     }
@@ -2147,6 +2163,7 @@ tree || '(структура недоступна — спросите чере�
     if (!el) { toast(T('Не нашёл поле ввода чата', 'Chat input not found')); return false; }
     el.focus();
     el.style.visibility = 'hidden'; // юзер не видит вливаемый служебный текст
+    var unclamp = clampComposer(el); // и textarea не раздувается от большого текста
     nativeSetValue(el, wrapStealth(real, logTag, ''));
     await new Promise(function (r) { setTimeout(r, 320); });
     var clicked = false;
@@ -2170,7 +2187,7 @@ tree || '(структура недоступна — спросите чере�
         ke.__dsxBypass = true; el.dispatchEvent(ke);
       });
     }
-    setTimeout(function () { el.style.visibility = ''; }, 450);
+    setTimeout(function () { el.style.visibility = ''; unclamp(); }, 450);
     console.log('[DSX] service-send:', logTag, real.length, 'chars');
     return true;
   }
@@ -2529,6 +2546,27 @@ tree || '(структура недоступна — спросите чере�
     if (K === 'SHELL') return (pending ? T('Команда: ', 'Command: ') : T('Выполнено: ', 'Executed: ')) + String(arg).trim().slice(0, 90) + tail;
     return (pending ? T('Поиск: ', 'Search: ') : T('Найдено: ', 'Found: ')) + String(arg).trim() + tail; // NEED SEARCH
   }
+  // убрать из видимого ответа: нераспарсенные маркеры (в т.ч. экранированные),
+  // DSML-mусор вида <｜｜DSML｜｜ calls> — ничего из этого юзеру не нужно.
+  function stripDanglingMarkers(block) {
+    try {
+      eachTextNode(block, function (n) {
+        var p = n.parentElement;
+        if (p && p.closest && p.closest('pre, code')) return; // примеры в коде не трогаем
+        var v = n.nodeValue;
+        if (!v) return;
+        if (v.indexOf('<{') < 0 && v.indexOf('&lt;{') < 0 && v.indexOf('DSML') < 0 &&
+            v.indexOf('｜') < 0) return;
+        var w = v.replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+        w = w.replace(/\[<\{[\s\S]{0,900}?\}>\]/g, '');   // нормальное закрытие
+        w = w.replace(/\[<\{[\s\S]{0,900}?\}\]/g, '');     // сломанное «}]»
+        w = w.replace(/\[<\{[\s\S]{0,900}$/g, '');         // оборванный хвост (стрим)
+        w = w.replace(/<[|｜]{1,3}\s*DSML[\s\S]{0,200}?(?:>|$)/g, ''); // <｜DSML｜ … >
+        w = w.replace(/[|｜]{1,3}\s*(?:DSML|dsml|calls|invoke|parameters?)\s*[|｜]{0,3}/g, '');
+        if (w !== n.nodeValue) n.nodeValue = w;
+      });
+    } catch (e) {}
+  }
   function eachTextNode(root, fn) {
     var w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
     var n; while ((n = w.nextNode())) fn(n);
@@ -2570,7 +2608,7 @@ tree || '(структура недоступна — спросите чере�
     } catch (e) {}
     return n0;
   }
-  function resumeBadges(block) { try { renderBadges(block); } catch (e) {} }
+  function resumeBadges(block) { try { renderBadges(block); stripDanglingMarkers(block); } catch (e) {} }
   // после того, как служебное ушло: «Чтение: x…» → «Прочитано: x»
   function finalizeBadges(block) {
     var swaps = DSX_LANG === 'ru' ? [
@@ -2754,6 +2792,12 @@ tree || '(структура недоступна — спросите чере�
           return;
         }
         r.__dsxUserSeen = 1; // юзерское сообщение + скрытые правила — остаётся видимым
+        // панель реакций под сообщением юзера — убираем (место жрёт)
+        var par = r.parentElement;
+        if (par) {
+          var bar2 = par.querySelector('.ds-flex._0a3d93b');
+          if (bar2) bar2.style.display = 'none';
+        }
       });
     } catch (e) {}
   }
@@ -2923,10 +2967,21 @@ tree || '(структура недоступна — спросите чере�
       '.dsx-dl-add{color:#3fb950;background:rgba(63,185,80,.08);display:block}' +
       '.dsx-dl-del{color:#f85149;background:rgba(248,81,73,.08);display:block}' +
       '.dsx-dl-at{color:#8a9199;display:block}' +
-      '.dsx-tool-err{color:#f85149}';
+      '.dsx-tool-err{color:#f85149}' +
+      '.dsx-tool-x:hover{background:rgba(255,255,255,.035)}' +
+      '.dsx-tool{transition:border-color .2s,background .2s}' +
+      '.dsx-tool:has(.dsx-tool-run){border-color:rgba(232,179,57,.35);' +
+        'background:linear-gradient(110deg,var(--dsw-alias-bg-layer-2,#1d1f24) 35%,rgba(232,179,57,.09) 50%,var(--dsw-alias-bg-layer-2,#1d1f24) 65%);' +
+        'background-size:220% 100%;animation:dsxSweep 1.5s linear infinite}' +
+      '@keyframes dsxSweep{0%{background-position:190% 0}100%{background-position:-20% 0}}' +
+      '.dsx-tool:has(.dsx-tool-std-ok){border-color:rgba(63,185,80,.28)}' +
+      '.dsx-tool:has(.dsx-tool-std-bad){border-color:rgba(248,81,73,.35)}';
     document.head.appendChild(s);
   }
   function fmtDur(ms) { return ms < 1000 ? (ms | 0) + 'ms' : (ms / 1000).toFixed(1) + 's'; }
+  var OP_LABEL = { write_file: 'Write', edit_file: 'Edit', append_file: 'Append',
+                   insert_lines: 'Insert', replace_lines: 'Replace', make_dir: 'Mkdir',
+                   delete_path: 'Delete', copy_file: 'Copy', move_file: 'Move', revert: 'Revert' };
   function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
   // старт тул-строки: name — вид (Bash/Edit…), sub — команда / путь файла
@@ -3048,7 +3103,10 @@ tree || '(структура недоступна — спросите чере�
   // сворачиваем <pre> с голым JSON — статус-строки расскажут всё сами
   function collapseOpsBlocks(block) {
     opsBlockPres(block).forEach(function (pre) {
-      try { if (pre.style.display !== 'none') pre.style.display = 'none'; } catch (e) {}
+      try {
+        var fig = pre.closest('figure') || pre; // шапка с «deepseekide-ops» и «Копировать»
+        if (fig.style.display !== 'none') fig.style.display = 'none';
+      } catch (e) {}
     });
   }
   // think-блоки (```deepseekide-think```) скрываем от юзера целиком
@@ -3101,19 +3159,15 @@ tree || '(структура недоступна — спросите чере�
           var tm = /"to"\s*:\s*"([^"][^"]*?)"/.exec(joined.slice(m.index, m.index + 400));
           if (tm) to = tm[1].replace(/\\\//g, '/').replace(/\\\\/g, '\\');
         }
-        var label = vb[0] + base(pth) + (to ? ' → ' + base(to) : '');
         var key = op + '|' + pth + (to ? '|' + to : '');
         if (st.liveSeen[key]) continue;
         st.liveSeen[key] = 1;
-        var box = ensureLiveBox(host);
-        if (!box.isConnected) { host.appendChild(box); }
-        var row = document.createElement('p');
-        row.className = 'dsx-live-line';
-        row.setAttribute('data-t0', String(Date.now()));
-        row.setAttribute('data-dsx-final', vb[1] + base(pth) + (to ? ' → ' + base(to) : ''));
-        row.textContent = label + '…';
-        row.style.cssText = LIVE_ROW_CSS;
-        box.appendChild(row);
+        // живая ТУЛ-СТРОКА вместо серого текста: жёлтая пульсация + тикающее время
+        var hr = toolRowStart(host, OP_LABEL[op] || op, base(pth) + (to ? ' → ' + base(to) : ''), { expandable: false });
+        if (hr.el) {
+          hr.el.classList.add('dsx-live-tool');
+          hr.el.__dsxFin = function (ok2) { hr.finish(ok2 ? 'ok' : 'bad'); };
+        }
         found = true;
       }
       if (found) console.log('[DSX] live: правки замечены в стриме');
@@ -3131,6 +3185,10 @@ tree || '(структура недоступна — спросите чере�
         var t0r = +row.getAttribute('data-t0') || 0;
         var dur = t0r ? ' · ' + fmtDur(Date.now() - t0r) : '';
         row.textContent = (ok ? fin : (t.slice(0, -1) + T(' (ОШИБКА)', ' (ERROR)'))) + dur;
+      });
+      host.querySelectorAll('.dsx-live-tool').forEach(function (el) {
+        if (el.__dsxDone) return; el.__dsxDone = 1;
+        if (el.__dsxFin) el.__dsxFin(ok);
       });
     } catch (e) {}
   }
@@ -3218,9 +3276,8 @@ tree || '(структура недоступна — спросите чере�
             var hostBox = block.closest('._4f9bf79') || block.parentElement;
             var items = (r.data && r.data.items) || [];
             if (items.length) {
-              var OPLBL = { write_file: 'Write', edit_file: 'Edit', append_file: 'Append',
-                            insert_lines: 'Insert', replace_lines: 'Replace', make_dir: 'Mkdir',
-                            delete_path: 'Delete', copy_file: 'Copy', move_file: 'Move' };
+              if (hostBox) hostBox.querySelectorAll('.dsx-live-tool').forEach(function (n) { n.remove(); });
+              var OPLBL = OP_LABEL;
               items.forEach(function (it) {
                 var dh = '';
                 if (!it.ok) {
