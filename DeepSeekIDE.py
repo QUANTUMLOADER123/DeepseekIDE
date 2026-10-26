@@ -339,6 +339,7 @@ def img_fetch(args):
         return {'ok': False, 'error': 'empty prompt'}
     url = ('https://gen.pollinations.ai/image/' + urllib.parse.quote(prompt, safe='') +
            '?model=' + urllib.parse.quote(model, safe='') + '&width=1024&height=1024&nologo=true')
+    dlog('IMG →', model, '|', prompt[:70] + ('…' if len(prompt) > 70 else ''), '| ключ:', 'да' if key else 'нет (аноним)')
     hdrs = {'User-Agent': UA}
     if key:
         hdrs['Authorization'] = 'Bearer ' + key
@@ -346,6 +347,7 @@ def img_fetch(args):
     try:
         resp = urllib.request.urlopen(req, timeout=150)
         data = resp.read()
+        dlog('IMG OK:', getattr(resp, 'status', 200), len(data), 'bytes,', resp.headers.get('Content-Type', '?'))
         return {'ok': True, 'status': getattr(resp, 'status', 200),
                 'type': resp.headers.get('Content-Type', 'image/jpeg'),
                 'size': len(data), 'b64': base64.b64encode(data).decode('ascii')}
@@ -355,7 +357,35 @@ def img_fetch(args):
             msg += ' :: ' + e.read(300).decode('utf-8', errors='replace')  # API отвечает текстом ошибки
         except Exception:
             pass
+        dlog('IMG FAIL:', msg[:200])
         return {'ok': False, 'error': msg}
+
+
+def dlog(*a):
+    # единый лог в консоль: метка времени + префикс [DSX]
+    try:
+        print('[DSX %s]' % time.strftime('%H:%M:%S'), *a, flush=True)
+    except Exception:
+        pass
+
+
+def brief_out(out):
+    # однострочная сводка результата хендлера моста для консоли
+    if not isinstance(out, dict):
+        return str(out)[:140]
+    if not out.get('ok'):
+        return 'FAIL: ' + str(out.get('error'))[:200]
+    parts = []
+    for k in ('exitCode', 'status', 'size', 'lines', 'bytes'):
+        if k in out:
+            parts.append('%s=%s' % (k, out[k]))
+    d = out.get('data')
+    if isinstance(d, dict):
+        if 'done' in d:
+            parts.append('ops=%s/%s' % (d.get('done'), d.get('total')))
+        if 'text' in d:
+            parts.append('text=%d зн' % len(str(d.get('text') or '')))
+    return 'OK ' + ' '.join(parts)
 
 
 FS_OPS = {
@@ -1457,6 +1487,22 @@ tree || '(структура недоступна — спросите чере�
     inject('script', { src: url('fsbridge.js') });
   }
   // ---------------- транспорт: Qt-приложение (window.dsxCall) ИЛИ chrome-расширение
+  // ---------------- лог в консоль приложения
+  // python-сторона печатает console.log страницы (QuietPage), JS-ошибки ловим сами.
+  function dlog() {
+    try {
+      var a = ['[DSX]'];
+      for (var li = 0; li < arguments.length; ++li) a.push(String(arguments[li]));
+      console.log(a.join(' '));
+    } catch (e) {}
+  }
+  window.addEventListener('error', function (e) {
+    try { console.log('[DSX-ERR]', e.message, '@', (String(e.filename || '').split('/').pop() || '?') + ':' + (e.lineno || 0)); } catch (_) {}
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    try { console.log('[DSX-ERR] promise:', String(e.reason && (e.reason.stack || e.reason.message || e.reason)).slice(0, 300)); } catch (_) {}
+  });
+
   function dsxSend(kind, data) {
     return new Promise(function (resolve) {
       try {
@@ -2260,6 +2306,7 @@ tree || '(структура недоступна — спросите чере�
     if (!el) { toast(T('Не нашёл поле ввода чата', 'Chat input not found')); return false; }
     el.focus();
     el.style.visibility = 'hidden'; // юзер не видит вливаемый служебный текст
+    dlog('inject →', real.length, 'зн', logTag ? '(' + logTag + ')' : '');
     var unclamp = clampComposer(el); // и textarea не раздувается от большого текста
     nativeSetValue(el, wrapStealth(real, logTag, ''));
     await new Promise(function (r) { setTimeout(r, 320); });
@@ -2379,6 +2426,7 @@ tree || '(структура недоступна — спросите чере�
     // дедуп внутри одного ответа
     var seen = {}, uniq = [];
     reqs.forEach(function (r) { if (!seen[r.key]) { seen[r.key] = 1; uniq.push(r); } });
+    if (uniq.length) dlog('serviceNote: распознано', uniq.length, 'запр:', uniq.map(function (r) { return r.kind + (r.extra ? ' → ' + r.extra : ''); }).join(' | '));
     if (!uniq.length) return { text: '', rows: [] };
 
     var out = ['SYSTEM: auto-reply from DeepSeek Extended.'], rows = [], asks = [], shells = [], imgs = [];
@@ -2469,6 +2517,7 @@ tree || '(структура недоступна — спросите чере�
         st.sentWeb[wu] = 1;
         var fin1 = progress ? progress(T('Загрузка: ', 'Fetching: ') + hostOf(wu) + '…') : null;
         var wf = await webFetchCall(wu);
+        dlog('WEB FETCH:', wu, '→', (wf && wf.ok) ? ('HTTP ' + wf.status + ', ' + (wf.type || '?')) : ('ERR ' + ((wf && wf.error) || '?')));
         if (fin1) fin1(wf.ok ? T('Загружено: ', 'Fetched: ') + hostOf(wu) : T('Не загрузилось: ', 'Fetch failed: ') + hostOf(wu));
         if (wf.ok) {
           var wtxt = htmlToText(wf.text || '', wf.type || '');
@@ -2595,11 +2644,13 @@ tree || '(структура недоступна — спросите чере�
         if (!cfg.imgOn) {
           done++;
           out.push('IMAGE request NOT executed: image generation is DISABLED (owner panel: Settings → Images). Briefly tell the user and continue without the image.');
+          dlog('IMG пропуск: генерация выключена (Settings → Изображения)');
           rows.push(T('Картинка пропущена (генерация выкл.)', 'Image skipped (generation off)'));
           continue;
         }
         var imodel = cfg.imgModel === 'text' ? 'microsoft/mai-image-2.6-flash' : 'black-forest-labs/flux.1-schnell';
         imgs.push({ kindg: rq.kind === 'IMAGE FILE' ? 'file' : 'show', prompt: rq.arg, path: rq.extra || '', model: imodel });
+        dlog('IMG в очередь:', rq.kind, '|', imodel, '|', String(rq.arg).slice(0, 70));
         if (!rq.bracket) rows.push(T('Рисует картинку…', 'Painting an image…'));
       } else if (rq.kind === 'ASK' || rq.kind === 'ASK MULTI') {
         asks.push({ q: rq.arg, opts: rq.opts || [], multi: rq.kind === 'ASK MULTI' });
@@ -2776,6 +2827,7 @@ tree || '(структура недоступна — спросите чере�
     var hrow = toolRowStart(block.closest('._4f9bf79') || block.parentElement, 'Bash', cmd, { expandable: true });
     var sok = false, detail = '';
     var r = await dsxSend('shell', { cmd: cmd });
+    dlog('SHELL:', cmd.slice(0, 90), '→', (r && r.ok) ? ('exit ' + r.exitCode + (r.killed ? ' (timeout 120s)' : '')) : ('ERR ' + ((r && r.error) || 'нет связи')));
     var report, short;
     if (r && r.ok) {
       var out = String(r.stdout || '').replace(/\n$/, '');
@@ -3197,14 +3249,18 @@ tree || '(структура недоступна — спросите чере�
   async function dsxGenImage(prompt, model, key) {
     var url = 'https://gen.pollinations.ai/image/' + encodeURIComponent(prompt) +
       '?model=' + encodeURIComponent(model) + '&width=1024&height=1024&nologo=true';
+    dlog('IMG gen:', model, '|', String(prompt).slice(0, 70));
     try {
       var hdrs = {}; if (key) hdrs['Authorization'] = 'Bearer ' + key;
       var r = await fetch(url, { headers: hdrs });
       if (!r.ok) throw new Error('HTTP ' + r.status + ': ' + (await r.text()).slice(0, 160));
       var blob = await r.blob();
+      dlog('IMG браузер OK:', blob.size, 'bytes');
       return { ok: true, blobUrl: URL.createObjectURL(blob), b64: await dsxBlobToB64(blob), size: blob.size };
     } catch (e) {
+      dlog('IMG браузер FAIL:', String(e && e.message || e).slice(0, 120), '— пробую python-мост…');
       var r2 = await dsxSend('imgfetch', { prompt: prompt, model: model, key: key });
+      dlog('IMG мост:', (r2 && r2.ok) ? ('OK ' + (r2.size || 0) + ' bytes') : ('ERR ' + ((r2 && r2.error) || '?')));
       if (r2 && r2.ok && r2.b64) return { ok: true, b64: r2.b64, type: r2.type, size: r2.size };
       return { ok: false, error: (r2 && r2.error) || String(e && e.message || e) };
     }
@@ -3219,13 +3275,16 @@ tree || '(структура недоступна — спросите чере�
       skel.innerHTML = '<div class="dsx-img-skel">' + esc(T('Генерирую картинку…', 'Generating image…')) + '</div>';
       // точно В тексте ответа: сразу за бейджем маркера; запасной — перед тул-строками
       var needle = T('Рисует картинку: «', 'Painting an image: “');
-      if (!insertAfterTextNode(block, needle, skel) && host) {
+      var inlineOk = insertAfterTextNode(block, needle, skel);
+      if (!inlineOk && host) {
+        dlog('IMG скелет: бейдж не найден в тексте — встаю перед тул-строками');
         host.insertBefore(skel, host.querySelector('.dsx-tool-box') || null);
       }
     }
     var hr = toolRowStart(host, 'Image', im.prompt.slice(0, 80), { expandable: false });
     var res = await dsxGenImage(im.prompt, im.model, cfg.imgKey);
     if (!res.ok) {
+      dlog('IMG FAIL:', res.error);
       hr.finish('bad', null, null, 0);
       if (skel) {
         var sk = skel.querySelector('.dsx-img-skel');
@@ -3237,6 +3296,7 @@ tree || '(структура недоступна — спросите чере�
     var statKB = res.size ? Math.round(res.size / 1024) + ' KB' : '';
     if (im.kindg === 'file') {
       var w = await fsCall('write_b64', { path: im.path, b64: res.b64 });
+      dlog('IMG файл:', im.path, '→', (w && w.ok) ? ((res.size || 0) + ' bytes записаны') : ('ERR ' + (w && w.error)));
       hr.finish(w && w.ok ? 'ok' : 'bad', null, statKB, 0);
       if (w && w.ok) refreshPrompt();
       return w && w.ok
@@ -3248,6 +3308,7 @@ tree || '(структура недоступна — спросите чере�
     imEl.src = res.blobUrl || ('data:' + (res.type || 'image/jpeg') + ';base64,' + res.b64);
     imEl.alt = im.prompt;
     skel.innerHTML = ''; skel.appendChild(imEl);
+    dlog('IMG показана инлайн:', String(im.prompt).slice(0, 60), '|', statKB);
     hr.finish('ok', null, statKB, 0);
     return 'IMAGE generated and shown INLINE in your message (the user sees it). Continue the reply naturally around it.';
   }
@@ -3457,6 +3518,7 @@ tree || '(структура недоступна — спросите чере�
         var answHash = hashStr(text);
         var tail = isTailAssistant(block);
 
+        dlog('settle: новый ответ,', text.length, 'зн; tail=', tail);
         var outp = { ops: [], errors: [] };
         if (pay.obs.length) pay.obs.forEach(function (b) { DsideOps.parseOpsBody(b, outp); });
         else DsideOps.extractOps(text, outp);
@@ -3483,6 +3545,7 @@ tree || '(структура недоступна — спросите чере�
             label: 'DeepSeek Extended правки',
             ops: outp.ops.map(function (o) { return { name: o.name, args: o.args }; })
           });
+          dlog('OPS batch:', r.ok ? ((r.data.done || 0) + '/' + (r.data.total || 0) + ' применено') : ('ERR ' + (r.error || '?')), '|', (outp.ops.length || 0), 'оп.');
           if (r.ok) {
             var sum = r.data.done === r.data.total
               ? T('Применено: ', 'Applied: ') + r.data.done + ' / ' + r.data.total + T(' операций', ' ops')
@@ -3548,6 +3611,7 @@ tree || '(структура недоступна — спросите чере�
               };
             } catch (e) { return function () {}; }
           });
+          dlog('svc: ответ-сервис', (svc.text || '').length, 'зн; asks=' + ((svc.asks || []).length), 'shells=' + ((svc.shells || []).length), 'imgs=' + ((svc.imgs || []).length));
           if (svc.text) {
             svcReq = true;
             note = note ? note + '\n\n' + svc.text : svc.text;
@@ -3761,6 +3825,20 @@ def run_app():
         def handle_item(self, item):
             t = item.get('t'); kind = item.get('kind')
             payload = item.get('payload') or {}
+            try:
+                if kind == 'fs':
+                    br = str(payload.get('op', '')) + ' ' + str(payload.get('path') or payload.get('from') or payload.get('url') or '')[:110]
+                elif kind == 'shell':
+                    br = '$ ' + str(payload.get('cmd', ''))[:110]
+                elif kind == 'webfetch':
+                    br = str(payload.get('url', ''))[:110]
+                elif kind == 'imgfetch':
+                    br = '%s | %s' % (payload.get('model', '?'), str(payload.get('prompt', ''))[:70])
+                else:
+                    br = str(payload)[:110]
+                dlog('JS→PY:', kind, br.strip())
+            except Exception:
+                pass
             # выбор папки — GUI-поток, модальный диалог, отвечаем сразу
             if kind == 'fs' and payload.get('op') == 'pick':
                 path = QFileDialog.getExistingDirectory(self.win, 'Папка проекта') or ''
@@ -3790,6 +3868,10 @@ def run_app():
                         out = {'ok': False, 'error': 'unknown kind: %s' % kind}
                 except Exception as e:
                     out = {'ok': False, 'error': str(e)}
+                try:
+                    dlog('PY→JS:', kind, brief_out(out))
+                except Exception:
+                    pass
                 self.pushResult.emit(json.dumps({'t': t, 'out': out}, ensure_ascii=False))
             threading.Thread(target=work, daemon=True).start()
 
@@ -3813,7 +3895,14 @@ def run_app():
             s = str(msg)
             if 'WebGPU' in s or 'WebAssembly' in s or 'MIME type' in s:
                 return  # шум движка самого сайта — в консоль не тащим
-            super().javaScriptConsoleMessage(level, msg, line, src_)
+            try:
+                lvl = getattr(level, 'name', str(level))
+                srcs = str(src_)
+                if len(srcs) > 46:
+                    srcs = '…' + srcs[-45:]
+                print('[DSX-JS %s %s:%d] %s' % (lvl, srcs, line, s), flush=True)
+            except Exception:
+                pass
 
     class DeepSeekApp(QMainWindow):
         def __init__(self):
