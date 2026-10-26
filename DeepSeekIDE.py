@@ -339,10 +339,10 @@ def img_fetch(args):
         return {'ok': False, 'error': 'empty prompt'}
     url = ('https://gen.pollinations.ai/image/' + urllib.parse.quote(prompt, safe='') +
            '?model=' + urllib.parse.quote(model, safe='') + '&width=1024&height=1024&nologo=true')
-    req = urllib.request.Request(url, headers={
-        'Authorization': 'Bearer ' + key,
-        'User-Agent': UA,
-    })
+    hdrs = {'User-Agent': UA}
+    if key:
+        hdrs['Authorization'] = 'Bearer ' + key
+    req = urllib.request.Request(url, headers=hdrs)
     try:
         resp = urllib.request.urlopen(req, timeout=150)
         data = resp.read()
@@ -561,7 +561,7 @@ window.__dsxOutbox = window.__dsxOutbox || [];
   // Маркеры внутри ```-ограждённого кода игнорируются (это могут быть примеры).
   // модель иногда рисует HTML-сущности (&lt;&gt;&amp;), вложенные кавычки в аргументе,
   // а закрытие портит: «}]» вместо «}>]» — всё это жуём.
-  var BRACKET_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH|MEMORY ADD|ASK MULTI|ASK|REVERT FILE|WEB FETCH|WEB DOWNLOAD|WEB GREP|SHELL)\s*[:：]\s*([\s\S]*?)(?:\s*\}>\]|\s*\}\])/gi;
+  var BRACKET_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH|MEMORY ADD|ASK MULTI|ASK|REVERT FILE|WEB FETCH|WEB DOWNLOAD|WEB GREP|SHELL|IMAGE FILE|IMAGE SHOW)\s*[:：]\s*([\s\S]*?)(?:\s*\}>\]|\s*\}\])/gi;
   function findBracketRequests(answer) {
     answer = unescapeHtml(String(answer)); // &lt;{SHELL…2&gt;&amp;1}] -> [<{SHELL…2>&1}]
     var out = [], inFence = false;
@@ -624,6 +624,16 @@ window.__dsxOutbox = window.__dsxOutbox || [];
         } else if (kind === 'SHELL') {
           val = val.replace(/[\r\n]+/g, ' ').trim();
           if (!val || val.length > 500) continue;
+        } else if (kind === 'IMAGE FILE') {
+          var im = /^(.+?)::([\s\S]*)$/.exec(val);
+          if (!im) continue;
+          var ipr = im[1].trim(), ipath = cleanPath(im[2]);
+          if (!ipr || ipr.length > 900) continue;
+          if (!looksLikePath(ipath)) continue;
+          if (!/\.(png|jpe?g|webp)$/i.test(ipath)) continue;
+          val = ipr; extra = ipath;
+        } else if (kind === 'IMAGE SHOW') {
+          if (!val || val.length > 900) continue;
         } else { // NEED SEARCH / MEMORY SEARCH
           val = val.slice(0, 200);
           if (!val) continue;
@@ -2582,11 +2592,10 @@ tree || '(структура недоступна — спросите чере�
         st.sentImgs = st.sentImgs || {};
         if (st.sentImgs[ik]) continue;
         st.sentImgs[ik] = 1;
-        if (!cfg.imgOn || !cfg.imgKey) {
+        if (!cfg.imgOn) {
           done++;
-          out.push('IMAGE request NOT executed: image generation is ' + (!cfg.imgOn ? 'DISABLED' : 'missing the API key') +
-                   ' (owner panel: Settings → Images). Briefly tell the user and continue without the image.');
-          rows.push(T('Картинка пропущена (выкл. или нет ключа)', 'Image skipped (off or no key)'));
+          out.push('IMAGE request NOT executed: image generation is DISABLED (owner panel: Settings → Images). Briefly tell the user and continue without the image.');
+          rows.push(T('Картинка пропущена (генерация выкл.)', 'Image skipped (generation off)'));
           continue;
         }
         var imodel = cfg.imgModel === 'text' ? 'microsoft/mai-image-2.6-flash' : 'black-forest-labs/flux.1-schnell';
@@ -2622,7 +2631,7 @@ tree || '(структура недоступна — спросите чере�
 
   // ---------------- бейджи: [<{…}>] в ответе модели превращаем в строки-статусы
   // Меняем ТОЛЬКО nodeValue текстовых узлов (React не заметит — дерево то же).
-  var BADGE_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH|MEMORY ADD|ASK MULTI|ASK|REVERT FILE|WEB FETCH|WEB DOWNLOAD|WEB GREP|SHELL)\s*:\s*([^<>]*?)\s*\}>\]/gi;
+  var BADGE_RE = /\[<\{\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH|MEMORY ADD|ASK MULTI|ASK|REVERT FILE|WEB FETCH|WEB DOWNLOAD|WEB GREP|SHELL|IMAGE FILE|IMAGE SHOW)\s*:\s*([^<>]*?)\s*\}>\]/gi;
   function badgeText(kind, arg, pending) {
     var K = kind.toUpperCase(), tail = pending ? '…' : '';
     if (K === 'NEED FILE')    return (pending ? T('Чтение: ', 'Reading: ')       : T('Прочитано: ', 'Read: '))      + base(arg) + tail;
@@ -3189,7 +3198,8 @@ tree || '(структура недоступна — спросите чере�
     var url = 'https://gen.pollinations.ai/image/' + encodeURIComponent(prompt) +
       '?model=' + encodeURIComponent(model) + '&width=1024&height=1024&nologo=true';
     try {
-      var r = await fetch(url, { headers: { 'Authorization': 'Bearer ' + key } });
+      var hdrs = {}; if (key) hdrs['Authorization'] = 'Bearer ' + key;
+      var r = await fetch(url, { headers: hdrs });
       if (!r.ok) throw new Error('HTTP ' + r.status + ': ' + (await r.text()).slice(0, 160));
       var blob = await r.blob();
       return { ok: true, blobUrl: URL.createObjectURL(blob), b64: await dsxBlobToB64(blob), size: blob.size };
