@@ -253,7 +253,7 @@ void Agent::processAnswer(const QString& full) {
 // ============================================================================
 //  ПАРСИНГ МАРКЕРОВ (порт findBracketRequests)
 // ============================================================================
-QList<Agent::Request> Agent::parseMarkers(const QString& answer0) const {
+QList<Agent::Request> Agent::parseMarkers(const QString& answer0) {
     QString answer = answer0;
     answer.replace(QStringLiteral("&lt;"), QStringLiteral("<"))
           .replace(QStringLiteral("&gt;"), QStringLiteral(">"))
@@ -412,7 +412,7 @@ int Agent::balancedEnd(const QString& s, int i0) {
     return -1;
 }
 
-static bool jsonArrayToOps(const QString& body, QList<Agent::Op>& out, QStringList& errors) {
+bool Agent::jsonArrayToOps(const QString& body, QList<Agent::Op>& out, QStringList& errors) {
     static const QStringList MUT_OPS = {
         QStringLiteral("write_file"), QStringLiteral("edit_file"), QStringLiteral("append_file"),
         QStringLiteral("insert_lines"), QStringLiteral("replace_lines"), QStringLiteral("make_dir"),

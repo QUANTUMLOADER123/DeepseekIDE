@@ -4,6 +4,7 @@
 #include <functional>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
+#include <QNetworkReply>
 #include <QPointer>
 #include "pow.h"
 #include "settings.h"

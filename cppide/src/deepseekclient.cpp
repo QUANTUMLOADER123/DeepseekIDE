@@ -59,7 +59,7 @@ void DeepSeekClient::ask(const QString& prompt) {
 void DeepSeekClient::ensureSessionThen(std::function<void()> next) {
     if (!sessionId_.isEmpty()) { next(); return; }
     emit log(QStringLiteral("DS: создаю chat session…"));
-    QNetworkRequest req(QUrl(QStringLiteral(DS_BASE) + QStringLiteral("/api/v0/chat_session/create")));
+    QNetworkRequest req(QUrl(QLatin1String(DS_BASE) + QStringLiteral("/api/v0/chat_session/create")));
     fillHeaders(req, cfg_);
     auto* r = nam_.post(req, "{}");
     connect(r, &QNetworkReply::finished, this, [this, r, next]() {
@@ -107,7 +107,7 @@ void DeepSeekClient::createPowThen(const QString& prompt) {
         });
         return;
     }
-    QNetworkRequest req(QUrl(QStringLiteral(DS_BASE) + QStringLiteral("/api/v0/chat/create_pow_challenge")));
+    QNetworkRequest req(QUrl(QLatin1String(DS_BASE) + QStringLiteral("/api/v0/chat/create_pow_challenge")));
     fillHeaders(req, cfg_);
     QJsonObject tgt; tgt[QStringLiteral("target_path")] = QStringLiteral("/api/v0/chat/completion");
     auto* r = nam_.post(req, QJsonDocument(tgt).toJson(QJsonDocument::Compact));
@@ -145,7 +145,7 @@ void DeepSeekClient::createPowThen(const QString& prompt) {
 
 void DeepSeekClient::startCompletion(const QString& prompt, const QString& powB64) {
     emit log(QStringLiteral("DS: → completion (%1 зн)").arg(prompt.size()));
-    QNetworkRequest req(QUrl(QStringLiteral(DS_BASE) + QStringLiteral("/api/v0/chat/completion")));
+    QNetworkRequest req(QUrl(QLatin1String(DS_BASE) + QStringLiteral("/api/v0/chat/completion")));
     fillHeaders(req, cfg_);
     req.setRawHeader("X-DS-PoW-Response", powB64.toUtf8());
 
@@ -195,7 +195,7 @@ void DeepSeekClient::startCompletion(const QString& prompt, const QString& powB6
 }
 
 void DeepSeekClient::onReadyRead() {
-    auto* r = reply_;
+    QNetworkReply* r = reply_.data();
     if (!r) return;
     sseBuf_ += r->readAll();
     int cut;

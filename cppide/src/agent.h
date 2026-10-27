@@ -42,10 +42,11 @@ private slots:
 private:
     // --- парсинг
     struct Request { QString kind, arg, extra; QStringList opts; };
-    QList<Request> parseMarkers(const QString& answer) const;
+    QList<Request> parseMarkers(const QString& answer);
     struct Op { QString name; QJsonObject args; };
     QList<Op> parseOps(const QString& answer, QStringList& errors) const;
     static QString repairJson(const QString& in);
+    static bool    jsonArrayToOps(const QString& body, QList<Op>& out, QStringList& errors);
     static int     balancedEnd(const QString& s, int i0);
     static QString sanitizeRel(QString p);
 

@@ -181,9 +181,10 @@ QString MainWindow::mdToHtml(const QString& md) {
 
 // ---------- файлы ----------
 void MainWindow::rebuildTreeRoot() {
-    QString root = fsModel_->setRootPath(cfg_.projectDir.isEmpty() ? QDir::currentPath() : cfg_.projectDir);
-    tree_->setRootIndex(fsModel_->index(root));
-    setWindowTitle(QStringLiteral("DeepSeek C++ IDE — %1").arg(QDir(root).dirName()));
+    const QString dir = cfg_.projectDir.isEmpty() ? QDir::currentPath() : cfg_.projectDir;
+    const QModelIndex root = fsModel_->setRootPath(dir);
+    tree_->setRootIndex(root);
+    setWindowTitle(QStringLiteral("DeepSeek C++ IDE — %1").arg(QDir(dir).dirName()));
 }
 
 void MainWindow::onTreeOpen(const QModelIndex& idx) {
