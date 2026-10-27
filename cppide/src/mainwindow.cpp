@@ -195,9 +195,9 @@ QString MainWindow::mdToHtml(const QString& md) {
     QString s = md.toHtmlEscaped();
     // кодовые заборы
     s.replace(QRegularExpression(QStringLiteral("```(\\w*)\\n([\\s\\S]*?)```")),
-              QStringLiteral("<pre style='background:#16161a;border:1px solid #333;padding:8px;'><code>\\2</code></pre>"));
+              QStringLiteral("<pre style='background:#0c0e14;border:1px solid #272c40;border-radius:8px;padding:10px;font-family:Consolas,monospace;'><code>\\2</code></pre>"));
     s.replace(QRegularExpression(QStringLiteral("`([^`\n]+)`")),
-              QStringLiteral("<code style='background:#16161a;padding:1px 4px;'>\\1</code>"));
+              QStringLiteral("<code style='background:#0c0e14;border:1px solid #272c40;border-radius:4px;padding:1px 6px;font-family:Consolas,monospace;'>\\1</code>"));
     s.replace(QStringLiteral("\n"), QStringLiteral("<br>"));
     return s;
 }
