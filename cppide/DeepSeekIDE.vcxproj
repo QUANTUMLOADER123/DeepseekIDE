@@ -187,15 +187,11 @@
     <ClCompile Include="wasm3\m3_parse.c"><WarningLevel>TurnOffAllWarnings</WarningLevel><SDLCheck>false</SDLCheck></ClCompile>
   </ItemGroup>
 
+  <!-- Хедеры с Q_OBJECT перечислены выше в CustomBuild и в ClInclude не дублируются,
+       иначе VS выдаёт "Элемент ... уже существует в фильтре" -->
   <ItemGroup>
-    <ClInclude Include="src\mainwindow.h" />
-    <ClInclude Include="src\settings.h" />
     <ClInclude Include="src\pow.h" />
-    <ClInclude Include="src\deepseekclient.h" />
-    <ClInclude Include="src\agent.h" />
     <ClInclude Include="src\sessionstore.h" />
-    <ClInclude Include="src\sitepreview.h" />
-    <ClInclude Include="src\squirclecard.h" />
   </ItemGroup>
 
   <ItemGroup>
