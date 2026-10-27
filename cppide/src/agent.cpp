@@ -963,7 +963,7 @@ QString Agent::applyOp(const Op& op, bool& ok) {
 QString Agent::cleanVisibleText(const QString& full) const {
     QString out = full;
     // снести fence-блоки ops
-    static const QRegularExpression fenceRe(QStringLiteral("```deepseekide-ops[ \\t]*\\r?\\n[\\s\\S]*?```"));
+    static const QRegularExpression fenceRe(QStringLiteral("```deepseekide-ops[ \\t]*\\r?\\n[\\s\\S]*?(?:```|$)"));
     out.remove(fenceRe);
     // снести голые массивы
     static const QRegularExpression bareRe(QStringLiteral("\\[\\s*\\{\\s*\"name\"\\s*:"));
@@ -974,16 +974,19 @@ QString Agent::cleanVisibleText(const QString& full) const {
         if (end < 0) break;
         out.remove(m.capturedStart(0), end - m.capturedStart(0) + 1);
     }
-    // маркеры → «✓ Команда: …»
-    static const QRegularExpression BRACKET_RE(
-        QStringLiteral("\\[<\\{\\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH|MEMORY ADD|ASK MULTI|ASK|"
-                       "REVERT FILE|WEB FETCH|WEB DOWNLOAD|WEB GREP|SANDBOX SHELL|SITE VIEW|SHELL|IMAGE FILE|IMAGE SHOW)\\s*[:：]\\s*"
-                       "([\\s\\S]*?)(?:\\s*\\}>\\]|\\s*\\}\\])"),
-        QRegularExpression::CaseInsensitiveOption);
-    out.replace(BRACKET_RE, QStringLiteral(""));
-    // недописанный маркер в хвосте (стрим оборвался / модель не закрыла "[<{" ) — сносим,
-    // иначе в чат улетает сырой мусор вида "needАло"
-    static const QRegularExpression TAIL_RE(QStringLiteral("\\[<\\{\\s*[A-Za-z][^\\n]*$"));
+    // ВСЕ маркеры — любые имена: в интерфейсе маркеров нет вовсе, исполнение делает парсер
+    static const QRegularExpression MARK_RE(
+        QStringLiteral("\\[\\s*<\\s*\\{[\\s\\S]*?(?:\\}\\s*>\\s*\\]|\\}\\s*\\])"));
+    out.remove(MARK_RE);
+    // HTML-эскейпнутый вариант маркера
+    static const QRegularExpression MARK_HTML_RE(
+        QStringLiteral("&lt;\\s*\\{[\\s\\S]*?(?:\\}\\s*&gt;\\s*\\]|\\}\\s*\\])"));
+    out.remove(MARK_HTML_RE);
+    // недописанный хвост маркера в конце (стрим оборвался / модель не закрыла "[<{")
+    static const QRegularExpression TAIL_RE(QStringLiteral("(?:\\[\\s*<\\s*\\{|&lt;\\s*\\{)[^\\n]*$"));
     out.remove(TAIL_RE);
+    // одинокий «полумаркер» в самом конце ответа: "[" / "[<" / "&" / "&lt;"
+    static const QRegularExpression DANGLE_RE(QStringLiteral("(?:\\[<?|&(?:lt;)?)$"));
+    out.remove(DANGLE_RE);
     return out.simplified().isEmpty() ? QString() : out;
 }

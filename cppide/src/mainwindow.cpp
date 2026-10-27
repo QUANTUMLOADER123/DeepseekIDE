@@ -166,6 +166,8 @@ QMenu { background:#191a1e; border:1px solid #2c2d33; border-radius:8px; padding
 QMenu::item { padding:6px 20px 6px 14px; border-radius:5px; color:#c9cad0; }
 QMenu::item:selected { background:#2b1a20; color:#f0cdd5; }
 QMenu::separator { height:1px; background:#2a2b30; margin:4px 8px; }
+
+QWidget#toolLine { background:#15161a; border:1px solid #25262c; border-radius:10px; }
 )";
 
 // ============================================================================
@@ -927,14 +929,16 @@ void MainWindow::replayHistory() {
         } else if (role == QLatin1String("assistant")) {
             auto* c = chatAppend(QStringLiteral("assistant"), QString(), false);
             auto* l = qobject_cast<QVBoxLayout*>(c->layout());
-            renderRich(l, text);
-            fitBubble(c, text, false);
-            addAssistantActions(l, i, text);
+            const QString vis = liveClean(text); // старые записи могут содержать маркеры
+            renderRich(l, vis);
+            fitBubble(c, vis, false);
+            addAssistantActions(l, i, vis);
         } else if (role == QLatin1String("hint")) {
             auto* c = chatAppend(QStringLiteral("hint"), QString(), false);
             auto* l = qobject_cast<QVBoxLayout*>(c->layout());
-            renderRich(l, text);
-            fitBubble(c, text, false);
+            const QString vis = liveClean(text);
+            renderRich(l, vis);
+            fitBubble(c, vis, false);
         } else if (role == QLatin1String("tool")) {
             addToolRow(e[QStringLiteral("name")].toString(), e[QStringLiteral("sub")].toString(),
                        e[QStringLiteral("ok")].toBool(true), QString());
@@ -1060,14 +1064,15 @@ void MainWindow::endAssistant(const QString& cleanText) {
             lbl->setWordWrap(true);
             l->addWidget(lbl);
         } else {
-            renderRich(l, cleanText);
-            fitBubble(card, cleanText, false);
-            const int idx = pushHist(QStringLiteral("assistant"), cleanText);
-            addAssistantActions(l, idx, cleanText);
+            const QString vis = liveClean(cleanText); // страховка: ни одного маркера/ops в UI и в истории
+            renderRich(l, vis);
+            fitBubble(card, vis, false);
+            const int idx = pushHist(QStringLiteral("assistant"), vis);
+            addAssistantActions(l, idx, vis);
             if (curSess_ >= 0) sessions_[curSess_].ctxChars += 0; // учёт уже в pushHist
             if (curSess_ >= 0 && sessions_[curSess_].title == QStringLiteral("New Chat") && !titleQueued_) {
                 titleQueued_ = true;
-                titleSeed_ = lastUserText_ + QStringLiteral("\n---\n") + cleanText;
+                titleSeed_ = lastUserText_ + QStringLiteral("\n---\n") + vis;
             }
             maybeCompact();
         }
@@ -1083,18 +1088,24 @@ void MainWindow::addToolRow(const QString& name, const QString& sub, bool ok, co
     SquircleCard* card = inside ? liveCard_.data()
                                 : chatAppend(QStringLiteral("tool"), ok ? QString() : QStringLiteral("fail"));
     auto* l = qobject_cast<QVBoxLayout*>(card->layout());
-    auto* lbl = new QLabel(QStringLiteral("<b style='color:%1'>%2</b> <span style='color:#6f727c'>%3</span>")
+    auto* row = new QWidget;
+    row->setObjectName(QStringLiteral("toolLine"));
+    auto* rl = new QVBoxLayout(row);
+    rl->setContentsMargins(10, 6, 10, 6); rl->setSpacing(3);
+    auto* lbl = new QLabel(QStringLiteral("<b style='color:%1'>●</b> <b style='color:#c9cad0'>%2</b>  <span style='color:#6f727c'>%3</span>")
                                .arg(ok ? QStringLiteral("#35cf7f") : QStringLiteral("#ff5470"),
                                     name.toHtmlEscaped(), sub.toHtmlEscaped()));
     lbl->setWordWrap(true);
-    lbl->setStyleSheet(QStringLiteral("font-family:'Cascadia Code','Consolas',monospace;font-size:12px;"));
-    l->addWidget(lbl);
+    lbl->setStyleSheet(QStringLiteral("font-family:'Cascadia Code','Consolas',monospace;font-size:12px;border:none;background:transparent;"));
+    rl->addWidget(lbl);
     if (!detail.isEmpty()) {
-        auto* det = new QLabel(QStringLiteral("<pre style='color:#7d8089;font-size:11px;font-family:Consolas,monospace;'>%1</pre>")
+        auto* det = new QLabel(QStringLiteral("<span style='color:#6a6d76;font-size:11px;font-family:Consolas,monospace;'>%1</span>")
                                    .arg(detail.left(1500).toHtmlEscaped()));
         det->setWordWrap(true);
-        l->addWidget(det);
+        det->setStyleSheet(QStringLiteral("border:none;background:transparent;"));
+        rl->addWidget(det);
     }
+    l->addWidget(row);
     if (!inside) fitBubble(card, name + QStringLiteral(" ") + sub, false);
     pushHist(QStringLiteral("tool"), QString(), name, sub, ok, detail.left(400));
 }
