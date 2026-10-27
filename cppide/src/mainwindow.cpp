@@ -65,7 +65,7 @@ MainWindow::MainWindow() {
     connect(aSettings, &QAction::triggered, this, &MainWindow::onSettings);
     new QShortcut(QKeySequence(QKeyCombination(Qt::ControlModifier, Qt::Key_S)), this, SLOT(saveCurrent()));
 
-    // левая колонка: дерево
+    // левая колонка: дерево в панели с шапкой
     fsModel_ = new QFileSystemModel(this);
     fsModel_->setReadOnly(true);
     fsModel_->setNameFilters(QStringList{});
@@ -76,12 +76,27 @@ MainWindow::MainWindow() {
     for (int i = 1; i < 4; ++i) tree_->hideColumn(i);
     connect(tree_, &QTreeView::doubleClicked, this, &MainWindow::onTreeOpen);
 
+    auto mkPanel = [](const QString& title, bool accent) {
+        auto* f = new QFrame; f->setObjectName(QStringLiteral("panel"));
+        auto* l = new QVBoxLayout(f);
+        l->setContentsMargins(12, 10, 12, 12);
+        l->setSpacing(6);
+        auto* t = new QLabel(title);
+        t->setObjectName(accent ? QStringLiteral("panelTitleAccent") : QStringLiteral("panelTitle"));
+        l->addWidget(t);
+        return f;
+    };
+    auto* projPanel = mkPanel(QStringLiteral("ФАЙЛЫ ПРОЕКТА"), false);
+    projPanel->layout()->addWidget(tree_);
+
     // центр: табы редакторов
     tabs_ = new QTabWidget;
     tabs_->setTabsClosable(true);
     tabs_->setMovable(true);
     tabs_->setDocumentMode(true);
     connect(tabs_, &QTabWidget::tabCloseRequested, this, &MainWindow::onTabClose);
+    auto* editorPanel = mkPanel(QStringLiteral("РЕДАКТОР"), false);
+    editorPanel->layout()->addWidget(tabs_);
 
     // правая колонка: чат
     chatScroll_ = new QScrollArea;
@@ -93,36 +108,41 @@ MainWindow::MainWindow() {
     chatLay_->addStretch(1);
     chatScroll_->setWidget(chatHost);
 
+ 
     input_ = new QPlainTextEdit;
-    input_->setPlaceholderText(QStringLiteral("Сообщение (Ctrl+Enter — отправить)…"));
-    input_->setMaximumHeight(90);
+    input_->setObjectName(QStringLiteral("composer"));
+    input_->setPlaceholderText(QStringLiteral("Напишите сообщение…  (Ctrl+Enter — отправить)"));
+    input_->setMaximumHeight(96);
+    input_->setMinimumHeight(64);
     input_->setWordWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
     new QShortcut(QKeySequence(QKeyCombination(Qt::ControlModifier, Qt::Key_Return)), this, SLOT(onSend()));
     sendBtn_ = new QPushButton(QStringLiteral("Отправить"));
+    sendBtn_->setObjectName(QStringLiteral("sendBtn"));
+    sendBtn_->setCursor(Qt::PointingHandCursor);
     connect(sendBtn_, &QPushButton::clicked, this, &MainWindow::onSend);
 
-    auto* right = new QWidget;
-    auto* rl = new QVBoxLayout(right);
-    rl->setContentsMargins(6, 6, 6, 6);
-    rl->setSpacing(6);
-    rl->addWidget(chatScroll_, 1);
+    auto* chatPanel = mkPanel(QStringLiteral("DEEPSEEK АГЕНТ"), true);
+    auto* cl2 = qobject_cast<QVBoxLayout*>(chatPanel->layout());
+    cl2->addWidget(chatScroll_, 1);
     auto* inputRow = new QWidget;
     auto* irl = new QHBoxLayout(inputRow);
     irl->setContentsMargins(0, 0, 0, 0);
+    irl->setSpacing(10);
     irl->addWidget(input_, 1);
-    irl->addWidget(sendBtn_);
-    rl->addWidget(inputRow);
+    irl->addWidget(sendBtn_, 0, Qt::AlignBottom);
+    cl2->addWidget(inputRow);
 
     auto* mainSplit = new QSplitter;
-    mainSplit->addWidget(tree_);
-    mainSplit->addWidget(tabs_);
-    mainSplit->addWidget(right);
+    mainSplit->addWidget(projPanel);
+    mainSplit->addWidget(editorPanel);
+    mainSplit->addWidget(chatPanel);
     mainSplit->setStretchFactor(0, 0);
     mainSplit->setStretchFactor(1, 1);
     mainSplit->setStretchFactor(2, 0);
     mainSplit->setSizes({260, 760, 420});
 
     logView_ = new QPlainTextEdit;
+    logView_->setObjectName(QStringLiteral("logView"));
     logView_->setReadOnly(true);
     logView_->setMaximumBlockCount(2000);
     auto* logDock = new QDockWidget(QStringLiteral("Лог"), this);
@@ -133,8 +153,10 @@ MainWindow::MainWindow() {
     logDock->setMinimumHeight(110);
 
     auto* central = new QWidget;
+    central->setProperty("themeRoot", true);
     auto* cl = new QVBoxLayout(central);
-    cl->setContentsMargins(0, 0, 0, 0);
+    cl->setContentsMargins(10, 10, 10, 10);
+    cl->setSpacing(10);
     cl->addWidget(mainSplit);
     setCentralWidget(central);
 
@@ -158,12 +180,13 @@ MainWindow::MainWindow() {
 }
 
 // ---------- базовые UI-помощники ----------
-QWidget* MainWindow::chatAddCard(const QString& bg, const QString& fg) {
+QWidget* MainWindow::chatAddCard(const QString& role, const QString& state) {
     auto* f = new QFrame;
-    f->setStyleSheet(QStringLiteral("QFrame{background:%1;border:1px solid #33333c;border-radius:8px;} QLabel{background:transparent;color:%2;}")
-                         .arg(bg, fg.isEmpty() ? QStringLiteral("#e7e7ea") : fg));
+    f->setProperty("role", role);
+    if (!state.isEmpty()) f->setProperty("state", state);
     auto* l = new QVBoxLayout(f);
-    l->setContentsMargins(10, 8, 10, 8);
+    l->setContentsMargins(14, 11, 14, 11);
+    l->setSpacing(6);
     chatLay_->insertWidget(chatLay_->count() - 1, f);
     return f;
 }
@@ -264,7 +287,7 @@ void MainWindow::onBusy(bool on) {
 }
 
 void MainWindow::addUser(const QString& text) {
-    auto* card = chatAddCard(QStringLiteral("#2b2b34"));
+    auto* card = chatAddCard(QStringLiteral("user"));
     auto* l = qobject_cast<QVBoxLayout*>(card->layout());
     auto* lbl = new QLabel(mdToHtml(text));
     lbl->setWordWrap(true);
@@ -273,7 +296,7 @@ void MainWindow::addUser(const QString& text) {
 }
 
 void MainWindow::beginAssistant() {
-    auto* card = chatAddCard(QStringLiteral("#23232a"));
+    auto* card = chatAddCard(QStringLiteral("assistant"));
     auto* l = qobject_cast<QVBoxLayout*>(card->layout());
     liveBubble_ = new QLabel;
     liveBubble_->setWordWrap(true);
@@ -292,7 +315,9 @@ void MainWindow::appendAssistantDelta(const QString& delta) {
 
 void MainWindow::endAssistant(const QString& cleanText) {
     if (liveBubble_) {
-        liveBubble_->setText(mdToHtml(cleanText));
+        liveBubble_->setText(cleanText.isEmpty()
+            ? QStringLiteral("<span style='color:#5a5f8a;font-style:italic'>…агент думает дальше —</span>")
+            : mdToHtml(cleanText));
         liveBubble_ = nullptr;
         liveRaw_.clear();
     }
@@ -301,15 +326,15 @@ void MainWindow::endAssistant(const QString& cleanText) {
 }
 
 void MainWindow::addToolRow(const QString& name, const QString& sub, bool ok, const QString& detail) {
-    auto* card = chatAddCard(QStringLiteral("#16161c"));
+    auto* card = chatAddCard(QStringLiteral("tool"), ok ? QString() : QStringLiteral("fail"));
     auto* l = qobject_cast<QVBoxLayout*>(card->layout());
-    auto* lbl = new QLabel(QStringLiteral("<b style='color:%1'>%2</b> <span style='color:#8aa'>%3</span>")
-                               .arg(ok ? QStringLiteral("#5fb875") : QStringLiteral("#e06c75"),
+    auto* lbl = new QLabel(QStringLiteral("<b style='color:%1'>%2</b> <span style='color:#6f7699'>%3</span>")
+                               .arg(ok ? QStringLiteral("#2fbf71") : QStringLiteral("#ff5470"),
                                     name.toHtmlEscaped(), sub.toHtmlEscaped()));
     lbl->setWordWrap(true);
     l->addWidget(lbl);
     if (!detail.isEmpty()) {
-        auto* det = new QLabel(QStringLiteral("<pre style='color:#a9a9b3;font-size:11px;'>%1</pre>")
+        auto* det = new QLabel(QStringLiteral("<pre style='color:#8b91ad;font-size:11px;'>%1</pre>")
                                    .arg(detail.left(1500).toHtmlEscaped()));
         det->setWordWrap(true);
         l->addWidget(det);
@@ -322,7 +347,7 @@ void MainWindow::addImage(const QByteArray& bytes, const QString& mime, const QS
     Q_UNUSED(mime);
     QPixmap pm;
     if (!pm.loadFromData(bytes)) { addError(QStringLiteral("Картинка не декодирована")); return; }
-    auto* card = chatAddCard(QStringLiteral("#23232a"));
+    auto* card = chatAddCard(QStringLiteral("assistant"));
     auto* l = qobject_cast<QVBoxLayout*>(card->layout());
     auto* lbl = new QLabel;
     lbl->setPixmap(pm.scaledToWidth(220, Qt::SmoothTransformation));
@@ -333,9 +358,9 @@ void MainWindow::addImage(const QByteArray& bytes, const QString& mime, const QS
 }
 
 void MainWindow::addError(const QString& err) {
-    auto* card = chatAddCard(QStringLiteral("#2a1c20"), QStringLiteral("#f0a0a8"));
+    auto* card = chatAddCard(QStringLiteral("error"));
     auto* l = qobject_cast<QVBoxLayout*>(card->layout());
-    auto* lbl = new QLabel(QStringLiteral("<b>Ошибка</b><br>%1").arg(err.toHtmlEscaped()));
+    auto* lbl = new QLabel(QStringLiteral("<b style='color:#ff5470'>Ошибка</b><br><span style='color:#ffb7c2'>%1</span>").arg(err.toHtmlEscaped()));
     lbl->setWordWrap(true);
     l->addWidget(lbl);
 }
@@ -356,9 +381,11 @@ void MainWindow::onNewChat() {
         delete it->widget();
         chatLay_->removeItem(it);
     }
-    auto* card = chatAddCard(QStringLiteral("#23232a"));
+    auto* card = chatAddCard(QStringLiteral("hint"));
     auto* l = qobject_cast<QVBoxLayout*>(card->layout());
-    l->addWidget(new QLabel(QStringLiteral("Новый чат открыт.")));
+    auto* h = new QLabel(QStringLiteral("<span style='color:#7d84a6'>Новый чат. Опишите задачу — агент умеет читать и править файлы, выполнять команды, ходить в интернет и генерировать картинки.</span>"));
+    h->setWordWrap(true);
+    l->addWidget(h);
     logLine(QStringLiteral("Новый чат."));
 }
 

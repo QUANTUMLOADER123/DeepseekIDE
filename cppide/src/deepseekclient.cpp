@@ -151,7 +151,8 @@ void DeepSeekClient::startCompletion(const QString& prompt, const QString& powB6
 
     QJsonObject payload{
         {QStringLiteral("chat_session_id"), sessionId_},
-        {QStringLiteral("parent_message_id"), parentMessageId_.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(parentMessageId_)},
+        {QStringLiteral("parent_message_id"), parentMessageId_.isEmpty() ? QJsonValue(QJsonValue::Null)
+                                                                         : QJsonValue::fromVariant(parentMessageId_.toLongLong())}, // сервер ждёт u32, не строку
         {QStringLiteral("prompt"), prompt},
         {QStringLiteral("ref_file_ids"), QJsonArray()},
         {QStringLiteral("thinking_enabled"), cfg_.thinking},

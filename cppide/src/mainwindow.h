@@ -42,7 +42,7 @@ private slots:
     void onBusy(bool on);
 
 private:
-    QWidget* chatAddCard(const QString& bg, const QString& fg = QString());
+    QWidget* chatAddCard(const QString& role, const QString& state = QString());
     static QString mdToHtml(const QString& md);
     CodeEditor* openFile(const QString& absPath);
     void rebuildTreeRoot();
