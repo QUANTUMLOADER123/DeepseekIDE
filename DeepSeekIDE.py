@@ -27,6 +27,11 @@ import time
 import urllib.request
 
 os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--enable-gpu-rasterization --enable-zero-copy"
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
 
 APP_NAME = "DeepSeekIDE"
 START_URL = "https://chat.deepseek.com/sign_in"
@@ -333,59 +338,57 @@ def web_fetch(args):
 
 def img_fetch(args):
     prompt = str(args.get('prompt', '')).strip()
-    model = str(args.get('model', '')).strip() or 'black-forest-labs/flux.1-schnell'
-    key = str(args.get('key', '')).strip()
+    model = str(args.get('model', '')).strip().lower() or 'magic'
+    if model not in ('magic', 'flux', 'turbo', 'flux-schnell', 'wan'):
+        model = 'magic'
     if not prompt:
         return {'ok': False, 'error': 'empty prompt'}
-    url = ('https://gen.pollinations.ai/image/' + urllib.parse.quote(prompt, safe='') +
-           '?model=' + urllib.parse.quote(model, safe='') + '&width=1024&height=1024&nologo=true')
-    dlog('IMG →', model, '|', prompt[:70] + ('…' if len(prompt) > 70 else ''), '| ключ:', 'да' if key else 'нет (аноним)')
-    hdrs = {'User-Agent': UA}
-    if key:
-        hdrs['Authorization'] = 'Bearer ' + key
-    req = urllib.request.Request(url, headers=hdrs)
+    dlog('IMG → subnp:', model, '|', prompt[:70] + ('…' if len(prompt) > 70 else ''))
+    t0 = time.time()
     try:
+        body = json.dumps({'prompt': prompt, 'model': model}).encode('utf-8')
+        req = urllib.request.Request(
+            'https://subnp.com/api/free/generate', data=body,
+            headers={'Content-Type': 'application/json',
+                     'Accept': 'text/event-stream',
+                     'User-Agent': UA})
         resp = urllib.request.urlopen(req, timeout=150)
-        data = resp.read()
-        dlog('IMG OK:', getattr(resp, 'status', 200), len(data), 'bytes,', resp.headers.get('Content-Type', '?'))
-        return {'ok': True, 'status': getattr(resp, 'status', 200),
-                'type': resp.headers.get('Content-Type', 'image/jpeg'),
-                'size': len(data), 'b64': base64.b64encode(data).decode('ascii')}
+        raw = resp.read().decode('utf-8', errors='replace')
+        image_url, perr = None, None
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line.startswith('data:'):
+                continue
+            try:
+                evt = json.loads(line[5:].strip())
+            except Exception:
+                continue
+            evst = evt.get('status')
+            if evst == 'complete' and evt.get('imageUrl'):
+                image_url = evt['imageUrl']
+                break
+            if evst == 'error':
+                perr = evt.get('message') or 'provider error'
+                break
+        if perr:
+            dlog('IMG FAIL (subnp):', str(perr)[:200])
+            return {'ok': False, 'error': 'subnp: ' + str(perr)}
+        if not image_url:
+            dlog('IMG FAIL (subnp): нет imageUrl, поток', len(raw), 'зн:', raw[:160])
+            return {'ok': False, 'error': 'subnp: no imageUrl in SSE (' + raw[:120] + ')'}
+        if image_url.startswith('/'):
+            image_url = 'https://subnp.com' + image_url
+        dlog('IMG url готов за %ds: %s' % (time.time() - t0, image_url[:110]))
+        req2 = urllib.request.Request(image_url, headers={'User-Agent': UA, 'Referer': 'https://subnp.com/'})
+        resp2 = urllib.request.urlopen(req2, timeout=120)
+        data = resp2.read()
+        ctype = resp2.headers.get('Content-Type', 'image/jpeg')
+        dlog('IMG OK: %ds,' % (time.time() - t0), len(data), 'bytes,', ctype)
+        return {'ok': True, 'status': 200, 'type': ctype, 'size': len(data),
+                'b64': base64.b64encode(data).decode('ascii')}
     except Exception as e:
-        msg = str(e)
-        try:
-            msg += ' :: ' + e.read(300).decode('utf-8', errors='replace')  # API отвечает текстом ошибки
-        except Exception:
-            pass
-        dlog('IMG FAIL:', msg[:200])
-        return {'ok': False, 'error': msg}
-
-
-def dlog(*a):
-    # единый лог в консоль: метка времени + префикс [DSX]
-    try:
-        print('[DSX %s]' % time.strftime('%H:%M:%S'), *a, flush=True)
-    except Exception:
-        pass
-
-
-def brief_out(out):
-    # однострочная сводка результата хендлера моста для консоли
-    if not isinstance(out, dict):
-        return str(out)[:140]
-    if not out.get('ok'):
-        return 'FAIL: ' + str(out.get('error'))[:200]
-    parts = []
-    for k in ('exitCode', 'status', 'size', 'lines', 'bytes'):
-        if k in out:
-            parts.append('%s=%s' % (k, out[k]))
-    d = out.get('data')
-    if isinstance(d, dict):
-        if 'done' in d:
-            parts.append('ops=%s/%s' % (d.get('done'), d.get('total')))
-        if 'text' in d:
-            parts.append('text=%d зн' % len(str(d.get('text') or '')))
-    return 'OK ' + ' '.join(parts)
+        dlog('IMG FAIL:', str(e)[:200])
+        return {'ok': False, 'error': str(e)}
 
 
 FS_OPS = {
@@ -475,6 +478,34 @@ window.__dsxOutbox = window.__dsxOutbox || [];
 
   function tryParse(str) { try { return JSON.parse(str); } catch (e) { return null; } }
 
+  // Ремонтер типичных LLM-поломок JSON: сырые переносы/табы ВНУТРИ строк
+  // (модель пишет "content":"...реальный Enter...") и висячие запятые.
+  function repairJson(b) {
+    if (!b) return b;
+    var out = [], inStr = false, esc = false, i, ch;
+    for (i = 0; i < b.length; ++i) {
+      ch = b[i];
+      if (inStr) {
+        if (esc) { out.push(ch); esc = false; continue; }
+        if (ch === '\\') { out.push(ch); esc = true; continue; }
+        if (ch === '"') { out.push(ch); inStr = false; continue; }
+        if (ch === '\n') { out.push('\\n'); continue; }
+        if (ch === '\r') { out.push('\\r'); continue; }
+        if (ch === '\t') { out.push('\\t'); continue; }
+        out.push(ch);
+      } else {
+        if (ch === '"') { inStr = true; out.push(ch); continue; }
+        if (ch === ',') {
+          var j = i + 1;
+          while (j < b.length && /\s/.test(b[j])) j++;
+          if (b[j] === ']' || b[j] === '}') continue; // висячая запятая
+        }
+        out.push(ch);
+      }
+    }
+    return out.join('');
+  }
+
   function validateOp(op, idx, errors) {
     if (!op || typeof op !== 'object' || Array.isArray(op)) { errors.push('#' + idx + ': не объект'); return null; }
     var name = op.name, args = op.args;
@@ -492,7 +523,12 @@ window.__dsxOutbox = window.__dsxOutbox || [];
     body = body.trim();
     if (!body) return;
     var data = tryParse(body);
-    var src = data == null ? tryParse(extractJsonSpan(body)) : data;
+    var span = data == null ? extractJsonSpan(body) : null;
+    var src = data == null ? tryParse(span) : data;
+    if (src == null) { // типичные поломки чиним ремонтером
+      src = tryParse(repairJson(body)) || tryParse(repairJson(span || ''));
+      if (src != null) console.log('[DSX] OPS: JSON спасён ремонтером (сырые переносы/висячие запятые)');
+    }
     if (src == null) {
       out.errors.push('блок deepseekide-ops: нечитаемый JSON (' + body.slice(0, 120) + '…)');
       return;
@@ -797,7 +833,7 @@ window.__dsxOutbox = window.__dsxOutbox || [];
 "[<{REVERT FILE: <project-relative path>}>]                 -> restores the file to the snapshot taken right before its last edit by you (if your edit created it, the file is removed). The undo is permanent.",
 "[<{WEB GREP: <url> :: <substring or from-to>}>]               -> downloads the page RAW/CLEANED and returns FULL matching lines (e.g. \u0027m_modelState\u0027 -> whole \u0027constexpr ... = 0x140;\u0027 lines with numbers). Use \u0027144-150\u0027 instead of a substring to get that line range.",
 "[<{WEB DOWNLOAD: <url> :: <project-relative path>}>]          -> downloads a file (binary ok, ≤16 MB) straight into the project folder. Use for dumps/SDK snapshots the task needs; confirm the path in your summary.",
-"[<{IMAGE SHOW: <image prompt>}>]              -> generates an image with the owner's image API and shows it INLINE right where the marker stands (the skeleton/shimmer is replaced by the picture). Write rich visual descriptions (style, light, mood, composition); text-on-image is unreliable, avoid it. If generation is off or the key is missing, the SYSTEM reply says so — continue in text then.",
+"[<{IMAGE SHOW: <image prompt>}>]              -> generates an image with the owner's free image API (no key/credits needed) and shows it INLINE right where the marker stands (the skeleton/shimmer is replaced by the picture). Models: magic (default, best quality) and flux (fast). Write rich visual descriptions (style, light, mood, composition); text-on-image is unreliable, avoid it. If generation is disabled (Settings → Images), the SYSTEM reply will say so — continue in text then.",
 "[<{IMAGE FILE: <image prompt> :: <project-relative path.png>}>] -> generates the same way but SAVES the bytes into the project file instead of showing it in chat (assets, mockups, textures).",
 "[<{SHELL: <one-line command>}>] -> runs the command in the project folder via the native shell bridge: the HUMAN sees it in a confirm card (or has auto-allow on); you receive stdout+stderr+exit code. For builds, tests, scripts, package managers, compilers. One line only (chain with && or &), non-interactive, 120s timeout. HARD LIMIT: at most ONE SHELL command per reply — the human must confirm each card (or has auto-allow), a flood of cards jams the loop. Need several steps? Chain them in the one line (cmd1 && cmd2), or take this result and send the next command in the NEXT reply. If the reply says the bridge is offline, do NOT retry — give the human run instructions in text instead.",
 
@@ -1503,6 +1539,16 @@ tree || '(структура недоступна — спросите чере�
     try { console.log('[DSX-ERR] promise:', String(e.reason && (e.reason.stack || e.reason.message || e.reason)).slice(0, 300)); } catch (_) {}
   });
 
+  // sessionStorage/localStorage бывают ЗАКРЫТЫ (страницы логина и пр.) —
+  // прямое обращение кидало SecurityError и убивало весь агент на таких
+  // страницах. Обёртки с памятью-фолбеком: агент живёт и без storage.
+  var __dsxMem = {};
+  function sGet(k) { try { var v = sessionStorage.getItem(k); if (v !== null) __dsxMem[k] = v; return v; } catch (e) { return (k in __dsxMem) ? __dsxMem[k] : null; } }
+  function sSet(k, v) { __dsxMem[k] = String(v); try { sessionStorage.setItem(k, String(v)); } catch (e) {} }
+  function sDel(k) { delete __dsxMem[k]; try { sessionStorage.removeItem(k); } catch (e) {} }
+  function lGet(k) { try { var v2 = localStorage.getItem(k); if (v2 !== null) __dsxMem['L' + k] = v2; return v2; } catch (e) { var m2 = __dsxMem['L' + k]; return m2 === undefined ? null : m2; } }
+  function lSet(k, v) { __dsxMem['L' + k] = String(v); try { localStorage.setItem(k, String(v)); } catch (e) {} }
+
   function dsxSend(kind, data) {
     return new Promise(function (resolve) {
       try {
@@ -1555,7 +1601,7 @@ tree || '(структура недоступна — спросите чере�
   var cfg = { pilot: false, rules: '', statusRows: true, jbTest: false, jbText: '', memory: [], autolimit: undefined };
   try {
     if (window.__DSX_QT) {
-      var rawc = localStorage.getItem('dsx:cfg');
+      var rawc = lGet('dsx:cfg');
       if (rawc) {
         var vc = JSON.parse(rawc);
         if (vc.pilot !== undefined) cfg.pilot = !!vc.pilot;
@@ -1592,7 +1638,7 @@ tree || '(структура недоступна — спросите чере�
   }
   function saveCfg() {
     try {
-      if (window.__DSX_QT) { localStorage.setItem('dsx:cfg', JSON.stringify(cfg)); return; }
+      if (window.__DSX_QT) { lSet('dsx:cfg', JSON.stringify(cfg)); return; }
       chrome.storage.local.set({ v: CFG_VERSION, pilot: cfg.pilot, rules: cfg.rules, statusRows: cfg.statusRows, jbTest: cfg.jbTest, jbText: cfg.jbText, memory: cfg.memory, autolimit: cfg.autolimit, shellAuto: cfg.shellAuto, autoContinue: cfg.autoContinue });
     } catch (e) {}
   }
@@ -1601,7 +1647,7 @@ tree || '(структура недоступна — спросите чере�
   // а не «того же текста» — юзер вправе попросить повторить правку дословно
   function loadOpsMeta() {
     try {
-      var r = sessionStorage.getItem('dsx:opsh');
+      var r = sGet('dsx:opsh');
       if (!r) return { h: '', k: '' };
       var d = JSON.parse(r);
       if (d && typeof d === 'object') return { h: String(d.h || ''), k: String(d.k || '') };
@@ -1613,9 +1659,9 @@ tree || '(структура недоступна — спросите чере�
     folderReady: false, folderName: '',
     bigPrompt: '', primedOnce: false,
     lastAnswer: '', lastBlock: null, opsMeta: loadOpsMeta(),
-    autoCount: Number(sessionStorage.getItem('dsx:auto') || 0),
+    autoCount: Number(sGet('dsx:auto') || 0),
     sentFiles: {}, sentSearches: {}, sentInfos: {}, sentRanges: {}, sentWeb: {}, sentDl: {}, sentGrep: {}, busy: false,
-    waitingAnswer: sessionStorage.getItem('dsx:wait') === '1',
+    waitingAnswer: sGet('dsx:wait') === '1',
     lastUrl: location.href, lastTrimAt: 0, watchdog: 0, reloadHint: 0
   };
 
@@ -1776,7 +1822,7 @@ tree || '(структура недоступна — спросите чере�
     root.querySelector('.dsx-set-forget').onclick = function () {
       fsCall('forget').then(function () {
         st.folderReady = false; st.folderName = ''; st.bigPrompt = ''; st.primedOnce = false;
-        sessionStorage.removeItem('dsx:primed');
+        sDel('dsx:primed');
         syncNativeToggle(); syncFolderLabels();
       });
     };
@@ -1787,20 +1833,15 @@ tree || '(структура недоступна — спросите чере�
     return '' +
       '<div style="' + SET_ROW + '"><div style="' + SET_TIT + '">' + T('[EXP] Генерация изображений', '[EXPERIMENTAL] Image generation') + '</div>' + sw('dsx-set-imgon') + '</div>' +
       '<div style="' + SET_ROW + ';min-height:52px">' +
-        '<div style="' + SET_TIT + '">' + T('Модель', 'Model') + '</div>' +
+        '<div style="' + SET_TIT + '">' + T('Модель (бесплатно, ключ не нужен)', 'Model (free, no API key needed)') + '</div>' +
         '<div style="display:flex;gap:8px;flex-shrink:0">' +
-          '<button type="button" class="dsx-imgmodel" data-v="default" style="' + SET_GHOST + '">Default</button>' +
-          '<button type="button" class="dsx-imgmodel" data-v="text" style="' + SET_GHOST + '">Text</button>' +
+          '<button type="button" class="dsx-imgmodel" data-v="magic" style="' + SET_GHOST + '">Magic</button>' +
+          '<button type="button" class="dsx-imgmodel" data-v="flux" style="' + SET_GHOST + '">Flux</button>' +
         '</div>' +
-      '</div>' +
-      '<div style="padding:12px 0 2px">' +
-        '<div style="' + SET_TIT + ';margin-bottom:8px">' + T('API-ключ (pollinations)', 'API key (pollinations)') + '</div>' +
-        '<input class="dsx-set-imgkey" type="password" placeholder="sk_…" autocomplete="off" spellcheck="false" ' +
-        'style="width:100%;box-sizing:border-box;padding:9px 12px;' + SET_INP + '">' +
       '</div>';
   }
   function paintImgModels(root) {
-    var cur = cfg.imgModel || 'default';
+    var cur = (cfg.imgModel === 'flux') ? 'flux' : 'magic';
     root.querySelectorAll('.dsx-imgmodel').forEach(function (b) {
       var on = b.getAttribute('data-v') === cur;
       b.style.background = on ? 'var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.14))'
@@ -1811,9 +1852,6 @@ tree || '(структура недоступна — спросите чере�
   }
   function bindImagesPane(root) {
     bindSwitch(root, '.dsx-set-imgon', function () { return !!cfg.imgOn; }, function (v) { cfg.imgOn = v; });
-    var key = root.querySelector('.dsx-set-imgkey');
-    key.value = cfg.imgKey || '';
-    key.addEventListener('input', dsxDebounce(function () { cfg.imgKey = key.value.trim(); saveCfg(); }, 450));
     root.querySelectorAll('.dsx-imgmodel').forEach(function (b) {
       b.onclick = function () { cfg.imgModel = b.getAttribute('data-v'); saveCfg(); paintImgModels(root); };
     });
@@ -2123,13 +2161,13 @@ tree || '(структура недоступна — спросите чере�
     nativeSetValue(editor, wrapStealth(prefix, chip, v.replace(/^\s+/, '')));
     setTimeout(unclampU, 600);
     if (!st.primedOnce && st.bigPrompt) {
-      st.primedOnce = true; sessionStorage.setItem('dsx:primed', '1');
+      st.primedOnce = true; sSet('dsx:primed', '1');
       // без тоста: юзеру тихо
     }
     // новое сообщение юзера = новый цикл: дедуп NEED сбрасываем (в т.ч. на диске)
     st.autoCount = 0; st.sentFiles = {}; st.sentSearches = {}; st.sentInfos = {}; st.sentRanges = {}; st.sentWeb = {}; st.sentDl = {}; st.sentGrep = {}; sentSave();
     st.liveSeen = {};
-    sessionStorage.setItem('dsx:auto', '0');
+    sSet('dsx:auto', '0');
     console.log('[DSX] промпт подшит к сообщению:', (prefix === st.bigPrompt ? 'БОЛЬШОЙ' : 'короткий'),
       '| итого символов:', editor.value.length);
     clearTimeout(st.watchdog);
@@ -2241,7 +2279,7 @@ tree || '(структура недоступна — спросите чере�
   // ---------------- защита от повторов (скролл/перерисовка списка не должна
   // перезапускать выполненное: ops, shell, ask — всё по ключу ответа)
   function actRead() {
-    try { var a = JSON.parse(sessionStorage.getItem('dsx:acts') || 'null'); if (a) return a; } catch (e) {}
+    try { var a = JSON.parse(sGet('dsx:acts') || 'null'); if (a) return a; } catch (e) {}
     return { ops: [], sh: [], ask: [] };
   }
   function actSeen(bucket, key) { return actRead()[bucket].indexOf(key) >= 0; }
@@ -2250,9 +2288,9 @@ tree || '(структура недоступна — спросите чере�
     if (a[bucket].indexOf(key) >= 0) return;
     a[bucket].push(key);
     if (a[bucket].length > 500) a[bucket] = a[bucket].slice(-500);
-    try { sessionStorage.setItem('dsx:acts', JSON.stringify(a)); } catch (e) {}
+    try { sSet('dsx:acts', JSON.stringify(a)); } catch (e) {}
   }
-  function actReset() { try { sessionStorage.removeItem('dsx:acts'); } catch (e) {} }
+  function actReset() { try { sDel('dsx:acts'); } catch (e) {} }
 
   // ---------------- групповая отправка: несколько карточек = ОДИН ответ модели
   async function groupOrSend(block, card, text, logTag) {
@@ -2266,8 +2304,8 @@ tree || '(структура недоступна — спросите чере�
     var ok = await injectStealth(parts.join('\n\n'), logTag);
     if (!ok) return 'fail';
     st.autoCount++;
-    st.waitingAnswer = true; sessionStorage.setItem('dsx:wait', '1');
-    sessionStorage.setItem('dsx:auto', String(st.autoCount));
+    st.waitingAnswer = true; sSet('dsx:wait', '1');
+    sSet('dsx:auto', String(st.autoCount));
     return 'sent';
   }
 
@@ -2373,7 +2411,7 @@ tree || '(структура недоступна — спросите чере�
   function sentKey() { return 'dsx:sent:' + location.pathname; }
   function sentLoad() {
     try {
-      var raw = sessionStorage.getItem(sentKey());
+      var raw = sGet(sentKey());
       if (!raw) return;
       var d = JSON.parse(raw);
       st.sentFiles = d.f || {}; st.sentSearches = d.s || {};
@@ -2383,7 +2421,7 @@ tree || '(структура недоступна — спросите чере�
   }
   function sentSave() {
     try {
-      sessionStorage.setItem(sentKey(), JSON.stringify({ f: st.sentFiles, s: st.sentSearches, i: st.sentInfos, r: st.sentRanges, w: st.sentWeb, d: st.sentDl, g: st.sentGrep }));
+      sSet(sentKey(), JSON.stringify({ f: st.sentFiles, s: st.sentSearches, i: st.sentInfos, r: st.sentRanges, w: st.sentWeb, d: st.sentDl, g: st.sentGrep }));
     } catch (e) {}
   }
   sentLoad();
@@ -2648,7 +2686,7 @@ tree || '(структура недоступна — спросите чере�
           rows.push(T('Картинка пропущена (генерация выкл.)', 'Image skipped (generation off)'));
           continue;
         }
-        var imodel = cfg.imgModel === 'text' ? 'microsoft/mai-image-2.6-flash' : 'black-forest-labs/flux.1-schnell';
+        var imodel = cfg.imgModel === 'flux' ? 'flux' : 'magic';
         imgs.push({ kindg: rq.kind === 'IMAGE FILE' ? 'file' : 'show', prompt: rq.arg, path: rq.extra || '', model: imodel });
         dlog('IMG в очередь:', rq.kind, '|', imodel, '|', String(rq.arg).slice(0, 70));
         if (!rq.bracket) rows.push(T('Рисует картинку…', 'Painting an image…'));
@@ -2819,8 +2857,8 @@ tree || '(структура недоступна — спросите чере�
   }
   function shellBookkeep() {
     st.autoCount++;
-    st.waitingAnswer = true; sessionStorage.setItem('dsx:wait', '1');
-    sessionStorage.setItem('dsx:auto', String(st.autoCount));
+    st.waitingAnswer = true; sSet('dsx:wait', '1');
+    sSet('dsx:auto', String(st.autoCount));
   }
   async function execShell(block, cmd, statusEl, defer) {
     if (statusEl) statusEl.textContent = T('Выполняет: ', 'Running: ') + cmd.slice(0, 90) + '…';
@@ -3221,7 +3259,7 @@ tree || '(структура недоступна — спросите чере�
     return done;
   }
 
-  // ---------------- генерация изображений (pollinations, ключ юзера) ----------
+  // ---------------- генерация изображений (subnp.com free API, ключ НЕ нужен) ----------
   function dsxImgCss() {
     if (document.getElementById('dsx-img-css')) return;
     var s = document.createElement('style');
@@ -3246,25 +3284,50 @@ tree || '(структура недоступна — спросите чере�
       fr.readAsDataURL(blob);
     });
   }
-  async function dsxGenImage(prompt, model, key) {
-    var url = 'https://gen.pollinations.ai/image/' + encodeURIComponent(prompt) +
-      '?model=' + encodeURIComponent(model) + '&width=1024&height=1024&nologo=true';
-    dlog('IMG gen:', model, '|', String(prompt).slice(0, 70));
+  async function dsxGenImage(prompt, model) {
+    model = (model === 'flux') ? 'flux' : 'magic';
+    dlog('IMG gen (subnp):', model, '|', String(prompt).slice(0, 70));
+    var t0 = Date.now();
     try {
-      var hdrs = {}; if (key) hdrs['Authorization'] = 'Bearer ' + key;
-      var r = await fetch(url, { headers: hdrs });
+      var r = await fetch('https://subnp.com/api/free/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+        body: JSON.stringify({ prompt: prompt, model: model })
+      });
       if (!r.ok) throw new Error('HTTP ' + r.status + ': ' + (await r.text()).slice(0, 160));
-      var blob = await r.blob();
-      dlog('IMG браузер OK:', blob.size, 'bytes');
+      var txt = await r.text();
+      var iu = sseImageUrl(txt);
+      if (!iu) throw new Error('нет imageUrl в потоке (' + txt.slice(0, 90) + ')');
+      if (iu.charAt(0) === '/') iu = 'https://subnp.com' + iu;
+      var ir = await fetch(iu);
+      if (!ir.ok) throw new Error('скачивание картинки: HTTP ' + ir.status);
+      var blob = await ir.blob();
+      dlog('IMG браузер OK:', blob.size, 'bytes за', Math.round((Date.now() - t0) / 1000) + 's');
       return { ok: true, blobUrl: URL.createObjectURL(blob), b64: await dsxBlobToB64(blob), size: blob.size };
     } catch (e) {
       dlog('IMG браузер FAIL:', String(e && e.message || e).slice(0, 120), '— пробую python-мост…');
-      var r2 = await dsxSend('imgfetch', { prompt: prompt, model: model, key: key });
+      var r2 = await dsxSend('imgfetch', { prompt: prompt, model: model });
       dlog('IMG мост:', (r2 && r2.ok) ? ('OK ' + (r2.size || 0) + ' bytes') : ('ERR ' + ((r2 && r2.error) || '?')));
       if (r2 && r2.ok && r2.b64) return { ok: true, b64: r2.b64, type: r2.type, size: r2.size };
       return { ok: false, error: (r2 && r2.error) || String(e && e.message || e) };
     }
   }
+  // SSE-поток subnp: строки "data: {...}"; ищем status=complete → imageUrl
+  function sseImageUrl(txt) {
+    var iu = null, err = null;
+    String(txt || '').split('\n').forEach(function (ln) {
+      ln = ln.trim();
+      if (ln.indexOf('data:') !== 0) return;
+      try {
+        var ev = JSON.parse(ln.slice(5).trim());
+        if (ev.status === 'complete' && ev.imageUrl) iu = ev.imageUrl;
+        else if (ev.status === 'error') err = ev.message || 'provider error';
+      } catch (e) {}
+    });
+    if (err) throw new Error('subnp: ' + err);
+    return iu;
+  }
+
   async function runImageJob(block, im) {
     var host = block.closest('._4f9bf79') || block.parentElement;
     var skel = null;
@@ -3282,7 +3345,7 @@ tree || '(структура недоступна — спросите чере�
       }
     }
     var hr = toolRowStart(host, 'Image', im.prompt.slice(0, 80), { expandable: false });
-    var res = await dsxGenImage(im.prompt, im.model, cfg.imgKey);
+    var res = await dsxGenImage(im.prompt, im.model);
     if (!res.ok) {
       dlog('IMG FAIL:', res.error);
       hr.finish('bad', null, null, 0);
@@ -3295,7 +3358,7 @@ tree || '(структура недоступна — спросите чере�
     }
     var statKB = res.size ? Math.round(res.size / 1024) + ' KB' : '';
     if (im.kindg === 'file') {
-      var w = await fsCall('write_b64', { path: im.path, b64: res.b64 });
+      var w = await fsCall('writeB64', { path: im.path, b64: res.b64 });
       dlog('IMG файл:', im.path, '→', (w && w.ok) ? ((res.size || 0) + ' bytes записаны') : ('ERR ' + (w && w.error)));
       hr.finish(w && w.ok ? 'ok' : 'bad', null, statKB, 0);
       if (w && w.ok) refreshPrompt();
@@ -3492,11 +3555,11 @@ tree || '(структура недоступна — спросите чере�
   function noteAnswerArrived(text) {
     if (st.waitingAnswer) {
       st.waitingAnswer = false;
-      sessionStorage.removeItem('dsx:wait');
+      sDel('dsx:wait');
       console.log('[DSX] пришёл ответ модели — гейт снят');
     }
     st.lastAnswer = text;
-    try { sessionStorage.setItem('dsx:last', text); } catch (e) {}
+    try { sSet('dsx:last', text); } catch (e) {}
   }
   async function settleAndHandle() {
     try {
@@ -3536,7 +3599,7 @@ tree || '(структура недоступна — спросите чере�
           finalizeLiveOps(block, true);
         } else if (outp.ops.length && (answHash !== st.opsMeta.h || vKey !== st.opsMeta.k)) {
           st.opsMeta = { h: answHash, k: vKey };
-          sessionStorage.setItem('dsx:opsh', JSON.stringify(st.opsMeta));
+          sSet('dsx:opsh', JSON.stringify(st.opsMeta));
           outp.ops = outp.ops.filter(function (o) {
             var p = o.args && (o.args.path || o.args.from);
             return !p || !!DsideOps.sanitizeRel(p);
@@ -3632,8 +3695,8 @@ tree || '(структура недоступна — спросите чере�
               }).then(function (ok) {
                 if (ok) {
                   st.autoCount++;
-                  st.waitingAnswer = true; sessionStorage.setItem('dsx:wait', '1');
-                  sessionStorage.setItem('dsx:auto', String(st.autoCount));
+                  st.waitingAnswer = true; sSet('dsx:wait', '1');
+                  sSet('dsx:auto', String(st.autoCount));
                 }
               });
             });
@@ -3651,8 +3714,8 @@ tree || '(структура недоступна — спросите чере�
             // копии этого NEED-дождя больше не слушаем (иначе повторная
             // отправка при нашем же пузыре внизу ленты)
             st.waitingAnswer = true;
-            sessionStorage.setItem('dsx:wait', '1');
-            sessionStorage.setItem('dsx:auto', String(st.autoCount));
+            sSet('dsx:wait', '1');
+            sSet('dsx:auto', String(st.autoCount));
             if (!st.reloadHint) { // сторожок: вдруг вкладку заглушили
               st.reloadHint = setTimeout(function () {
                 if (st.waitingAnswer) {
@@ -3693,9 +3756,9 @@ tree || '(структура недоступна — спросите чере�
       st.sentFiles = {}; st.sentSearches = {}; st.sentInfos = {}; st.sentRanges = {}; st.sentWeb = {}; st.sentDl = {}; st.sentGrep = {}; sentLoad(); // дедуп новой беседы
       st.liveSeen = {};
       actReset(); // новый чат — выполненное снова доступно
-      st.autoCount = 0; sessionStorage.setItem('dsx:auto', '0');
-      sessionStorage.removeItem('dsx:primed');
-      sessionStorage.removeItem('dsx:opsh');
+      st.autoCount = 0; sSet('dsx:auto', '0');
+      sDel('dsx:primed');
+      sDel('dsx:opsh');
       armReloadResume(); // история новой беседы дорисуется — проверить хвост
     }
   }, 1500);
@@ -3760,7 +3823,7 @@ tree || '(структура недоступна — спросите чере�
   }, 1000);
 
   // ---------------- старт
-  if (sessionStorage.getItem('dsx:primed') === '1') st.primedOnce = true;
+  if (sGet('dsx:primed') === '1') st.primedOnce = true;
   console.log('[DSX] DeepSeek Extended v34 стелс: загружено. pilot=' + cfg.pilot);
   refreshPrompt();
   setTimeout(refreshPrompt, 1200);
@@ -3893,8 +3956,10 @@ def run_app():
     class QuietPage(QWebEnginePage):
         def javaScriptConsoleMessage(self, level, msg, line, src_):
             s = str(msg)
-            if 'WebGPU' in s or 'WebAssembly' in s or 'MIME type' in s:
-                return  # шум движка самого сайта — в консоль не тащим
+            if ('WebGPU' in s or 'WebAssembly' in s or 'MIME type' in s or
+                    'ResizeObserver loop' in s or 'Password field' in s or
+                    'collect-rangers' in s or 'sdk is ready' in s):
+                return  # шум движка и SDK самого сайта — в консоль не тащим
             try:
                 lvl = getattr(level, 'name', str(level))
                 srcs = str(src_)
