@@ -87,6 +87,38 @@ void Agent::compactSession() {
 }
 
 // ============================================================================
+//  title: отдельный крошечный запрос — модель сама называет чат (коротко)
+//  busy_ ставим, но busyChanged НЕ шлём: UI не блокируем (до ~2 сек).
+// ============================================================================
+void Agent::generateTitle(const QString& convoSnippet) {
+    if (titleActive_ || compActive_ || ds_->busy()) { emit titleReady(QString()); return; }
+    titleActive_ = true; busy_ = true;
+    disconnect(ds_, &DeepSeekClient::chatFinished, this, &Agent::onChatFinished);
+    const QString prompt = QStringLiteral(
+        "SYSTEM title: ответь ТОЛЬКО коротким названием этого чата (2–5 слов, по-русски, "
+        "без кавычек, без точки в конце, по сути темы). Диалог:\n") + convoSnippet.left(1200);
+    titleOk_ = connect(ds_, &DeepSeekClient::chatFinished, this, [this](const QString& full, const QString&) {
+        disconnect(titleOk_); disconnect(titleFail_);
+        connect(ds_, &DeepSeekClient::chatFinished, this, &Agent::onChatFinished);
+        titleActive_ = false; busy_ = false;
+        QString tt = full.simplified();
+        tt.remove(QLatin1Char('"')); tt.remove(QLatin1Char('«')); tt.remove(QLatin1Char('»'));
+        tt.remove(QRegularExpression(QStringLiteral("^[#>*`\\-\\s]+")));
+        tt = tt.left(42).trimmed();
+        if (tt.endsWith(QLatin1Char('.'))) tt.chop(1);
+        emit titleReady(tt);
+    });
+    titleFail_ = connect(ds_, &DeepSeekClient::failed, this, [this](const QString&) {
+        disconnect(titleOk_); disconnect(titleFail_);
+        connect(ds_, &DeepSeekClient::chatFinished, this, &Agent::onChatFinished);
+        titleActive_ = false; busy_ = false;
+        emit titleReady(QString());
+    });
+    emit log(QStringLiteral("AGT: title запрос"));
+    ds_->ask(prompt);
+}
+
+// ============================================================================
 //  Видимый стрим: задерживаем потенциальные начала маркеров "[<{"
 // ============================================================================
 void Agent::onChatDelta(const QString& chunk) {
@@ -165,7 +197,7 @@ static QString buildSystemPrompt(const AppCfg& cfg) {
 //  Отправка сообщения пользователя
 // ============================================================================
 void Agent::sendUserMessage(const QString& text) {
-    if (busy_ || ds_->busy()) { emit errorBanner(QStringLiteral("Подожди — агент занят")); return; }
+    if (busy_ || ds_->busy()) { emit errorBanner(QStringLiteral("Wait — the agent is busy…")); return; }
     autoCount_ = 0;
     emit appendUserBubble(text);
     QString out = text;

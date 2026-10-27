@@ -452,6 +452,15 @@ MainWindow::MainWindow() {
     connect(agent_, &Agent::sitePreview, this, &MainWindow::showSitePreview);
     connect(agent_, &Agent::busyChanged, this, &MainWindow::onBusy);
     connect(agent_, &Agent::compactDone, this, &MainWindow::onCompactDone);
+    connect(agent_, &Agent::titleReady, this, [this](const QString& tt) {
+        if (tt.isEmpty() || curSess_ < 0) return;
+        Session& s = sessions_[curSess_];
+        if (s.title != QStringLiteral("New Chat")) return;
+        s.title = tt;
+        setWindowTitle(QStringLiteral("%1 — DeepSeekIDE").arg(s.title.left(56)));
+        refreshSessionList();
+        persistNow();
+    });
     connect(agent_, &Agent::log, this, &MainWindow::logLine);
     connect(ds_, &DeepSeekClient::log, this, &MainWindow::logLine);
 
@@ -561,6 +570,12 @@ bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr
 //  карточки чата — динамическая ширина по содержимому
 // ============================================================================
 SquircleCard* MainWindow::chatAppend(const QString& role, const QString& state, bool animate) {
+    // сносим empty-state, когда появляется первое реальное сообщение
+    for (int i = chatLay_->count() - 2; i >= 0; --i) {
+        QLayoutItem* it = chatLay_->itemAt(i);
+        QWidget* w = it ? it->widget() : nullptr;
+        if (w && w->property("emptyState").toBool()) { chatLay_->removeItem(it); delete w; }
+    }
     auto* card = new SquircleCard(role);
     if (!state.isEmpty()) card->setState(state);
     auto* l = new QVBoxLayout(card);
@@ -629,12 +644,23 @@ void MainWindow::smoothScrollBottom() {
 }
 
 void MainWindow::pulseTick() {
-    if (!liveCard_) return;
-    pulsePhase_ = (pulsePhase_ + 1) % 4;
-    static const QColor cols[4] = {
-        QColor(176, 84, 102), QColor(206, 116, 133),
-        QColor(228, 146, 160), QColor(206, 116, 133) };
-    liveCard_->setPulseColor(cols[pulsePhase_]);
+    if (liveCard_) {
+        pulsePhase_ = (pulsePhase_ + 1) % 4;
+        static const QColor cols[4] = {
+            QColor(176, 84, 102), QColor(206, 116, 133),
+            QColor(228, 146, 160), QColor(206, 116, 133) };
+        liveCard_->setPulseColor(cols[pulsePhase_]);
+    }
+    // пока стрим ещё не пошёл — весёлые фазы с анимированными точками
+    if (liveBubble_ && liveRaw_.isEmpty()) {
+        static const char* PH[6] = { "thinking", "orchestrating", "reading context",
+                                     "drafting answer", "polishing", "summoning tokens" };
+        ++typingTick_;
+        const int dots = (typingTick_ / 2) % 4;
+        const int ph = (typingTick_ / 14) % 6;
+        liveBubble_->setText(QStringLiteral("<span style='color:#7d828e;font-style:italic'>%1%2</span>")
+                                 .arg(QLatin1String(PH[ph]), QString(dots, QLatin1Char('.'))));
+    }
 }
 
 QString MainWindow::mdToHtml(const QString& md) {
@@ -689,7 +715,7 @@ void MainWindow::refreshSessionList() {
             h->setData(Qt::UserRole, -1);
             h->setForeground(QColor(0x57, 0x59, 0x62));
             h->setFont(hf);
-            h->setSizeHint(QSize(0, 24));
+            h->setSizeHint(QSize(0, 20));
             sessionList_->addItem(h);
         }
         auto* it = new QListWidgetItem(
@@ -697,6 +723,7 @@ void MainWindow::refreshSessionList() {
             s.title.left(38) + (s.title.size() > 38 ? QStringLiteral("…") : QString()));
         it->setData(Qt::UserRole, i);
         it->setToolTip(QStringLiteral("%1\n%2").arg(s.title, s.folder));
+        it->setSizeHint(QSize(0, 28));
         sessionList_->addItem(it);
     }
     sessionList_->blockSignals(false);
@@ -737,13 +764,15 @@ void MainWindow::onPickSession(int row) {
 
 void MainWindow::onNewSession() {
     if (busyOn_) return;
-    persistNow();
+    persistNow();          // старую сессию — пока curSess_ ещё старый
     Session s = Session::create(curSess_ >= 0 ? sessions_[curSess_].folder : cfg_.projectDir);
     sessions_.prepend(s);
-    curSess_ = 0;   // ВАЖНО до persistNow: иначе id старого чата DeepSeek
-    persistNow();   // записывался бы в новую сессию — отсюда «помнит всё подряд»
+    curSess_ = 0;
     refreshSessionList();
-    activateSession(0);
+    activateSession(0);    // ds_->setSession("", "") — новая память у DeepSeek
+    // persist ПОСЛЕ activate: persistNow копирует ds_->sessionId() (уже пустой),
+    // иначе старый chat id записался бы в новую сессию («помнит прошлые»)
+    persistNow();
 }
 
 void MainWindow::setSessionTitleFromText(const QString& t) {
@@ -771,6 +800,7 @@ void MainWindow::clearChatUi() {
 void MainWindow::showEmptyState() {
     liveCard_ = nullptr;
     auto* wrap = new QWidget;
+    wrap->setProperty("emptyState", true);
     auto* vl = new QVBoxLayout(wrap);
     vl->setAlignment(Qt::AlignCenter);
     auto* icon = new QLabel;
@@ -821,7 +851,7 @@ void MainWindow::replayHistory() {
         if (role == QLatin1String("user")) {
             auto* c = chatAppend(QStringLiteral("user"), QString(), false);
             auto* l = qobject_cast<QVBoxLayout*>(c->layout());
-            renderRich(l, text);
+            buildUserCardBody(l, i, text);
             fitBubble(c, text, true);
         } else if (role == QLatin1String("assistant")) {
             auto* c = chatAppend(QStringLiteral("assistant"), QString(), false);
@@ -871,7 +901,7 @@ void MainWindow::onSend() {
         attachPaths_.clear();
         refreshAttachUi();
     }
-    setSessionTitleFromText(t);
+    lastUserText_ = t;
     agent_->sendUserMessage(t);
 }
 
@@ -898,14 +928,18 @@ void MainWindow::onBusy(bool on) {
     input_->setDisabled(on);
     input_->setPlaceholderText(on ? QStringLiteral("Agent is working…")
                                   : QStringLiteral("Describe the task or ask a question…"));
+    if (!on && titleQueued_) {
+        titleQueued_ = false;
+        agent_->generateTitle(titleSeed_);
+    }
 }
 
 void MainWindow::addUser(const QString& text) {
+    const int idx = pushHist(QStringLiteral("user"), text); // сначала, чтобы знать histIdx
     auto* c = chatAppend(QStringLiteral("user"));
     auto* l = qobject_cast<QVBoxLayout*>(c->layout());
-    renderRich(l, text);
+    buildUserCardBody(l, idx, text);
     fitBubble(c, text, true);
-    pushHist(QStringLiteral("user"), text);
 }
 
 void MainWindow::beginAssistant() {
@@ -947,7 +981,10 @@ void MainWindow::endAssistant(const QString& cleanText) {
             const int idx = pushHist(QStringLiteral("assistant"), cleanText);
             addAssistantActions(l, idx, cleanText);
             if (curSess_ >= 0) sessions_[curSess_].ctxChars += 0; // учёт уже в pushHist
-            autoTitleFromAnswer(cleanText);
+            if (curSess_ >= 0 && sessions_[curSess_].title == QStringLiteral("New Chat") && !titleQueued_) {
+                titleQueued_ = true;
+                titleSeed_ = lastUserText_ + QStringLiteral("\n---\n") + cleanText;
+            }
             maybeCompact();
         }
         liveCard_ = nullptr;
@@ -1357,4 +1394,113 @@ void MainWindow::onAttach() {
     }
     refreshAttachUi();
     logLine(QStringLiteral("Attached %1 file(s)").arg(files.size()));
+}
+
+// ============================================================================
+//  user-карточка: тело (rich) + действия Copy / Edit
+// ============================================================================
+void MainWindow::buildUserCardBody(QVBoxLayout* l, int histIdx, const QString& text) {
+    renderRich(l, text);
+    addUserActions(l, histIdx, text);
+}
+
+void MainWindow::addUserActions(QVBoxLayout* l, int histIdx, const QString& plain) {
+    auto* row = new QWidget;
+    auto* rl = new QHBoxLayout(row);
+    rl->setContentsMargins(0, 2, 0, 0);
+    rl->setSpacing(2);
+    auto mk = [](const QString& txt, const QString& g) {
+        auto* b = new QPushButton(txt);
+        b->setObjectName(QStringLiteral("actBtn"));
+        b->setCursor(Qt::PointingHandCursor);
+        b->setIcon(QIcon(fa::pix(g, 10, QColor(0xf0, 0xd9, 0xde))));
+        b->setIconSize(QSize(10, 10));
+        return b;
+    };
+    auto* cpBtn = mk(QStringLiteral("Copy"), fa::copy());
+    auto* edBtn = mk(QStringLiteral("Edit"), fa::pen());
+    connect(cpBtn, &QPushButton::clicked, this, [this, cpBtn, plain]() {
+        onCopyCard(plain);
+        cpBtn->setIcon(QIcon(fa::pix(fa::check(), 10, QColor(0x35, 0xcf, 0x7f))));
+        QTimer::singleShot(1100, cpBtn, [cpBtn]() {
+            cpBtn->setIcon(QIcon(fa::pix(fa::copy(), 10, QColor(0xf0, 0xd9, 0xde))));
+        });
+    });
+    connect(edBtn, &QPushButton::clicked, this, [this, histIdx, edBtn]() { onEditStart(histIdx, edBtn); });
+    rl->addStretch(1);      // user справа — действия жмутся к правому краю
+    rl->addWidget(cpBtn);
+    rl->addWidget(edBtn);
+    l->addWidget(row);
+}
+
+// Edit: содержимое карточки заменяется inline-редактором; Send = перегенерация с точки
+void MainWindow::onEditStart(int histIdx, QPushButton* btn) {
+    if (busyOn_ || curSess_ < 0) return;
+    QWidget* w = btn->parentWidget();
+    while (w && !qobject_cast<SquircleCard*>(w)) w = w->parentWidget();
+    auto* card = qobject_cast<SquircleCard*>(w);
+    if (!card) return;
+    auto& hist = sessions_[curSess_].history;
+    if (histIdx < 0 || histIdx >= hist.size()) return;
+    const QString curText = hist[histIdx].toObject().value(QStringLiteral("text")).toString();
+
+    auto* l = qobject_cast<QVBoxLayout*>(card->layout());
+    QLayoutItem* it;
+    while ((it = l->takeAt(0)) != nullptr) { if (it->widget()) delete it->widget(); delete it; }
+
+    card->setMinimumWidth(360);
+    auto* edit = new QPlainTextEdit;
+    edit->setObjectName(QStringLiteral("composer"));
+    edit->setPlainText(curText);
+    edit->setFixedHeight(qBound(56, (curText.count(QLatin1Char('\n')) + 1) * 20 + 16, 220));
+    l->addWidget(edit);
+
+    auto* row = new QWidget;
+    auto* rl = new QHBoxLayout(row);
+    rl->setContentsMargins(0, 4, 0, 0);
+    rl->setSpacing(6);
+    auto mk = [](const QString& txt) {
+        auto* b = new QPushButton(txt);
+        b->setObjectName(QStringLiteral("actBtn"));
+        b->setCursor(Qt::PointingHandCursor);
+        return b;
+    };
+    auto* cancel = mk(QStringLiteral("Cancel"));
+    auto* send = mk(QStringLiteral("Send"));
+    send->setStyleSheet(QStringLiteral("color:#f0cdd5;"));
+    connect(cancel, &QPushButton::clicked, this, [this, l, histIdx, curText, card]() {
+        QLayoutItem* it;
+        while ((it = l->takeAt(0)) != nullptr) { if (it->widget()) delete it->widget(); delete it; }
+        card->setMinimumWidth(0);
+        buildUserCardBody(l, histIdx, curText);
+    });
+    connect(send, &QPushButton::clicked, this, [this, histIdx, edit]() {
+        const QString nt = edit->toPlainText().trimmed();
+        if (!nt.isEmpty()) onEditResend(histIdx, nt);
+    });
+    rl->addStretch(1);
+    rl->addWidget(cancel);
+    rl->addWidget(send);
+    l->addWidget(row);
+    edit->setFocus();
+    QTextCursor tc = edit->textCursor();
+    tc.movePosition(QTextCursor::End);
+    edit->setTextCursor(tc);
+}
+
+// откат цепочки к точке до этого сообщения + повторная отправка редактированного текста
+void MainWindow::onEditResend(int histIdx, const QString& newText) {
+    if (busyOn_ || curSess_ < 0 || newText.isEmpty()) return;
+    auto& hist = sessions_[curSess_].history;
+    if (histIdx < 0 || histIdx >= hist.size()) return;
+    if (hist[histIdx].toObject().value(QStringLiteral("role")).toString() != QLatin1String("user")) return;
+    const QString pprev = hist[histIdx].toObject().value(QStringLiteral("pprev")).toString();
+    ds_->setSession(sessions_[curSess_].dsSessionId, pprev);
+    while (hist.size() > histIdx) hist.removeLast();
+    persistNow();
+    clearChatUi();
+    replaying_ = true; replayHistory(); replaying_ = false;
+    if (hist.isEmpty()) showEmptyState();
+    lastUserText_ = newText;
+    agent_->sendUserMessage(newText);
 }

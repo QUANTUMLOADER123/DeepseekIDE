@@ -25,6 +25,7 @@ public:
 public slots:
     void sendUserMessage(const QString& text);
     void compactSession();   // просит модель сжать диалог (Сделали | Следующее действие)
+    void generateTitle(const QString& convoSnippet); // фоновый мини-запрос: короткое имя чата
 
 signals:
     void log(const QString& line);
@@ -37,6 +38,7 @@ signals:
     void imageShown(const QByteArray& bytes, const QString& mime, const QString& alt);
     void sitePreview(const QString& url, const QString& html); // мини-браузер
     void compactDone(const QString& summary);                    // сводка готова (пусто = фейл)
+    void titleReady(const QString& title);                       // AI-тайтл чата (пусто = фейл)
     void errorBanner(const QString& err);
 
 private slots:
@@ -64,8 +66,8 @@ private:
     QPair<QByteArray, QString> genImage(const QString& prompt, const QString& model); // bytes+mime или пусто
     QString askDialog(const QString& q, const QStringList& opts, bool multi);
     void processAnswer(const QString& full);
-    QMetaObject::Connection compOk_, compFail_;
-    bool                    compActive_ = false;
+    QMetaObject::Connection compOk_, compFail_, titleOk_, titleFail_;
+    bool                    compActive_ = false, titleActive_ = false;
     QString cleanVisibleText(const QString& full) const; // маркеры/ops из показа
 
     // --- fs helpers

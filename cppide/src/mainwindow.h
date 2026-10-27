@@ -75,6 +75,10 @@ private:
     static QString mdToHtml(const QString& md);
     void renderRich(QVBoxLayout* l, const QString& text);   // текст + код-блоки с кнопкой Copy
     void addAssistantActions(QVBoxLayout* l, int histIdx, const QString& plain);
+    void addUserActions(QVBoxLayout* l, int histIdx, const QString& plain);
+    void buildUserCardBody(QVBoxLayout* l, int histIdx, const QString& text); // и edit-cancel
+    void onEditStart(int histIdx, class QPushButton* btn);
+    void onEditResend(int histIdx, const QString& newText);
     void refreshAttachUi();
     void activateSession(int i);
     void toggleMax();
@@ -110,6 +114,10 @@ private:
     QWidget*   attachRow_  = nullptr;
     QLabel*    attachLbl_  = nullptr;
     bool       compacting_ = false;
+    int        typingTick_ = 0;
+    bool       titleQueued_ = false;   // ждём свободного ds для generateTitle
+    QString    titleSeed_;
+    QString    lastUserText_;          // последнее сообщение (для сида тайтла)
     QTimer   pulseTimer_;
     int      pulsePhase_ = 0;
     QPlainTextEdit* input_    = nullptr;
