@@ -197,6 +197,8 @@
 
   <ItemGroup>
     <None Include="assets\logo.png" />
+    <None Include="assets\deepseek_logo.png" />
+    <None Include="assets\avatar.png" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

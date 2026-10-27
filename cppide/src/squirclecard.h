@@ -28,35 +28,32 @@ protected:
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing, true);
         const QRectF r = rect().adjusted(1.0, 1.0, -1.0, -1.0);
-        const double rad = 12.0;
+        const double rad = 14.0;
         QPainterPath path = roundPath(r, rad);
 
-        // фон
+        // фон (assistant — прозрачный, как на deepseek.com; user — плоская плашка)
         if (role_ == QLatin1String("user")) {
-            QLinearGradient g(r.topLeft(), r.bottomRight());
-            g.setColorAt(0.0, QColor(143, 43, 65));
-            g.setColorAt(1.0, QColor(108, 31, 48));
-            p.fillPath(path, g);
+            p.fillPath(path, QColor(42, 45, 52));
         } else if (role_ == QLatin1String("assistant")) {
-            p.fillPath(path, QColor(19, 20, 23));
+            // без фона
         } else if (role_ == QLatin1String("tool")) {
-            p.fillPath(path, QColor(16, 17, 19));
+            p.fillPath(path, QColor(255, 255, 255, 8));
         } else if (role_ == QLatin1String("error")) {
-            p.fillPath(path, QColor(43, 18, 24));
+            p.fillPath(path, QColor(255, 84, 112, 16));
         } else { // hint
-            p.fillPath(path, QColor(19, 20, 23));
+            p.fillPath(path, QColor(255, 255, 255, 8));
         }
 
         // рамка
         QPen pen;
         pen.setWidthF(1.2);
-        if (role_ == QLatin1String("user")) pen.setColor(QColor(176, 87, 106));
-        else if (role_ == QLatin1String("assistant") && state_ == QLatin1String("live"))
-            pen.setColor(pulseColor_.isValid() ? pulseColor_ : QColor(192, 85, 112));
-        else if (role_ == QLatin1String("assistant")) pen.setColor(QColor(47, 48, 54));
-        else if (role_ == QLatin1String("error")) pen.setColor(QColor(96, 34, 48));
+        if (role_ == QLatin1String("assistant") && state_ == QLatin1String("live"))
+            pen.setColor(pulseColor_.isValid() ? pulseColor_ : QColor(86, 134, 254));
+        else if (role_ == QLatin1String("user") || role_ == QLatin1String("assistant"))
+            pen.setStyle(Qt::NoPen);
+        else if (role_ == QLatin1String("error")) pen.setColor(QColor(255, 84, 112, 110));
         else if (role_ == QLatin1String("hint")) { pen.setColor(QColor(78, 80, 88)); pen.setStyle(Qt::DashLine); }
-        else pen.setColor(QColor(38, 39, 44));
+        else pen.setColor(QColor(255, 255, 255, 22));
         p.strokePath(path, pen);
 
         // tool: цветная полоса слева

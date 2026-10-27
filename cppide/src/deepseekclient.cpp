@@ -6,6 +6,7 @@
 #include <QJsonValue>
 #include <QUrl>
 #include <functional>
+#include <thread>
 
 static const char* DS_BASE = "https://chat.deepseek.com";
 static const char* DS_UA   = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -137,20 +138,30 @@ void DeepSeekClient::createPowThen(const QString& prompt) {
             emit failed(QStringLiteral("pow challenge: пустой challenge (протухла авторизация/капча?): ") + QString::fromUtf8(body.left(160)));
             return;
         }
-        quint64 answer = 0; QString perr;
-        if (!pow_.solve(chal, answer, perr)) { emit failed(perr); return; }
-        QJsonObject out{
-            {QStringLiteral("algorithm"),  chal.value(QStringLiteral("algorithm"))},
-            {QStringLiteral("challenge"),  chal.value(QStringLiteral("challenge"))},
-            {QStringLiteral("salt"),       chal.value(QStringLiteral("salt"))},
-            {QStringLiteral("answer"),     QString::number(answer)},
-            {QStringLiteral("signature"),  chal.value(QStringLiteral("signature"))},
-            {QStringLiteral("target_path"),QStringLiteral("/api/v0/chat/completion")},
-        };
-        // в оригинале answer — число
-        out.remove(QStringLiteral("answer"));
-        out[QStringLiteral("answer")] = QJsonValue::fromVariant(answer);
-        startCompletion(prompt, QJsonDocument(out).toJson(QJsonDocument::Compact).toBase64());
+        // PoW решаем в отдельном потоке — SHA-256 цикл не фризит интерфейс
+        std::thread([this, chal, prompt]() {
+            quint64 answer = 0; QString perr;
+            if (!pow_.solve(chal, answer, perr)) {
+                const QString err = perr;
+                QMetaObject::invokeMethod(this, [this, err]() { emit failed(err); }, Qt::QueuedConnection);
+                return;
+            }
+            QJsonObject out{
+                {QStringLiteral("algorithm"),  chal.value(QStringLiteral("algorithm"))},
+                {QStringLiteral("challenge"),  chal.value(QStringLiteral("challenge"))},
+                {QStringLiteral("salt"),       chal.value(QStringLiteral("salt"))},
+                {QStringLiteral("answer"),     QString::number(answer)},
+                {QStringLiteral("signature"),  chal.value(QStringLiteral("signature"))},
+                {QStringLiteral("target_path"),QStringLiteral("/api/v0/chat/completion")},
+            };
+            // в оригинале answer — число
+            out.remove(QStringLiteral("answer"));
+            out[QStringLiteral("answer")] = QJsonValue::fromVariant(answer);
+            const QString b64 = QString::fromLatin1(QJsonDocument(out).toJson(QJsonDocument::Compact).toBase64());
+            QMetaObject::invokeMethod(this, [this, prompt, b64]() {
+                startCompletion(prompt, b64);
+            }, Qt::QueuedConnection);
+        }).detach();
     });
 }
 

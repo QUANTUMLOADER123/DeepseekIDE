@@ -84,6 +84,8 @@ private:
     void refreshAttachUi();
     void activateSession(int i);
     void toggleMax();
+    void setSidebarCollapsed(bool on);
+    void onEmptySend();                     // отправка из центрированного инпута пустого чата
 
     AppCfg cfg_;
     Agent* agent_;
@@ -93,14 +95,14 @@ private:
     QList<Session> sessions_;
     int curSess_ = -1;
 
-    // кастомный титлбар (frameless)
-    QWidget*     titleBar_  = nullptr;
-    QLabel*      logoLbl_   = nullptr;
+    // frameless: шапки нет — drag по сайдбару, кнопки окна в оверлее справа сверху
     QPushButton* winMaxBtn_ = nullptr;
     QPoint       dragOffset_;
     bool         dragOn_ = false;
 
     // UI
+    QFrame*      sidePanel_    = nullptr;   // колонка сессий (скрывается стрелкой)
+    QWidget*     collapsedBar_ = nullptr;   // оверлей слева сверху при свёрнутом сайдбаре
     QListWidget* sessionList_ = nullptr;
     QPushButton* folderPill_  = nullptr;
     QPushButton* chipThink_   = nullptr;
@@ -113,6 +115,7 @@ private:
     QString groupText_;              // текст всех сегментов очереди (для истории/Copy)
     SquircleCard* replayCard_ = nullptr; // группировка при реплее истории
     QPointer<QLabel> liveBubble_;
+    QPointer<QPlainTextEdit> emptyInp_;      // pill-инпут в пустом чате
     QString  liveRaw_;
     QStringList attachPaths_;   // вложения, скопированные в песочницу (уйдут в текст сообщения)
     QWidget*   attachRow_  = nullptr;
