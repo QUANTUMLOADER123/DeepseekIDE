@@ -541,10 +541,52 @@ window.__dsxOutbox = window.__dsxOutbox || [];
   }
 
   // Fence-путь: ```deepseekide-ops ... ```
+  // сбалансированный конец [ ... ] от позиции i0 (строки "..." учитываем —
+  // [ ] внутри контента файлов скобки НЕ считаем)
+  function balancedEnd(s, i0) {
+    var depth = 0, inStr = false, esc = false;
+    for (var i = i0; i < s.length && i < i0 + 90000; ++i) {
+      var c = s[i];
+      if (inStr) {
+        if (esc) { esc = false; continue; }
+        if (c === '\\') { esc = true; continue; }
+        if (c === '"') inStr = false;
+        continue;
+      }
+      if (c === '"') { inStr = true; continue; }
+      if (c === '[' || c === '{') depth++;
+      else if (c === ']' || c === '}') {
+        depth--;
+        if (depth === 0 && c === ']') return i;
+      }
+    }
+    return -1;
+  }
+
   function extractOps(answer, out) {
     var re = /```deepseekide-ops[ \t]*\r?\n([\s\S]*?)```/g, m;
-    var found = false;
-    while ((m = re.exec(answer)) !== null) { found = true; parseOpsBody(m[1], out); }
+    var found = false, fspans = [];
+    while ((m = re.exec(answer)) !== null) {
+      found = true;
+      fspans.push([m.index, m.index + m[0].length]);
+      parseOpsBody(m[1], out);
+    }
+    // ГОЛЫЙ массив [{"name":…}] без fence — модель регулярно роняет обёртку,
+    // раньше такие правки молча пропадали (висячие Enter чинит repairJson).
+    var br = /\[\s*\{\s*"name"\s*:/g, bm;
+    while ((bm = br.exec(answer)) !== null) {
+      var st0 = bm.index, inFence = false;
+      for (var fi = 0; fi < fspans.length; ++fi) if (st0 >= fspans[fi][0] && st0 < fspans[fi][1]) { inFence = true; break; }
+      if (inFence) continue;
+      var end = balancedEnd(answer, st0);
+      if (end < 0) continue;
+      var before = out.ops.length;
+      parseOpsBody(answer.slice(st0, end + 1), out);
+      if (out.ops.length > before) {
+        found = true;
+        console.log('[DSX] OPS: голый массив без fence пойман (', end - st0 + 1, 'зн):', (out.ops.length - before), 'оп.');
+      }
+    }
     if (!found) {
       // DOM-путь зовётся отдельно; здесь же — попытка вырезать голый спан после
       // слова-маркера (на случай съехавшей разметки)
@@ -1987,10 +2029,17 @@ tree || '(структура недоступна — спросите чере�
     tab.style.setProperty('--dsl-button-color', 'var(--dsw-alias-interactive-bg-hover)');
   }
   function addSiteTab(modal, rail, content, label, kind) {
-    var srcBtn = rail.querySelector('.ds-button');
+    // шаблон — НЕАКТИВНАЯ родная кнопка: от активной клонируются и класс
+    // подсветки, и inline --dsl-button-color — наши табы были «ярче прочих»
+    var srcBtn = null;
+    rail.querySelectorAll('.ds-button').forEach(function (b) {
+      if (!b.classList.contains('_699d482') && !b.classList.contains('dsx-site-tab')) srcBtn = b;
+    });
+    if (!srcBtn) srcBtn = rail.querySelector('.ds-button');
     var tab = srcBtn.cloneNode(true);
     tab.classList.add('dsx-site-tab');
     tab.classList.remove('_699d482');
+    tab.style.removeProperty('--dsl-button-color');
     var lbl = tab.querySelector('.ds-button__content');
     if (lbl) lbl.textContent = label;
     tab.addEventListener('click', function () { openDsxPane(modal, content, tab, kind); });
@@ -2780,12 +2829,14 @@ tree || '(структура недоступна — спросите чере�
   function renderBadges(block) {
     try {
       eachTextNode(block, function (n) {
-        if (!n.nodeValue || n.nodeValue.indexOf('[<{') < 0) return;
+        if (!n.nodeValue || (n.nodeValue.indexOf('[<{') < 0 && n.nodeValue.indexOf('&lt;{') < 0)) return;
+        var nv = n.nodeValue;
+        if (nv.indexOf('&lt;{') >= 0) nv = nv.replace(/&lt;/g, '<').replace(/&gt;/g, '>'); // движок задвойесейпил маркер
         BADGE_RE.lastIndex = 0;
-        if (!BADGE_RE.test(n.nodeValue)) return;
+        if (!BADGE_RE.test(nv)) return;
         BADGE_RE.lastIndex = 0;
         var marks = n.__dsxMarks || (n.__dsxMarks = []);
-        n.nodeValue = n.nodeValue.replace(BADGE_RE, function (mm, k, a) {
+        n.nodeValue = nv.replace(BADGE_RE, function (mm, k, a) {
           var b = badgeText(k, a, true);
           marks.push({ b: b, m: mm });
           return b;
@@ -3478,6 +3529,54 @@ tree || '(структура недоступна — спросите чере�
   var LIVE_ROW_CSS = 'margin:2px 0;font-size:13px;line-height:1.5;' +
     'color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary,#999));' +
     'font-family:var(--dsw-font-family,inherit)';
+  // «голый» JSON правок, выведенный обычным текстом (без fence), после
+  // успешного применения убираем из видимого сообщения — как fence-блоки.
+  function wipeOpsJsonDom(block) {
+    try {
+      var nodes = [];
+      eachTextNode(block, function (n) {
+        var p = n.parentElement;
+        if (p && p.closest && p.closest('pre, code, .dsx-tool-box, .dsx-imgbox')) return;
+        if (n.nodeValue && n.nodeValue.trim()) nodes.push(n);
+      });
+      var startRe = /\[\s*\{\s*"name"\s*:/;
+      var started = -1, depth = 0, inStr = false, esc = false, j0 = 0;
+      for (var i = 0; i < nodes.length; ++i) {
+        var v = nodes[i].nodeValue, beg = 0;
+        if (started < 0) {
+          var m0 = startRe.exec(v);
+          if (!m0) continue;
+          started = i; j0 = m0.index; beg = j0 + 1; depth = 1;
+        }
+        for (var j = beg; j < v.length; ++j) {
+          var c = v[j];
+          if (inStr) {
+            if (esc) { esc = false; continue; }
+            if (c === '\\') { esc = true; continue; }
+            if (c === '"') inStr = false;
+            continue;
+          }
+          if (c === '"') { inStr = true; continue; }
+          if (c === '[' || c === '{') depth++;
+          else if (c === ']' || c === '}') {
+            depth--;
+            if (depth === 0) {
+              for (var k = started; k <= i; ++k) {
+                var nv = nodes[k].nodeValue;
+                if (started === i) nodes[k].nodeValue = nv.slice(0, j0) + nv.slice(j + 1);
+                else if (k === started) nodes[k].nodeValue = nv.slice(0, j0);
+                else if (k === i) nodes[k].nodeValue = nv.slice(j + 1);
+                else nodes[k].nodeValue = '';
+              }
+              console.log('[DSX] OPS: голый JSON правок убран из видимого текста');
+              return;
+            }
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
   function updateLiveOps(block) {
     try {
       var host = block.closest('._4f9bf79') || block.parentElement;
@@ -3524,7 +3623,7 @@ tree || '(структура недоступна — спросите чере�
         var fin = row.getAttribute('data-dsx-final');
         var t0r = +row.getAttribute('data-t0') || 0;
         var dur = t0r ? ' · ' + fmtDur(Date.now() - t0r) : '';
-        row.textContent = (ok ? fin : (t.slice(0, -1) + T(' (ОШИБКА)', ' (ERROR)'))) + dur;
+        row.textContent = (ok ? (fin || t.slice(0, -1)) : (t.slice(0, -1) + T(' (ОШИБКА)', ' (ERROR)'))) + dur;
       });
       host.querySelectorAll('.dsx-live-tool').forEach(function (el) {
         if (el.__dsxDone) return; el.__dsxDone = 1;
@@ -3597,6 +3696,11 @@ tree || '(структура недоступна — спросите чере�
           // скролл вверх/перерисовка вирт-листа: эти правки УЖЕ применены — пропуск
           rows.push(T('Правки этого ответа уже применены — пропуск', 'Edits of this reply were applied already — skipped'));
           finalizeLiveOps(block, true);
+          wipeOpsJsonDom(block);
+        } else if (!outp.ops.length) {
+          // правок нет (или блок совсем битый): живые «Пишет…» строки гасим,
+          // иначе они пульсируют вечно = «IDE думает, что модель ещё пишет»
+          finalizeLiveOps(block, !outp.errors.length);
         } else if (outp.ops.length && (answHash !== st.opsMeta.h || vKey !== st.opsMeta.k)) {
           st.opsMeta = { h: answHash, k: vKey };
           sSet('dsx:opsh', JSON.stringify(st.opsMeta));
@@ -3640,6 +3744,7 @@ tree || '(структура недоступна — спросите чере�
             }
             finalizeLiveOps(block, true);
             actMark('ops', answHash);
+            wipeOpsJsonDom(block);
             note = 'SYSTEM: ops applied automatically by DeepSeek Extended:\n\n```\n' +
                    r.data.report + '\n```\n';
             refreshPrompt(); // дерево изменилось
