@@ -73,8 +73,6 @@ private:
     // UI
     QListWidget* sessionList_ = nullptr;
     QLabel* logoLbl_ = nullptr;
-    QLabel* sessionTitle_ = nullptr;
-    QLabel* statusPill_ = nullptr;
     QPushButton* folderPill_ = nullptr;
     QPushButton* chipThink_ = nullptr;
     QPushButton* chipSearch_ = nullptr;

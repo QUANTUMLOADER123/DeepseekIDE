@@ -26,29 +26,29 @@ protected:
         // фон
         if (role_ == QLatin1String("user")) {
             QLinearGradient g(r.topLeft(), r.bottomRight());
-            g.setColorAt(0.0, QColor(52, 59, 125));
-            g.setColorAt(1.0, QColor(38, 43, 88));
+            g.setColorAt(0.0, QColor(143, 43, 65));
+            g.setColorAt(1.0, QColor(108, 31, 48));
             p.fillPath(path, g);
         } else if (role_ == QLatin1String("assistant")) {
-            p.fillPath(path, QColor(21, 25, 41));
+            p.fillPath(path, QColor(19, 20, 23));
         } else if (role_ == QLatin1String("tool")) {
-            p.fillPath(path, QColor(15, 18, 28));
+            p.fillPath(path, QColor(16, 17, 19));
         } else if (role_ == QLatin1String("error")) {
-            p.fillPath(path, QColor(44, 20, 29));
+            p.fillPath(path, QColor(43, 18, 24));
         } else { // hint
-            p.fillPath(path, QColor(18, 21, 31));
+            p.fillPath(path, QColor(19, 20, 23));
         }
 
         // рамка
         QPen pen;
         pen.setWidthF(1.3);
-        if (role_ == QLatin1String("user")) pen.setColor(QColor(74, 82, 184));
+        if (role_ == QLatin1String("user")) pen.setColor(QColor(176, 87, 106));
         else if (role_ == QLatin1String("assistant") && state_ == QLatin1String("live"))
-            pen.setColor(pulseColor_.isValid() ? pulseColor_ : QColor(141, 131, 255));
-        else if (role_ == QLatin1String("assistant")) pen.setColor(QColor(36, 41, 65));
-        else if (role_ == QLatin1String("error")) pen.setColor(QColor(88, 36, 56));
-        else if (role_ == QLatin1String("hint")) { pen.setColor(QColor(56, 64, 107)); pen.setStyle(Qt::DashLine); }
-        else pen.setColor(QColor(30, 35, 52));
+            pen.setColor(pulseColor_.isValid() ? pulseColor_ : QColor(192, 85, 112));
+        else if (role_ == QLatin1String("assistant")) pen.setColor(QColor(47, 48, 54));
+        else if (role_ == QLatin1String("error")) pen.setColor(QColor(96, 34, 48));
+        else if (role_ == QLatin1String("hint")) { pen.setColor(QColor(78, 80, 88)); pen.setStyle(Qt::DashLine); }
+        else pen.setColor(QColor(38, 39, 44));
         p.strokePath(path, pen);
 
         // tool: цветная полоса слева

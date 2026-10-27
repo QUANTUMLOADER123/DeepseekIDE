@@ -35,96 +35,104 @@
 #include <QProcess>
 #include <QCloseEvent>
 #include <QDateTime>
+#include <QPainter>
+#include <QPainterPath>
+#include <QLinearGradient>
+#include <QDesktopServices>
+#include <QUrl>
+#include <QDialog>
+#include <functional>
 
 // ============================================================================
 //  тема: фон почти чёрный, акцент фиолетовый (как у популярных AI-IDE)
 // ============================================================================
+//  тема: графитовый фон, бордовый акцент
+// ============================================================================
 static const char* kTheme = R"(
-QMainWindow, QDialog { background:#0a0c11; }
-QWidget { color:#e9ecf6; font-size:13px; font-family:'Segoe UI','Inter',sans-serif; background:transparent; }
-*[themeRoot="true"] { background:#0a0c11; }
+QMainWindow, QDialog { background:#0c0d0f; }
+QWidget { color:#e6e7ea; font-size:13px; font-family:'Segoe UI','Inter',sans-serif; background:transparent; }
+*[themeRoot="true"] { background:#0c0d0f; }
 
-QFrame#sidePanel { background:#0e1119; border:none; border-right:1px solid #1b2030; }
-QLabel#appName { color:#f2f4ff; font-size:16px; font-weight:700; }
-QLabel#appTag { color:#4c5476; font-size:11px; }
-QLabel#sideHeader { color:#4c5476; font-size:10px; font-weight:700; letter-spacing:2px; padding:0 4px; }
+QFrame#sidePanel { background:#131417; border:none; border-right:1px solid #232428; }
+QLabel#appName { color:#f4f5f7; font-size:16px; font-weight:700; }
+QLabel#appTag { color:#6f727c; font-size:11px; }
+QLabel#sideHeader { color:#575962; font-size:10px; font-weight:700; letter-spacing:2px; padding:0 4px; }
 
 QPushButton#newSession {
-  background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #6d5cff, stop:1 #8a5cf6);
+  background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #a6334d, stop:1 #7d2440);
   border:none; border-radius:14px; padding:12px; color:#ffffff; font-weight:700; font-size:13px;
 }
-QPushButton#newSession:hover { background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #7d6bff, stop:1 #9d6fff); }
-QPushButton#newSession:pressed { background:#5848e0; }
+QPushButton#newSession:hover { background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #b8455e, stop:1 #91294a); }
+QPushButton#newSession:pressed { background:#6b1e37; }
 
 QPushButton#ghostBtn {
-  background:transparent; border:1px solid #232941; border-radius:10px; padding:8px 12px; color:#9aa1c2;
+  background:transparent; border:1px solid #2a2b30; border-radius:10px; padding:8px 12px; color:#9a9ca6;
 }
-QPushButton#ghostBtn:hover { background:#181c2b; color:#dfe3f5; }
+QPushButton#ghostBtn:hover { background:#1b1c20; color:#e2e3e8; border-color:#3a3b42; }
 
 QListWidget#sessions { background:transparent; border:none; outline:none; }
-QListWidget#sessions::item { padding:10px 12px; border-radius:12px; margin:2px 4px; color:#c4c9e0; }
-QListWidget#sessions::item:hover { background:#151927; }
-QListWidget#sessions::item:selected { background:#20264a; color:#ffffff; }
+QListWidget#sessions::item { padding:10px 12px 10px 14px; border-radius:12px; margin:2px 4px; color:#b8bac2; }
+QListWidget#sessions::item:hover { background:#1a1b1f; }
+QListWidget#sessions::item:selected { background:#241a1e; color:#ffffff; border-left:3px solid #a6334d; }
 
-QLabel#sessTitle { color:#f2f4ff; font-size:17px; font-weight:700; }
-QFrame#divider { background:#1b2030; max-height:1px; min-height:1px; }
+QFrame#divider { background:#232428; max-height:1px; min-height:1px; }
 
 QPushButton#chip {
-  background:#141827; border:1px solid #262b47; border-radius:14px; padding:6px 14px; color:#8b91b3; font-size:12px;
+  background:#161719; border:1px solid #2c2d33; border-radius:14px; padding:6px 14px; color:#8e9098; font-size:12px;
 }
-QPushButton#chip:hover { border-color:#3d4470; color:#c6cbdf; }
-QPushButton#chip:checked { background:#242a52; border-color:#6d5cff; color:#d9d4ff; }
+QPushButton#chip:hover { border-color:#4a3038; color:#c9cad0; }
+QPushButton#chip:checked { background:#2b1a20; border-color:#a6334d; color:#f0cdd5; }
 
 QPushButton#sendBtn {
-  background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #6d5cff, stop:1 #a06bff);
+  background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #a6334d, stop:1 #c05570);
   border:none; border-radius:16px; min-width:44px; min-height:44px; max-width:44px; max-height:44px;
   color:#ffffff; font-weight:700; font-size:16px;
 }
-QPushButton#sendBtn:hover { background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #8270ff, stop:1 #b58aff); }
-QPushButton#sendBtn:pressed { background:#5848e0; }
-QPushButton#sendBtn:!enabled { background:#241d3b; color:#5a5290; }
+QPushButton#sendBtn:hover { background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #b8455e, stop:1 #d06a84); }
+QPushButton#sendBtn:pressed { background:#7d2440; }
+QPushButton#sendBtn:!enabled { background:#242225; color:#5f5458; }
 
-/* busy: превращается в Стоп (круглая красная) */
+/* busy: превращается в Стоп */
 QPushButton#sendBtn[busy="true"] {
-  background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #d4506a, stop:1 #a83a56);
+  background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #c23754, stop:1 #8f2740);
 }
 
 QPlainTextEdit#composer {
-  background:#11151f; border:1px solid #232941; border-radius:18px; padding:14px 18px;
-  selection-background-color:#3c4180; selection-color:#ffffff;
+  background:#141518; border:1px solid #2a2b30; border-radius:18px; padding:14px 18px;
+  selection-background-color:#7d2440; selection-color:#ffffff;
 }
-QPlainTextEdit#composer:focus { border:1px solid #4a52a8; }
-QPlainTextEdit#composer:disabled { background:#0e1119; color:#4c5476; }
+QPlainTextEdit#composer:focus { border:1px solid #a6334d; }
+QPlainTextEdit#composer:disabled { background:#111214; color:#575962; }
 
-QPlainTextEdit#logView { font-family:'Cascadia Code','Consolas',monospace; font-size:12px; color:#8d93af; }
+QPlainTextEdit#logView { font-family:'Cascadia Code','Consolas',monospace; font-size:12px; color:#8d8f99; }
 
-QDockWidget { color:#697093; font-weight:600; }
-QDockWidget::title { background:#0d1017; padding:9px 14px; border-top:1px solid #1b2030; }
+QDockWidget { color:#6f727c; font-weight:600; }
+QDockWidget::title { background:#101114; padding:9px 14px; border-top:1px solid #232428; }
 
 QSplitter::handle { background:transparent; }
 QSplitter::handle:horizontal { width:2px; }
-QSplitter::handle:horizontal:hover { background:#333a63; }
+QSplitter::handle:horizontal:hover { background:#8a3046; }
 
 QScrollBar:vertical { background:transparent; width:10px; margin:4px 2px; }
-QScrollBar::handle:vertical { background:#232a45; border-radius:5px; min-height:36px; }
-QScrollBar::handle:vertical:hover { background:#3b4170; }
+QScrollBar::handle:vertical { background:#2a2b30; border-radius:5px; min-height:36px; }
+QScrollBar::handle:vertical:hover { background:#54333c; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }
 QScrollBar:horizontal { background:transparent; height:10px; margin:2px 4px; }
-QScrollBar::handle:horizontal { background:#232a45; border-radius:5px; min-width:36px; }
-QScrollBar::handle:horizontal:hover { background:#3b4170; }
+QScrollBar::handle:horizontal { background:#2a2b30; border-radius:5px; min-width:36px; }
+QScrollBar::handle:horizontal:hover { background:#54333c; }
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width:0; }
 QScrollArea { border:none; background:transparent; }
 
 QLineEdit, QSpinBox, QComboBox {
-  background:#141827; border:1px solid #262b47; border-radius:8px; padding:7px 12px; min-height:20px;
+  background:#161719; border:1px solid #2c2d33; border-radius:8px; padding:7px 12px; min-height:20px;
 }
-QLineEdit:focus, QSpinBox:focus, QComboBox:focus { border-color:#8d83ff; }
-QComboBox QAbstractItemView { background:#151826; border:1px solid #262b42; selection-background-color:#2d3253; }
+QLineEdit:focus, QSpinBox:focus, QComboBox:focus { border-color:#c05570; }
+QComboBox QAbstractItemView { background:#191a1e; border:1px solid #2c2d33; selection-background-color:#2b1a20; }
 QComboBox::drop-down { border:none; width:24px; }
 QCheckBox { spacing:8px; }
-QCheckBox::indicator { width:16px; height:16px; border-radius:5px; border:1px solid #3a4166; background:#141827; }
-QCheckBox::indicator:checked { background:#6d5cff; border-color:#6d5cff; }
-QToolTip { background:#1b1e30; color:#e9ecf6; border:1px solid #2e3354; padding:7px 10px; border-radius:8px; }
+QCheckBox::indicator { width:16px; height:16px; border-radius:5px; border:1px solid #3a3b42; background:#161719; }
+QCheckBox::indicator:checked { background:#a6334d; border-color:#a6334d; }
+QToolTip { background:#1d1e22; color:#e6e7ea; border:1px solid #33343a; padding:7px 10px; border-radius:8px; }
 )";
 
 // ============================================================================
@@ -155,11 +163,20 @@ MainWindow::MainWindow() {
         QPainter p(&logo); p.setRenderHint(QPainter::Antialiasing);
         QPainterPath sp = SquircleCard::squirclePath(QRectF(1, 1, 42, 42), 4.6);
         QLinearGradient g(0, 0, 44, 44);
-        g.setColorAt(0, QColor(109, 92, 255)); g.setColorAt(1, QColor(160, 107, 255));
+        g.setColorAt(0, QColor(166, 51, 77)); g.setColorAt(1, QColor(109, 31, 49));
         p.fillPath(sp, g);
         p.end();
     }
-    logoLbl_->setPixmap(logo.scaled(44, 44, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    {   // белые углы у PNG: клипаем лого по скверклу
+        QPixmap clipped(44, 44); clipped.fill(Qt::transparent);
+        QPainter p(&clipped); p.setRenderHint(QPainter::Antialiasing);
+        p.setClipPath(SquircleCard::squirclePath(QRectF(0.8, 0.8, 42.4, 42.4), 4.6));
+        const QPixmap s = logo.scaled(44, 44, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+        p.drawPixmap((44 - s.width()) / 2, (44 - s.height()) / 2, s);
+        p.end();
+        logo = clipped;
+    }
+    logoLbl_->setPixmap(logo);
     logoRow->addWidget(logoLbl_);
     auto* nameCol = new QVBoxLayout; nameCol->setSpacing(1);
     auto* appName = new QLabel(QStringLiteral("DeepSeekIDE")); appName->setObjectName(QStringLiteral("appName"));
@@ -201,21 +218,6 @@ MainWindow::MainWindow() {
     auto* cl = new QVBoxLayout(center);
     cl->setContentsMargins(0, 0, 0, 0);
     cl->setSpacing(0);
-
-    // шапка сессии
-    auto* head = new QWidget;
-    auto* hl = new QHBoxLayout(head);
-    hl->setContentsMargins(26, 18, 26, 14);
-    sessionTitle_ = new QLabel(QStringLiteral("DeepSeekIDE"));
-    sessionTitle_->setObjectName(QStringLiteral("sessTitle"));
-    hl->addWidget(sessionTitle_, 0);
-    statusPill_ = new QLabel(QStringLiteral("• готов"));
-    statusPill_->setStyleSheet(QStringLiteral("color:#35cf7f; font-size:12px; padding-left:10px;"));
-    hl->addWidget(statusPill_, 0);
-    hl->addStretch(1);
-    cl->addWidget(head);
-    auto* div = new QFrame; div->setObjectName(QStringLiteral("divider"));
-    cl->addWidget(div);
 
     // поток чата
     chatScroll_ = new QScrollArea;
@@ -367,16 +369,19 @@ SquircleCard* MainWindow::chatAppend(const QString& role, const QString& state, 
 }
 
 void MainWindow::fadeIn(QWidget* w, int ms) {
+    // было 0xC0000005: setGraphicsEffect(nullptr) сам удаляет эффект,
+    // а старая лямбда потом делала fx->deleteLater() по мёртвому указателю
     auto* fx = new QGraphicsOpacityEffect(w);
     w->setGraphicsEffect(fx);
+    fx->setOpacity(0.0);
     auto* anim = new QPropertyAnimation(fx, "opacity", w);
     anim->setDuration(ms);
     anim->setStartValue(0.0);
     anim->setEndValue(1.0);
     anim->setEasingCurve(QEasingCurve::OutCubic);
-    QObject::connect(anim, &QPropertyAnimation::finished, w, [w, fx]() {
-        w->setGraphicsEffect(nullptr);
-        fx->deleteLater();
+    const QPointer<QWidget> guard(w);
+    QObject::connect(anim, &QAbstractAnimation::finished, w, [guard]() {
+        if (guard) guard->setGraphicsEffect(nullptr); // эффект удалит сам Qt
     });
     anim->start(QAbstractAnimation::DeleteWhenStopped);
 }
@@ -395,19 +400,19 @@ void MainWindow::pulseTick() {
     if (!liveCard_) return;
     pulsePhase_ = (pulsePhase_ + 1) % 4;
     static const QColor cols[4] = {
-        QColor(141, 131, 255), QColor(168, 159, 255),
-        QColor(195, 188, 255), QColor(168, 159, 255) };
+        QColor(176, 84, 102), QColor(206, 116, 133),
+        QColor(228, 146, 160), QColor(206, 116, 133) };
     liveCard_->setPulseColor(cols[pulsePhase_]);
 }
 
 QString MainWindow::mdToHtml(const QString& md) {
     QString s = md.toHtmlEscaped();
     s.replace(QRegularExpression(QStringLiteral("```(\\w*)\\n([\\s\\S]*?)```")),
-              QStringLiteral("<pre style='background:#080a10;border:1px solid #232941;border-radius:10px;padding:12px;font-family:Consolas,monospace;color:#c9d3f4;'>\\2</pre>"));
+              QStringLiteral("<pre style='background:#101114;border:1px solid #2a2b30;border-radius:10px;padding:12px;font-family:Consolas,monospace;color:#d6d9df;'>\\2</pre>"));
     s.replace(QRegularExpression(QStringLiteral("`([^`\\n]+)`")),
-              QStringLiteral("<code style='background:#0b0d14;border:1px solid #232941;border-radius:5px;padding:1px 7px;font-family:Consolas,monospace;color:#b9aaff;'>\\1</code>"));
+              QStringLiteral("<code style='background:#17181c;border:1px solid #2a2b30;border-radius:5px;padding:1px 7px;font-family:Consolas,monospace;color:#e1a9b5;'>\\1</code>"));
     s.replace(QRegularExpression(QStringLiteral("^####?\\s+(.+)$"), QRegularExpression::MultilineOption),
-              QStringLiteral("<b style='color:#a298ff;font-size:14px'>\\1</b>"));
+              QStringLiteral("<b style='color:#d98b9c;font-size:14px'>\\1</b>"));
     s.replace(QRegularExpression(QStringLiteral("\\*\\*([^*\\n]+)\\*\\*")),
               QStringLiteral("<b>\\1</b>"));
     s.replace(QStringLiteral("\n"), QStringLiteral("<br>"));
@@ -443,7 +448,7 @@ void MainWindow::activateSession(int i) {
     curSess_ = i;
     sessionList_->setCurrentRow(i);
     const Session& s = sessions_[i];
-    sessionTitle_->setText(s.title.left(56));
+    setWindowTitle(QStringLiteral("%1 — DeepSeekIDE").arg(s.title.left(56)));
     folderPill_->setText(s.folder.isEmpty() ? QStringLiteral("папка не выбрана") : QFileInfo(s.folder).fileName());
     folderPill_->setToolTip(s.folder);
 
@@ -482,7 +487,6 @@ void MainWindow::setSessionTitleFromText(const QString& t) {
     if (!s.title.isEmpty() && s.title != QStringLiteral("Новая сессия")) return;
     s.title = t.simplified().left(48);
     if (s.title.isEmpty()) s.title = QStringLiteral("Сессия");
-    sessionTitle_->setText(s.title.left(56));
     refreshSessionList();
     persistNow();
 }
@@ -504,12 +508,12 @@ void MainWindow::showEmptyState() {
     auto* vl = new QVBoxLayout(wrap);
     vl->setAlignment(Qt::AlignCenter);
     auto* big = new QLabel(QStringLiteral("Что будем строить?"));
-    big->setStyleSheet(QStringLiteral("color:#f2f4ff; font-size:26px; font-weight:700;"));
+    big->setStyleSheet(QStringLiteral("color:#f4f5f7; font-size:26px; font-weight:700;"));
     big->setAlignment(Qt::AlignCenter);
     auto* sub = new QLabel(QStringLiteral(
         "Агент читает и правит файлы проекта, выполняет команды,\n"
         "ходит в интернет, генерирует картинки и сам всё собирает."));
-    sub->setStyleSheet(QStringLiteral("color:#4c5476; font-size:14px;"));
+    sub->setStyleSheet(QStringLiteral("color:#6f727c; font-size:14px;"));
     sub->setAlignment(Qt::AlignCenter);
     vl->addWidget(big);
     vl->addSpacing(8);
@@ -600,10 +604,6 @@ void MainWindow::onBusy(bool on) {
     input_->setDisabled(on);
     input_->setPlaceholderText(on ? QStringLiteral("Агент пишет/работает…")
                                   : QStringLiteral("Опишите задачу или задайте вопрос…"));
-    statusPill_->setText(on ? QStringLiteral("• работает") : QStringLiteral("• готов"));
-    statusPill_->setStyleSheet(on
-        ? QStringLiteral("color:#8d83ff; font-size:12px; padding-left:10px;")
-        : QStringLiteral("color:#35cf7f; font-size:12px; padding-left:10px;"));
 }
 
 void MainWindow::addUser(const QString& text) {
@@ -611,7 +611,7 @@ void MainWindow::addUser(const QString& text) {
     auto* l = qobject_cast<QVBoxLayout*>(c->layout());
     auto* lbl = new QLabel(mdToHtml(text));
     lbl->setWordWrap(true);
-    lbl->setStyleSheet(QStringLiteral("color:#eef0ff;"));
+    lbl->setStyleSheet(QStringLiteral("color:#f5f0f2;"));
     lbl->setTextInteractionFlags(Qt::TextSelectableByMouse);
     l->addWidget(lbl);
     pushHist(QStringLiteral("user"), text);
@@ -620,7 +620,7 @@ void MainWindow::addUser(const QString& text) {
 void MainWindow::beginAssistant() {
     liveCard_ = chatAppend(QStringLiteral("assistant"), QStringLiteral("live"));
     auto* l = qobject_cast<QVBoxLayout*>(liveCard_->layout());
-    liveBubble_ = new QLabel(QStringLiteral("<span style='color:#4c5476;font-style:italic'>печатает…</span>"));
+    liveBubble_ = new QLabel(QStringLiteral("<span style='color:#575962;font-style:italic'>печатает…</span>"));
     liveBubble_->setWordWrap(true);
     liveBubble_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     l->addWidget(liveBubble_);
@@ -640,7 +640,7 @@ void MainWindow::endAssistant(const QString& cleanText) {
     pulseTimer_.stop();
     if (liveBubble_) {
         liveBubble_->setText(cleanText.isEmpty()
-            ? QStringLiteral("<span style='color:#4c5476;font-style:italic'>…продолжаю работу —</span>")
+            ? QStringLiteral("<span style='color:#575962;font-style:italic'>…продолжаю работу —</span>")
             : mdToHtml(cleanText));
     }
     if (liveCard_) {
@@ -657,14 +657,14 @@ void MainWindow::endAssistant(const QString& cleanText) {
 void MainWindow::addToolRow(const QString& name, const QString& sub, bool ok, const QString& detail) {
     auto* card = chatAppend(QStringLiteral("tool"), ok ? QString() : QStringLiteral("fail"));
     auto* l = qobject_cast<QVBoxLayout*>(card->layout());
-    auto* lbl = new QLabel(QStringLiteral("<b style='color:%1'>%2</b> <span style='color:#697093'>%3</span>")
+    auto* lbl = new QLabel(QStringLiteral("<b style='color:%1'>%2</b> <span style='color:#6f727c'>%3</span>")
                                .arg(ok ? QStringLiteral("#35cf7f") : QStringLiteral("#ff5470"),
                                     name.toHtmlEscaped(), sub.toHtmlEscaped()));
     lbl->setWordWrap(true);
     lbl->setStyleSheet(QStringLiteral("font-family:'Cascadia Code','Consolas',monospace;font-size:12px;"));
     l->addWidget(lbl);
     if (!detail.isEmpty()) {
-        auto* det = new QLabel(QStringLiteral("<pre style='color:#767d9e;font-size:11px;font-family:Consolas,monospace;'>%1</pre>")
+        auto* det = new QLabel(QStringLiteral("<pre style='color:#7d8089;font-size:11px;font-family:Consolas,monospace;'>%1</pre>")
                                    .arg(detail.left(1500).toHtmlEscaped()));
         det->setWordWrap(true);
         l->addWidget(det);
@@ -709,9 +709,103 @@ void MainWindow::onOpenSandbox() {
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
                         + QStringLiteral("/sandbox");
     QDir().mkpath(dir);
+
+    auto* d = new QDialog(this);
+    d->setAttribute(Qt::WA_DeleteOnClose);
+    d->setWindowTitle(QStringLiteral("Песочница — временные файлы сессии"));
+    d->resize(620, 460);
+    auto* vl = new QVBoxLayout(d);
+    vl->setContentsMargins(16, 14, 16, 14);
+    vl->setSpacing(10);
+
+    auto* hint = new QLabel(QStringLiteral(
+        "Temp-зона агента: сюда он складывает промежуточные файлы, здесь же гоняются SANDBOX SHELL "
+        "и тесты. Можно закинуть свои файлы (агент их увидит) или забрать результат. Двойной клик — открыть."));
+    hint->setWordWrap(true);
+    hint->setStyleSheet(QStringLiteral("color:#7d7f89; font-size:12px;"));
+    vl->addWidget(hint);
+
+    auto* pathLbl = new QLabel(dir);
+    pathLbl->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    pathLbl->setStyleSheet(QStringLiteral("color:#575962; font-size:11px; font-family:Consolas,monospace;"));
+    vl->addWidget(pathLbl);
+
+    auto* list = new QListWidget; list->setObjectName(QStringLiteral("sessions"));
+    vl->addWidget(list, 1);
+
+    const std::function<void()> refresh = [list, dir]() {
+        list->clear();
+        const QDir qd(dir);
+        const auto entries = qd.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+        for (const QFileInfo& fi : entries) {
+            const QString size = fi.isFile()
+                ? QStringLiteral("  (%1 КБ)").arg(fi.size() / 1024) : QString();
+            auto* it = new QListWidgetItem(fi.isDir()
+                ? QStringLiteral("[папка] ") + fi.fileName() : fi.fileName() + size);
+            it->setData(Qt::UserRole, fi.absoluteFilePath());
+            list->addItem(it);
+        }
+        if (!list->count()) {
+            auto* it = new QListWidgetItem(QStringLiteral("(пусто — закиньте файлы кнопкой ниже)"));
+            it->setFlags(Qt::NoItemFlags);
+            list->addItem(it);
+        }
+    };
+    refresh();
+
+    connect(list, &QListWidget::itemDoubleClicked, d, [](QListWidgetItem* it) {
+        const QString path = it->data(Qt::UserRole).toString();
+        if (!path.isEmpty()) QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+    });
+
+    auto mk = [](const QString& title) {
+        auto* b = new QPushButton(title);
+        b->setObjectName(QStringLiteral("ghostBtn"));
+        b->setCursor(Qt::PointingHandCursor);
+        return b;
+    };
+    auto* addBtn = mk(QStringLiteral("Закинуть файлы…"));
+    auto* termBtn = mk(QStringLiteral("Терминал тут"));
+    auto* openBtn = mk(QStringLiteral("Проводник"));
+    auto* delBtn = mk(QStringLiteral("Удалить выбранное"));
+    auto* refBtn = mk(QStringLiteral("Обновить"));
+    auto* row = new QHBoxLayout; row->setSpacing(8);
+    row->addWidget(addBtn); row->addWidget(termBtn); row->addWidget(openBtn);
+    row->addWidget(delBtn); row->addStretch(1); row->addWidget(refBtn);
+    vl->addLayout(row);
+
+    QObject::connect(addBtn, &QPushButton::clicked, d, [d, dir, refresh]() {
+        const QStringList files = QFileDialog::getOpenFileNames(d, QStringLiteral("Закинуть в песочницу"));
+        const QDir qd(dir);
+        for (const QString& f : files)
+            QFile::copy(f, qd.filePath(QFileInfo(f).fileName()));
+        if (!files.isEmpty()) refresh();
+    });
+    QObject::connect(termBtn, &QPushButton::clicked, d, [dir]() {
 #ifdef Q_OS_WIN
-    QProcess::startDetached(QStringLiteral("explorer.exe"), QStringList{ QDir::toNativeSeparators(dir) });
+        QProcess::startDetached(QStringLiteral("cmd.exe"),
+            QStringList{ QStringLiteral("/k"),
+                         QStringLiteral("cd /d %1").arg(QDir::toNativeSeparators(dir)) });
 #endif
+    });
+    QObject::connect(openBtn, &QPushButton::clicked, d, [dir]() {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+    });
+    QObject::connect(delBtn, &QPushButton::clicked, d, [d, list, refresh]() {
+        auto* it = list->currentItem();
+        if (!it) return;
+        const QString path = it->data(Qt::UserRole).toString();
+        if (path.isEmpty()) return;
+        const QFileInfo fi(path);
+        const bool ok = fi.isDir() ? QDir(path).removeRecursively() : QFile::remove(path);
+        if (!ok)
+            QMessageBox::warning(d, QStringLiteral("Песочница"),
+                                 QStringLiteral("Не удалось удалить: %1").arg(path));
+        refresh();
+    });
+    QObject::connect(refBtn, &QPushButton::clicked, d, refresh);
+
+    d->show();
 }
 
 void MainWindow::onSettings() {
