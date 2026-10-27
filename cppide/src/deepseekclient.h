@@ -1,6 +1,7 @@
 #pragma once
 #include <QObject>
 #include <QString>
+#include <QList>
 #include <functional>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
@@ -55,7 +56,18 @@ private:
     QString parentMessageId_;     // id последнего ответа ассистента (для контекста)
     QPointer<QNetworkReply> reply_;
 
-    // состояние стрима
-    QByteArray sseBuf_;
-    QString    fullText_, thinkText_, lastFragType_, respMsgId_;
+    // состояние стрима — семантика 1:1 с эталонным клиентом (fragments + cumulative-diff):
+    //   data: {"p":"response/fragments","v":[{type,content}]}           — новые фрагменты
+    //   data: {"p":"response/fragments/-1/content","v":"chunk"}        — дельта последнего
+    //   data: {"v":"chunk"}                                            — bare-line: тот же lastPath
+    //   data: {"p":"response","v":{"response":{fragments:[…],content}} — полный снапшот
+    struct Frag { QString type, content; };
+    QByteArray  sseBuf_;
+    QList<Frag> frags_;
+    QString     legacy_, lastPath_, streamErr_, respMsgId_;
+    int         emittedChat_ = 0, emittedThink_ = 0;
+
+    void    processSsePayload(const QByteArray& pay);
+    QString answerText() const;
+    QString thinkText() const;
 };

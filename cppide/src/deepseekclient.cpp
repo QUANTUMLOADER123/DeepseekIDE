@@ -162,36 +162,38 @@ void DeepSeekClient::startCompletion(const QString& prompt, const QString& powB6
     };
     auto* r = nam_.post(req, QJsonDocument(payload).toJson(QJsonDocument::Compact));
     reply_ = r;
-    sseBuf_.clear(); fullText_.clear(); thinkText_.clear(); lastFragType_.clear(); respMsgId_.clear();
+    sseBuf_.clear(); frags_.clear(); legacy_.clear(); lastPath_.clear(); streamErr_.clear(); respMsgId_.clear(); emittedChat_ = emittedThink_ = 0;
     connect(r, &QNetworkReply::readyRead, this, &DeepSeekClient::onReadyRead);
     connect(r, &QNetworkReply::finished, this, [this, r]() {
         reply_ = nullptr;
+        const int httpCode = r->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const QNetworkReply::NetworkError netErr = r->error();
+        const QByteArray errBody = r->readAll();
         r->deleteLater();
-        const QByteArray tail = r->readAll();
-        if (!tail.isEmpty()) { sseBuf_ += tail; }
-        // добить остаток буфера как одну строку (без завершающего \n)
-        const QByteArray rest = sseBuf_;
-        for (const QByteArray& ln : rest.split('\n')) {
-            if (ln.startsWith("data:")) {
-                QByteArray pay = ln.mid(5).trimmed();
-                if (pay != "[DONE]") {
-                    auto j = QJsonDocument::fromJson(pay);
-                    if (j.isObject()) {
-                        const QJsonObject d = j.object();
-                        if (d.contains(QStringLiteral("response_message_id")))
-                            respMsgId_ = QString::number(d.value(QStringLiteral("response_message_id")).toVariant().toLongLong());
-                    }
-                }
-            }
+
+        // добить хвост SSE-буфера (строки без завершающего \n)
+        const QByteArray all = sseBuf_ + errBody;
+        for (QByteArray line : all.split('\n')) {
+            if (line.endsWith('\r')) line.chop(1);
+            if (!line.startsWith("data:")) continue;
+            const QByteArray pay = line.mid(5).trimmed();
+            if (!pay.isEmpty() && pay != "[DONE]") processSsePayload(pay);
         }
-        if (r->error() != QNetworkReply::NoError) {
-            emit failed(QStringLiteral("completion stream: %1").arg(compactErr(r->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt(), sseBuf_)));
+        sseBuf_.clear();
+
+        if (netErr != QNetworkReply::NoError) {
+            emit failed(QStringLiteral("completion stream: %1").arg(compactErr(httpCode, errBody)));
+            return;
+        }
+        if (!streamErr_.isEmpty()) {
+            emit failed(QStringLiteral("model: %1").arg(streamErr_));
             return;
         }
         if (!respMsgId_.isEmpty()) parentMessageId_ = respMsgId_;
+        const QString ans = answerText(), th = thinkText();
         emit log(QStringLiteral("DS: ответ %1 зн, мысли %2 зн, parent=%3")
-                 .arg(fullText_.size()).arg(thinkText_.size()).arg(parentMessageId_));
-        emit chatFinished(fullText_, thinkText_);
+                 .arg(ans.size()).arg(th.size()).arg(parentMessageId_));
+        emit chatFinished(ans, th);
     });
 }
 
@@ -205,69 +207,93 @@ void DeepSeekClient::onReadyRead() {
         if (line.endsWith('\r')) line.chop(1);
         sseBuf_.remove(0, cut + 1);
         if (!line.startsWith("data:")) continue;
-        QByteArray pay = line.mid(5).trimmed();
+        const QByteArray pay = line.mid(5).trimmed();
         if (pay.isEmpty() || pay == "[DONE]") continue;
-        auto j = QJsonDocument::fromJson(pay);
-        if (!j.isObject()) continue;
-        const QJsonObject d = j.object();
-
-        if (d.contains(QStringLiteral("response_message_id")))
-            respMsgId_ = QString::number(d.value(QStringLiteral("response_message_id")).toVariant().toLongLong());
-
-        const QJsonValue v = d.value(QStringLiteral("v"));
-        const QJsonObject vo = v.toObject();
-        if (vo.contains(QStringLiteral("response"))) {
-            const QJsonObject resp = vo.value(QStringLiteral("response")).toObject();
-            if (resp.contains(QStringLiteral("message_id")))
-                respMsgId_ = QString::number(resp.value(QStringLiteral("message_id")).toVariant().toLongLong());
-        }
-
-        const QString p = d.value(QStringLiteral("p")).toString();
-
-        if (p == QStringLiteral("response/fragments") && v.isArray()) {
-            for (const QJsonValue& fv : v.toArray()) {
-                const QJsonObject f = fv.toObject();
-                const QString t = f.value(QStringLiteral("type")).toString();
-                const QString c = f.value(QStringLiteral("content")).toString();
-                if (t == QStringLiteral("RESPONSE") || t == QStringLiteral("SEARCH")) {
-                    lastFragType_ = t;
-                    // guard: протокол иногда присылает накопленный контент фрагмента целиком —
-                    // не дублируем, если суффикс уже совпадает
-                    if (!c.isEmpty() && !fullText_.endsWith(c)) {
-                        QString add = c;
-                        // если c — расширение уже накопленного хвоста, докидываем только дельту
-                        for (int k = qMin(c.size(), fullText_.size()); k > 1; --k)
-                            if (fullText_.endsWith(c.left(k))) { add = c.mid(k); break; }
-                        fullText_ += add; emit chatDelta(add);
-                    }
-                } else if (t == QStringLiteral("THINK") || t == QStringLiteral("REASONING")) {
-                    lastFragType_ = t;
-                    if (!c.isEmpty() && !thinkText_.endsWith(c)) {
-                        QString add = c;
-                        for (int k = qMin(c.size(), thinkText_.size()); k > 1; --k)
-                            if (thinkText_.endsWith(c.left(k))) { add = c.mid(k); break; }
-                        thinkText_ += add; emit thinkDelta(add);
-                    }
-                }
-            }
-        } else if (p == QStringLiteral("response/fragments/-1/content") && v.isString()) {
-            const QString chunk = v.toString();
-            if (lastFragType_ == QStringLiteral("THINK") || lastFragType_ == QStringLiteral("REASONING")) {
-                thinkText_ += chunk; emit thinkDelta(chunk);
-            } else {
-                fullText_ += chunk; emit chatDelta(chunk);
-            }
-        } else if (p == QStringLiteral("response/content") && v.isString()) {
-            const QString chunk = v.toString();
-            fullText_ += chunk; emit chatDelta(chunk);
-        } else if (p == QStringLiteral("response/finish_reason") && v.isString()) {
-            emit log(QStringLiteral("DS: finish_reason=%1").arg(v.toString()));
-        }
-        // err-события модели
-        if (d.value(QStringLiteral("type")).toString() == QLatin1String("error")) {
-            emit failed(QStringLiteral("model error: %1 %2")
-                        .arg(d.value(QStringLiteral("content")).toString(),
-                             d.value(QStringLiteral("message")).toString()));
-        }
+        processSsePayload(pay);
     }
+}
+
+// 1:1 порт эталонного парсера (FreeDeepseekAPI client.js)
+void DeepSeekClient::processSsePayload(const QByteArray& pay) {
+    const auto j = QJsonDocument::fromJson(pay);
+    if (!j.isObject()) return;
+    const QJsonObject d = j.object();
+
+    if (d.value(QStringLiteral("type")).toString() == QLatin1String("error"))
+        streamErr_ = d.value(QStringLiteral("content")).toString(QStringLiteral("DeepSeek returned an error"));
+    if (d.contains(QStringLiteral("response_message_id")))
+        respMsgId_ = QString::number(d.value(QStringLiteral("response_message_id")).toVariant().toLongLong());
+    if (d.contains(QStringLiteral("p")))
+        lastPath_ = d.value(QStringLiteral("p")).toString();
+
+    const QJsonValue v  = d.value(QStringLiteral("v"));
+    const QJsonObject vo = v.toObject();
+
+    auto appendOne = [this](const QJsonValue& fv) {
+        const QJsonObject f = fv.toObject();
+        if (f.isEmpty()) return;
+        frags_.append({ f.value(QStringLiteral("type")).toString(),
+                        f.value(QStringLiteral("content")).toString() });
+    };
+    auto appendFrags = [&](const QJsonValue& arr) {
+        if (arr.isArray()) { const auto a = arr.toArray(); for (const QJsonValue& fv : a) appendOne(fv); }
+        else appendOne(arr);
+    };
+
+    if (!vo.isEmpty() && vo.contains(QStringLiteral("response"))) {
+        // полный снапшот ответа — ЗАМЕНА состояния
+        const QJsonObject resp = vo.value(QStringLiteral("response")).toObject();
+        if (resp.contains(QStringLiteral("message_id")))
+            respMsgId_ = QString::number(resp.value(QStringLiteral("message_id")).toVariant().toLongLong());
+        if (resp.value(QStringLiteral("fragments")).isArray()) {
+            frags_.clear();
+            appendFrags(resp.value(QStringLiteral("fragments")));
+        }
+        if (resp.value(QStringLiteral("content")).isString())
+            legacy_ = resp.value(QStringLiteral("content")).toString();
+    } else if (lastPath_ == QLatin1String("response/fragments") && !v.isUndefined()) {
+        appendFrags(v);
+    } else if (lastPath_ == QLatin1String("response") && v.isArray()) {
+        const auto ops = v.toArray();
+        for (const QJsonValue& opv : ops) {
+            const QJsonObject op = opv.toObject();
+            if (op.value(QStringLiteral("p")).toString() == QLatin1String("fragments")
+                && op.value(QStringLiteral("o")).toString() == QLatin1String("APPEND"))
+                appendFrags(op.value(QStringLiteral("v")));
+        }
+    } else if (lastPath_ == QLatin1String("response/fragments/-1/content") && v.isString() && !frags_.isEmpty()) {
+        frags_.last().content += v.toString();
+    } else if (lastPath_ == QLatin1String("response/content") && v.isString()) {
+        legacy_ += v.toString();
+    } else if (lastPath_ == QLatin1String("response/finish_reason") && v.isString()) {
+        emit log(QStringLiteral("DS: finish_reason=%1").arg(v.toString()));
+    }
+
+    // эмиссия — накопительная дельта (monotonic, как onText/emitted в client.js)
+    const QString ans = answerText();
+    if (ans.size() > emittedChat_) {
+        emit chatDelta(ans.mid(emittedChat_));
+        emittedChat_ = ans.size();
+    }
+    const QString th = thinkText();
+    if (th.size() > emittedThink_) {
+        emit thinkDelta(th.mid(emittedThink_));
+        emittedThink_ = th.size();
+    }
+}
+
+QString DeepSeekClient::answerText() const {
+    QString out;
+    for (const Frag& f : frags_)
+        if ((f.type == QLatin1String("RESPONSE") || f.type == QLatin1String("SEARCH")) && !f.content.isEmpty())
+            out += f.content;
+    return out.isEmpty() ? legacy_ : out;
+}
+
+QString DeepSeekClient::thinkText() const {
+    QString out;
+    for (const Frag& f : frags_)
+        if ((f.type == QLatin1String("THINK") || f.type == QLatin1String("REASONING")) && !f.content.isEmpty())
+            out += f.content;
+    return out;
 }
