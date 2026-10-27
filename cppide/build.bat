@@ -2,19 +2,20 @@
 chcp 65001 >nul
 setlocal
 rem === DeepSeekCppIDE: сборка MSVC + Qt6 ===
-rem (без ENABLEDELAYEDEXPANSION — иначе съедаются "!" в echo)
+rem (без ENABLEDELAYEDEXPANSION - иначе съедаются "!" в echo)
 
 rem ---- 1. Qt6 -------------------------------------------------------------
 set QTROOT=
 if defined QT6_DIR if exist "%QT6_DIR%\lib\cmake\Qt6\Qt6Config.cmake" set QTROOT=%QT6_DIR%
 if defined Qt6_DIR if exist "%Qt6_DIR%\lib\cmake\Qt6\Qt6Config.cmake" set QTROOT=%Qt6_DIR%
 
-rem ВНИМАНИЕ: cmd не раскрывает * в середине пути — перебираем поэтажно
+rem ВНИМАНИЕ: cmd не раскрывает * в середине пути - перебираем поэтажно
+rem (переменные цикла for /d пишутся БЕЗ кавычек)
 for %%R in (C:\Qt D:\Qt E:\Qt F:\Qt "%USERPROFILE%\Qt") do (
   if exist "%%~R" (
-    for /d "%%V" in ("%%~R\6.*") do (
-      for /d "%%M" in ("%%V\msvc2022_64" "%%V\msvc2019_64" "%%V\mingw_64" "%%V\msvc20*_64") do (
-        if not defined QTROOT if exist "%%M\lib\cmake\Qt6\Qt6Config.cmake" set QTROOT=%%M
+    for /d %%V in ("%%~R\6.*") do (
+      for /d %%M in ("%%~V\msvc2022_64" "%%~V\msvc2019_64" "%%~V\msvc20*_64") do (
+        if not defined QTROOT if exist "%%~M\lib\cmake\Qt6\Qt6Config.cmake" set QTROOT=%%~M
       )
     )
   )
@@ -37,18 +38,18 @@ rem ---- 2. MSVC окружение: vcvars64 из Visual Studio ---------------
 set VCVARS=
 for %%R in ("F:\Program Files\Microsoft Visual Studio" "C:\Program Files\Microsoft Visual Studio" "C:\Program Files (x86)\Microsoft Visual Studio") do (
   if exist "%%~R" (
-    for /d "%%Y" in ("%%~R\*") do (
+    for /d %%Y in ("%%~R\*") do (
       if not defined VCVARS (
-        if exist "%%Y\Community\VC\Auxiliary\Build\vcvars64.bat" set VCVARS=%%Y\Community\VC\Auxiliary\Build\vcvars64.bat
-        if not defined VCVARS if exist "%%Y\Professional\VC\Auxiliary\Build\vcvars64.bat" set VCVARS=%%Y\Professional\VC\Auxiliary\Build\vcvars64.bat
-        if not defined VCVARS if exist "%%Y\Enterprise\VC\Auxiliary\Build\vcvars64.bat" set VCVARS=%%Y\Enterprise\VC\Auxiliary\Build\vcvars64.bat
-        if not defined VCVARS if exist "%%Y\BuildTools\VC\Auxiliary\Build\vcvars64.bat" set VCVARS=%%Y\BuildTools\VC\Auxiliary\Build\vcvars64.bat
+        if exist "%%~Y\Community\VC\Auxiliary\Build\vcvars64.bat" set VCVARS=%%~Y\Community\VC\Auxiliary\Build\vcvars64.bat
+        if not defined VCVARS if exist "%%~Y\Professional\VC\Auxiliary\Build\vcvars64.bat" set VCVARS=%%~Y\Professional\VC\Auxiliary\Build\vcvars64.bat
+        if not defined VCVARS if exist "%%~Y\Enterprise\VC\Auxiliary\Build\vcvars64.bat" set VCVARS=%%~Y\Enterprise\VC\Auxiliary\Build\vcvars64.bat
+        if not defined VCVARS if exist "%%~Y\BuildTools\VC\Auxiliary\Build\vcvars64.bat" set VCVARS=%%~Y\BuildTools\VC\Auxiliary\Build\vcvars64.bat
       )
     )
   )
 )
 if not defined VCVARS (
-  echo [ERR] Не нашёл vcvars64.bat - в VS должен быть workload C++
+  echo [ERR] Не нашёл vcvars64.bat - в VS должен быть установлен workload C++
   exit /b 1
 )
 echo [*] MSVC: %VCVARS%
