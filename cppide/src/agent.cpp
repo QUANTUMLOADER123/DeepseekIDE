@@ -276,24 +276,38 @@ void Agent::processAnswer(const QString& full) {
     QString svc;
     if (!surplus.isEmpty())
         svc += QStringLiteral("SYSTEM: only ONE tool call per reply is executed — repeat the skipped ones in your NEXT replies: %1.\n").arg(surplus.join(QStringLiteral(", ")));
+    // любые проблемы (битый JSON / неизвестное имя / невалидные args / фейл правки) —
+    // ОБЯЗАТЕЛЬНО возвращаем модели, чтобы она исправилась, а не молчала
+    int done = 0;
+    bool needContinue = false;
     if (!fileOps.isEmpty() && !appliedOps_.contains(answerHash)) {
         appliedOps_.insert(answerHash);
         int okN = 0;
+        QStringList fails;
         for (int i = 0; i < fileOps.size(); ++i) {
             bool ok = false;
             QString detail = applyOp(fileOps[i], ok);
             emit toolRow(QStringLiteral("Edit"), fileOps[i].args.value(QStringLiteral("path")).toString(fileOps[i].args.value(QStringLiteral("from")).toString()), ok, detail);
             if (ok) ++okN;
+            else fails << QStringLiteral("%1 %2: %3").arg(fileOps[i].name,
+                           fileOps[i].args.value(QStringLiteral("path")).toString(fileOps[i].args.value(QStringLiteral("from")).toString()),
+                           detail.left(220));
         }
         emit log(QStringLiteral("AGT: применено %1/%2 правок").arg(okN).arg(fileOps.size()));
         svc += QStringLiteral("SYSTEM: ops applied: %1/%2 OK.\n").arg(okN).arg(fileOps.size());
+        if (!fails.isEmpty()) {
+            svc += QStringLiteral("SYSTEM: %1 edit op(s) FAILED -> %2 | Re-send corrected ops in your next reply; failed files were NOT changed.\n")
+                       .arg(fails.size()).arg(fails.join(QStringLiteral("; ")).left(600));
+            needContinue = true;
+        }
     } else if (!opsErrors.isEmpty()) {
-        emit toolRow(QStringLiteral("JSON"), QStringLiteral("блок ops"), false, opsErrors.join(QStringLiteral("; ")));
+        const QString es = opsErrors.join(QStringLiteral("; ")).left(600);
+        emit toolRow(QStringLiteral("JSON"), QStringLiteral("блок ops"), false, es);
+        svc += QStringLiteral("SYSTEM: deepseekide-ops JSON invalid: %1 | Nothing was executed. Fix the JSON (double quotes, \\n escapes, valid op names) and re-send.\n").arg(es);
+        needContinue = true;
     }
 
     // --- исполнение тулки из JSON
-    int done = 0;
-    bool needContinue = false;
     for (const Request& rq : reqs) {
         if (done >= 6) { svc += QStringLiteral("(more requests pending — re-emit them next turn)\n"); needContinue = true; break; }
         if (rq.kind == QLatin1String("SHELL")) {

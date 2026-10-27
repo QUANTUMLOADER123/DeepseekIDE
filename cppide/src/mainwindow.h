@@ -47,6 +47,7 @@ private slots:
     void beginAssistant();
     void appendAssistantDelta(const QString& delta);
     void endAssistant(const QString& cleanText);
+    void finalizeAgentCard();      // конец очереди сегментов — карточку можно «закрыть»
     void addToolRow(const QString& name, const QString& sub, bool ok, const QString& detail);
     void addImage(const QByteArray& bytes, const QString& mime, const QString& alt);
     void addError(const QString& err);
@@ -59,6 +60,7 @@ private:
     SquircleCard* chatAppend(const QString& role, const QString& state = QString(),
                              bool animate = true);
     void fitBubble(SquircleCard* card, const QString& text, bool userSide);
+    void fitGrow(SquircleCard* card, const QString& text);   // только расширяем карточку под контент
     void fadeIn(QWidget* w, int ms = 240);
     void smoothScrollBottom();
     void clearChatUi();
@@ -108,6 +110,8 @@ private:
     QScrollArea* chatScroll_  = nullptr;
     QVBoxLayout* chatLay_     = nullptr;
     QPointer<SquircleCard> liveCard_;
+    QString groupText_;              // текст всех сегментов очереди (для истории/Copy)
+    SquircleCard* replayCard_ = nullptr; // группировка при реплее истории
     QPointer<QLabel> liveBubble_;
     QString  liveRaw_;
     QStringList attachPaths_;   // вложения, скопированные в песочницу (уйдут в текст сообщения)

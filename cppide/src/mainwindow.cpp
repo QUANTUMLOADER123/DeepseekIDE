@@ -693,6 +693,19 @@ void MainWindow::fitBubble(SquircleCard* card, const QString& text, bool userSid
     card->setFixedWidth(w);
 }
 
+// то же измерение, но карточку ТОЛЬКО расширяем (тулы/картинки в общем бабле)
+void MainWindow::fitGrow(SquircleCard* card, const QString& text) {
+    const int vw = chatScroll_->viewport() && chatScroll_->viewport()->width() > 0
+                       ? chatScroll_->viewport()->width() : 900;
+    const int limit = qMax(240, qMin(vw - 240, 660));
+    const QFontMetrics fm(QFont(QStringLiteral("Cascadia Code"), 9));
+    int maxw = 0;
+    for (const QString& ln : text.split(QLatin1Char('\n')))
+        maxw = qMax(maxw, fm.horizontalAdvance(ln.left(400)));
+    const int w = qBound(64, maxw + 44, limit);
+    if (card->width() < w) card->setFixedWidth(w);
+}
+
 void MainWindow::fadeIn(QWidget* w, int ms) {
     // было 0xC0000005: setGraphicsEffect(nullptr) сам удаляет эффект,
     // а старая лямбда потом делала fx->deleteLater() по мёртвому указателю
@@ -862,6 +875,7 @@ void MainWindow::setSessionTitleFromText(const QString& t) {
 void MainWindow::clearChatUi() {
     pulseTimer_.stop();
     liveCard_ = nullptr; liveBubble_ = nullptr; spinner_ = nullptr; liveRaw_.clear();
+    groupText_.clear(); replayCard_ = nullptr;
     for (int i = chatLay_->count() - 2; i >= 0; --i) {
         QLayoutItem* it = chatLay_->itemAt(i);
         if (!it) continue;
@@ -917,38 +931,51 @@ int MainWindow::pushHist(const QString& role, const QString& text, const QString
 void MainWindow::replayHistory() {
     if (curSess_ < 0 || curSess_ >= sessions_.size()) return;
     const auto& hist = sessions_[curSess_].history;
+    // группировка: всё от агента (текст + тулки) между двумя сообщениями юзера — в ОДНОЙ карточке
+    SquircleCard* grp = nullptr;
+    QString grpText;
+    int grpIdx = -1;
+    auto grpLayout = [&]() { return qobject_cast<QVBoxLayout*>(grp->layout()); };
+    auto closeGrp = [&]() {
+        if (grp) {
+            fitBubble(grp, grpText.isEmpty() ? QStringLiteral("…") : grpText, false);
+            if (!grpText.isEmpty()) addAssistantActions(grpLayout(), grpIdx, grpText);
+        }
+        grp = nullptr; grpText.clear(); grpIdx = -1;
+    };
     for (int i = 0; i < hist.size(); ++i) {
         const QJsonObject e = hist[i].toObject();
         const QString role = e[QStringLiteral("role")].toString();
         const QString text = e[QStringLiteral("text")].toString();
         if (role == QLatin1String("user")) {
+            closeGrp();
             auto* c = chatAppend(QStringLiteral("user"), QString(), false);
             auto* l = qobject_cast<QVBoxLayout*>(c->layout());
             buildUserCardBody(l, i, text);
             fitBubble(c, text, true);
-        } else if (role == QLatin1String("assistant")) {
-            auto* c = chatAppend(QStringLiteral("assistant"), QString(), false);
-            auto* l = qobject_cast<QVBoxLayout*>(c->layout());
+        } else if (role == QLatin1String("assistant") || role == QLatin1String("hint")) {
+            if (!grp) grp = chatAppend(QStringLiteral("assistant"), QString(), false);
             const QString vis = liveClean(text); // старые записи могут содержать маркеры
-            renderRich(l, vis);
-            fitBubble(c, vis, false);
-            addAssistantActions(l, i, vis);
-        } else if (role == QLatin1String("hint")) {
-            auto* c = chatAppend(QStringLiteral("hint"), QString(), false);
-            auto* l = qobject_cast<QVBoxLayout*>(c->layout());
-            const QString vis = liveClean(text);
-            renderRich(l, vis);
-            fitBubble(c, vis, false);
+            if (vis.isEmpty()) continue;
+            if (!grpText.isEmpty()) { grpLayout()->addSpacing(8); grpText += QStringLiteral("\n\n"); }
+            renderRich(grpLayout(), vis);
+            grpText += vis; grpIdx = i;
+            fitGrow(grp, vis);
         } else if (role == QLatin1String("tool")) {
+            if (!grp) grp = chatAppend(QStringLiteral("assistant"), QString(), false);
+            replayCard_ = grp;
             addToolRow(e[QStringLiteral("name")].toString(), e[QStringLiteral("sub")].toString(),
-                       e[QStringLiteral("ok")].toBool(true), QString());
+                       e[QStringLiteral("ok")].toBool(true), e[QStringLiteral("detail")].toString());
+            replayCard_ = nullptr;
         } else if (role == QLatin1String("error")) {
+            closeGrp();
             auto* c = chatAppend(QStringLiteral("error"), QString(), false);
             auto* l = qobject_cast<QVBoxLayout*>(c->layout());
             renderRich(l, text);
             fitBubble(c, text, false);
         }
     }
+    closeGrp();
 }
 
 // ============================================================================
@@ -1003,6 +1030,7 @@ void MainWindow::onBusy(bool on) {
     input_->setDisabled(on);
     input_->setPlaceholderText(on ? QStringLiteral("Agent is working…")
                                   : QStringLiteral("Describe the task or ask a question…"));
+    if (!on) finalizeAgentCard();   // busy упал → очередь сегментов закончилась, карточку закрываем
     if (!on && titleQueued_) {
         titleQueued_ = false;
         agent_->generateTitle(titleSeed_);
@@ -1018,12 +1046,14 @@ void MainWindow::addUser(const QString& text) {
 }
 
 void MainWindow::beginAssistant() {
-    liveCard_ = chatAppend(QStringLiteral("assistant"), QStringLiteral("live"));
+    const bool fresh = !liveCard_;                 // авто-continue → продолжаем в ТОЙ ЖЕ карточке
+    if (fresh) liveCard_ = chatAppend(QStringLiteral("assistant"), QStringLiteral("live"));
+    else liveCard_->setState(QStringLiteral("live"));
     auto* l = qobject_cast<QVBoxLayout*>(liveCard_->layout());
     auto* sp = new Spinner(liveCard_.data());
     spinner_ = sp;
     l->addWidget(sp, 0, Qt::AlignLeft);
-    liveCard_->setFixedWidth(120);
+    if (fresh) liveCard_->setFixedWidth(120);
     liveBubble_ = nullptr;
     liveRaw_.clear();
     pulsePhase_ = 0;
@@ -1051,41 +1081,47 @@ void MainWindow::appendAssistantDelta(const QString& delta) {
 
 void MainWindow::endAssistant(const QString& cleanText) {
     pulseTimer_.stop();
-    if (liveCard_) {
-        liveCard_->setState(QString()); // снять live
-        liveCard_->setPulseColor(QColor());
-        SquircleCard* card = liveCard_.data();   // QPointer -> raw
-        auto* l = qobject_cast<QVBoxLayout*>(card->layout());
-        if (liveBubble_) { l->removeWidget(liveBubble_); delete liveBubble_; liveBubble_ = nullptr; }
-        if (spinner_)    { qobject_cast<QVBoxLayout*>(card->layout())->removeWidget(spinner_);
-                           delete spinner_; spinner_ = nullptr; }
-        if (cleanText.isEmpty()) {
-            auto* lbl = new QLabel(QStringLiteral("<span style='color:#575962;font-style:italic'>…continuing —</span>"));
-            lbl->setWordWrap(true);
-            l->addWidget(lbl);
-        } else {
-            const QString vis = liveClean(cleanText); // страховка: ни одного маркера/ops в UI и в истории
-            renderRich(l, vis);
-            fitBubble(card, vis, false);
-            const int idx = pushHist(QStringLiteral("assistant"), vis);
-            addAssistantActions(l, idx, vis);
-            if (curSess_ >= 0) sessions_[curSess_].ctxChars += 0; // учёт уже в pushHist
-            if (curSess_ >= 0 && sessions_[curSess_].title == QStringLiteral("New Chat") && !titleQueued_) {
-                titleQueued_ = true;
-                titleSeed_ = lastUserText_ + QStringLiteral("\n---\n") + vis;
-            }
-            maybeCompact();
-        }
-        liveCard_ = nullptr;
-        liveRaw_.clear();
+    if (!liveCard_) return;
+    SquircleCard* card = liveCard_.data();
+    auto* l = qobject_cast<QVBoxLayout*>(card->layout());
+    if (liveBubble_) { l->removeWidget(liveBubble_); delete liveBubble_; liveBubble_ = nullptr; }
+    if (spinner_)    { l->removeWidget(spinner_); delete spinner_; spinner_ = nullptr; }
+    const QString vis = liveClean(cleanText); // страховка: ни одного маркера/ops в UI и в истории
+    if (!vis.isEmpty()) {
+        if (!groupText_.isEmpty()) { l->addSpacing(8); groupText_ += QStringLiteral("\n\n"); }
+        renderRich(l, vis);
+        groupText_ += vis;
+        fitGrow(card, vis);
     }
+    liveCard_->setState(QString()); liveCard_->setPulseColor(QColor());
+    liveRaw_.clear();
+    // карточка НЕ обнуляется: следующая авто-итерация продолжит в ней же;
+    // финальный шаг определяется onBusy(false) → finalizeAgentCard()
     smoothScrollBottom();
 }
 
+void MainWindow::finalizeAgentCard() {
+    if (!liveCard_) return;
+    SquircleCard* card = liveCard_.data();
+    auto* l = qobject_cast<QVBoxLayout*>(card->layout());
+    fitBubble(card, groupText_.isEmpty() ? QStringLiteral("…") : groupText_, false);
+    if (!groupText_.isEmpty()) {
+        const int idx = pushHist(QStringLiteral("assistant"), groupText_);
+        addAssistantActions(l, idx, groupText_);
+        if (curSess_ >= 0 && sessions_[curSess_].title == QStringLiteral("New Chat") && !titleQueued_) {
+            titleQueued_ = true;
+            titleSeed_ = lastUserText_ + QStringLiteral("\n---\n") + groupText_.left(1500);
+        }
+    }
+    groupText_.clear();
+    liveCard_ = nullptr;
+    maybeCompact();
+}
+
 void MainWindow::addToolRow(const QString& name, const QString& sub, bool ok, const QString& detail) {
-    // во время работы агента — в ту же живую карточку; при реплее истории — отдельной
-    const bool inside = (liveCard_ != nullptr);
-    SquircleCard* card = inside ? liveCard_.data()
+    // во время работы агента / реплея-группы — в общую карточку; иначе отдельной плашкой
+    const bool inside = (liveCard_ != nullptr || replayCard_ != nullptr);
+    SquircleCard* card = inside ? (liveCard_ ? liveCard_.data() : replayCard_)
                                 : chatAppend(QStringLiteral("tool"), ok ? QString() : QStringLiteral("fail"));
     auto* l = qobject_cast<QVBoxLayout*>(card->layout());
     auto* row = new QWidget;
@@ -1106,7 +1142,9 @@ void MainWindow::addToolRow(const QString& name, const QString& sub, bool ok, co
         rl->addWidget(det);
     }
     l->addWidget(row);
-    if (!inside) fitBubble(card, name + QStringLiteral(" ") + sub, false);
+    if (inside) fitGrow(card, name + QStringLiteral("  ") + sub + (detail.isEmpty() ? QString()
+                     : QStringLiteral("\n") + detail.left(240)));
+    else fitBubble(card, name + QStringLiteral(" ") + sub, false);
     pushHist(QStringLiteral("tool"), QString(), name, sub, ok, detail.left(400));
 }
 
@@ -1114,8 +1152,9 @@ void MainWindow::addImage(const QByteArray& bytes, const QString& mime, const QS
     Q_UNUSED(mime);
     QPixmap pm;
     if (!pm.loadFromData(bytes)) { addError(QStringLiteral("image decode failed")); return; }
-    const bool inside = (liveCard_ != nullptr);
-    SquircleCard* card = inside ? liveCard_.data() : chatAppend(QStringLiteral("assistant"));
+    const bool inside = (liveCard_ != nullptr || replayCard_ != nullptr);
+    SquircleCard* card = inside ? (liveCard_ ? liveCard_.data() : replayCard_) : chatAppend(QStringLiteral("assistant"));
+    if (inside && card->width() < 276) card->setFixedWidth(276);
     auto* l = qobject_cast<QVBoxLayout*>(card->layout());
 
     auto* lbl = new QLabel;
