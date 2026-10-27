@@ -59,6 +59,8 @@ protected:
         }
     }
 
+    // утилита: путь superellipse (нужна и снаружи — для лого/превью)
+public:
     static QPainterPath squirclePath(const QRectF& r, double n) {
         // superellipse |x|^n + |y|^n = a^n, параметризовано через степенной косинус
         const double cx = r.center().x(), cy = r.center().y();

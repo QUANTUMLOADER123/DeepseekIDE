@@ -4,7 +4,14 @@
 #include <cmath>
 
 extern "C" {
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4200 4201 4244 4267) // wasm3 C-хедеры: zero-sized array и прочий C-шум
+#endif
 #include "m3_env.h"
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 }
 
 // wasm-bindgen-модуль от DeepSeek экспортирует:
