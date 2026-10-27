@@ -3,6 +3,7 @@
 #include "agent.h"
 #include "squirclecard.h"
 #include "sitepreview.h"
+#include "fa.h"
 
 #include <QScrollArea>
 #include <QListWidget>
@@ -26,7 +27,6 @@
 #include <QTimer>
 #include <QTextDocument>
 #include <QGraphicsOpacityEffect>
-#include <QGraphicsDropShadowEffect>
 #include <QPropertyAnimation>
 #include <QStyle>
 #include <QEasingCurve>
@@ -35,74 +35,84 @@
 #include <QProcess>
 #include <QCloseEvent>
 #include <QDateTime>
+#include <QDate>
 #include <QPainter>
 #include <QPainterPath>
 #include <QLinearGradient>
 #include <QDesktopServices>
 #include <QUrl>
 #include <QDialog>
+#include <QMouseEvent>
+#include <QCoreApplication>
 #include <functional>
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#include <windowsx.h>
+#endif
+
 // ============================================================================
-//  тема: фон почти чёрный, акцент фиолетовый (как у популярных AI-IDE)
-// ============================================================================
-//  тема: графитовый фон, бордовый акцент
+//  тема: графитовый фон, бордовый акцент, умеренные скругления
 // ============================================================================
 static const char* kTheme = R"(
 QMainWindow, QDialog { background:#0c0d0f; }
 QWidget { color:#e6e7ea; font-size:13px; font-family:'Segoe UI','Inter',sans-serif; background:transparent; }
 *[themeRoot="true"] { background:#0c0d0f; }
 
+QWidget#titleBar { background:#101114; border-bottom:1px solid #232428; }
+QLabel#tbName { color:#d8dade; font-size:12px; font-weight:700; }
+QPushButton#winBtn { background:transparent; border:none; min-width:42px; max-width:42px; min-height:34px; max-height:34px; }
+QPushButton#winBtn:hover { background:#1e1f24; }
+QPushButton#winBtn:pressed { background:#26272c; }
+QPushButton#winClose { background:transparent; border:none; min-width:42px; max-width:42px; min-height:34px; max-height:34px; }
+QPushButton#winClose:hover { background:#a6334d; }
+QPushButton#winClose:pressed { background:#7d2440; }
+
 QFrame#sidePanel { background:#131417; border:none; border-right:1px solid #232428; }
-QLabel#appName { color:#f4f5f7; font-size:16px; font-weight:700; }
-QLabel#appTag { color:#6f727c; font-size:11px; }
-QLabel#sideHeader { color:#575962; font-size:10px; font-weight:700; letter-spacing:2px; padding:0 4px; }
 
 QPushButton#newSession {
   background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #a6334d, stop:1 #7d2440);
-  border:none; border-radius:14px; padding:12px; color:#ffffff; font-weight:700; font-size:13px;
+  border:none; border-radius:8px; padding:11px 12px; color:#ffffff; font-weight:600; font-size:13px;
 }
 QPushButton#newSession:hover { background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #b8455e, stop:1 #91294a); }
 QPushButton#newSession:pressed { background:#6b1e37; }
 
 QPushButton#ghostBtn {
-  background:transparent; border:1px solid #2a2b30; border-radius:10px; padding:8px 12px; color:#9a9ca6;
+  background:transparent; border:1px solid #2a2b30; border-radius:8px; padding:8px 12px; color:#9a9ca6;
 }
 QPushButton#ghostBtn:hover { background:#1b1c20; color:#e2e3e8; border-color:#3a3b42; }
 
 QListWidget#sessions { background:transparent; border:none; outline:none; }
-QListWidget#sessions::item { padding:10px 12px 10px 14px; border-radius:12px; margin:2px 4px; color:#b8bac2; }
-QListWidget#sessions::item:hover { background:#1a1b1f; }
-QListWidget#sessions::item:selected { background:#241a1e; color:#ffffff; border-left:3px solid #a6334d; }
+QListWidget#sessions::item { padding:8px 10px; border-radius:8px; margin:1px 6px; color:#b8bac2; }
+QListWidget#sessions::item:hover { background:#1e1f24; }
+QListWidget#sessions::item:selected { background:#0f1013; color:#ffffff; border-left:2px solid #a6334d; }
 
-QFrame#divider { background:#232428; max-height:1px; min-height:1px; }
-
-QPushButton#chip {
-  background:#161719; border:1px solid #2c2d33; border-radius:14px; padding:6px 14px; color:#8e9098; font-size:12px;
+QPushButton#chipIcn {
+  background:transparent; border:1px solid transparent; border-radius:7px;
+  padding:4px 10px 4px 8px; color:#7d7f89; font-size:12px;
 }
-QPushButton#chip:hover { border-color:#4a3038; color:#c9cad0; }
-QPushButton#chip:checked { background:#2b1a20; border-color:#a6334d; color:#f0cdd5; }
+QPushButton#chipIcn:hover { background:#1e1f24; color:#c9cad0; }
+QPushButton#chipIcn:checked { background:#2b1a20; border-color:#5a2634; color:#f0cdd5; }
+
+QFrame#composerBox { background:#141518; border:1px solid #2a2b30; border-radius:12px; }
+QFrame#composerBox[focus="true"] { border:1px solid #a6334d; }
+
+QPlainTextEdit#composer {
+  background:transparent; border:none; padding:10px 12px 2px 12px; font-size:13px;
+  selection-background-color:#7d2440; selection-color:#ffffff;
+}
+QPlainTextEdit#composer:disabled { color:#575962; }
 
 QPushButton#sendBtn {
   background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #a6334d, stop:1 #c05570);
-  border:none; border-radius:16px; min-width:44px; min-height:44px; max-width:44px; max-height:44px;
-  color:#ffffff; font-weight:700; font-size:16px;
+  border:none; border-radius:8px; min-width:30px; min-height:30px; max-width:30px; max-height:30px;
 }
 QPushButton#sendBtn:hover { background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #b8455e, stop:1 #d06a84); }
 QPushButton#sendBtn:pressed { background:#7d2440; }
-QPushButton#sendBtn:!enabled { background:#242225; color:#5f5458; }
-
-/* busy: превращается в Стоп */
+QPushButton#sendBtn:!enabled { background:#242225; }
 QPushButton#sendBtn[busy="true"] {
   background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #c23754, stop:1 #8f2740);
 }
-
-QPlainTextEdit#composer {
-  background:#141518; border:1px solid #2a2b30; border-radius:18px; padding:14px 18px;
-  selection-background-color:#7d2440; selection-color:#ffffff;
-}
-QPlainTextEdit#composer:focus { border:1px solid #a6334d; }
-QPlainTextEdit#composer:disabled { background:#111214; color:#575962; }
 
 QPlainTextEdit#logView { font-family:'Cascadia Code','Consolas',monospace; font-size:12px; color:#8d8f99; }
 
@@ -124,20 +134,46 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width:0; }
 QScrollArea { border:none; background:transparent; }
 
 QLineEdit, QSpinBox, QComboBox {
-  background:#161719; border:1px solid #2c2d33; border-radius:8px; padding:7px 12px; min-height:20px;
+  background:#161719; border:1px solid #2c2d33; border-radius:7px; padding:7px 12px; min-height:20px;
 }
 QLineEdit:focus, QSpinBox:focus, QComboBox:focus { border-color:#c05570; }
 QComboBox QAbstractItemView { background:#191a1e; border:1px solid #2c2d33; selection-background-color:#2b1a20; }
 QComboBox::drop-down { border:none; width:24px; }
 QCheckBox { spacing:8px; }
-QCheckBox::indicator { width:16px; height:16px; border-radius:5px; border:1px solid #3a3b42; background:#161719; }
+QCheckBox::indicator { width:16px; height:16px; border-radius:4px; border:1px solid #3a3b42; background:#161719; }
 QCheckBox::indicator:checked { background:#a6334d; border-color:#a6334d; }
-QToolTip { background:#1d1e22; color:#e6e7ea; border:1px solid #33343a; padding:7px 10px; border-radius:8px; }
+QToolTip { background:#1d1e22; color:#e6e7ea; border:1px solid #33343a; padding:7px 10px; border-radius:6px; }
 )";
+
+// ============================================================================
+//  лого: клип по скруглённому квадрату (без белых углов PNG)
+// ============================================================================
+static QPixmap logoPix(int size) {
+    QString logoPath = QStringLiteral("assets/logo.png");
+    if (!QFile::exists(logoPath))
+        logoPath = QCoreApplication::applicationDirPath() + QStringLiteral("/assets/logo.png");
+    QPixmap src(logoPath);
+    if (src.isNull()) { // фолбэк: бордовый градиентный квадрат
+        src = QPixmap(size, size); src.fill(Qt::transparent);
+        QPainter p(&src); p.setRenderHint(QPainter::Antialiasing);
+        QLinearGradient g(0, 0, size, size);
+        g.setColorAt(0, QColor(166, 51, 77)); g.setColorAt(1, QColor(109, 31, 49));
+        p.fillPath(SquircleCard::roundPath(QRectF(1, 1, size - 2, size - 2), size * 0.22), g);
+        p.end();
+    }
+    QPixmap out(size, size); out.fill(Qt::transparent);
+    QPainter p(&out); p.setRenderHint(QPainter::Antialiasing);
+    p.setClipPath(SquircleCard::roundPath(QRectF(0.5, 0.5, size - 1.0, size - 1.0), size * 0.22));
+    const QPixmap s = src.scaled(size, size, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+    p.drawPixmap((size - s.width()) / 2, (size - s.height()) / 2, s);
+    p.end();
+    return out;
+}
 
 // ============================================================================
 MainWindow::MainWindow() {
     cfg_ = Cfg::load();
+    setWindowFlags(Qt::Window | Qt::FramelessWindowHint);   // своя шапка вместо системной
     setWindowTitle(QStringLiteral("DeepSeekIDE"));
     resize(1280, 840);
     setMinimumSize(980, 620);
@@ -148,65 +184,68 @@ MainWindow::MainWindow() {
     agent_ = new Agent(ds_, this);
     agent_->setCfg(cfg_);
 
-    // ==================== левая панель: лого + сессии ====================
+    // ==================== кастомный титлбар ====================
+    titleBar_ = new QWidget;
+    titleBar_->setObjectName(QStringLiteral("titleBar"));
+    titleBar_->setFixedHeight(34);
+    titleBar_->installEventFilter(this);
+    auto* tl = new QHBoxLayout(titleBar_);
+    tl->setContentsMargins(12, 0, 0, 0);
+    tl->setSpacing(8);
+
+    logoLbl_ = new QLabel;
+    logoLbl_->setPixmap(logoPix(18));
+    tl->addWidget(logoLbl_);
+    auto* tbName = new QLabel(QStringLiteral("DeepSeekIDE"));
+    tbName->setObjectName(QStringLiteral("tbName"));
+    tl->addWidget(tbName);
+    tl->addStretch(1);
+
+    auto mkWin = [this](const QString& glyph, bool close) {
+        auto* b = new QPushButton(titleBar_);
+        b->setObjectName(close ? QStringLiteral("winClose") : QStringLiteral("winBtn"));
+        b->setIcon(QIcon(fa::pix(glyph, 11, QColor(0x9a, 0x9c, 0xa6))));
+        b->setIconSize(QSize(11, 11));
+        b->setCursor(Qt::ArrowCursor);
+        return b;
+    };
+    auto* winMin = mkWin(fa::winMin(), false);
+    winMaxBtn_   = mkWin(fa::winMax(), false);
+    auto* winCls = mkWin(fa::xmark(), true);
+    connect(winMin, &QPushButton::clicked, this, [this] { showMinimized(); });
+    connect(winMaxBtn_, &QPushButton::clicked, this, &MainWindow::toggleMax);
+    connect(winCls, &QPushButton::clicked, this, &QWidget::close);
+    tl->addWidget(winMin); tl->addWidget(winMaxBtn_); tl->addWidget(winCls);
+
+    // ==================== левая панель: сессии ====================
     auto* side = new QFrame; side->setObjectName(QStringLiteral("sidePanel"));
     side->setMinimumWidth(264); side->setMaximumWidth(264);
     auto* sl = new QVBoxLayout(side);
-    sl->setContentsMargins(16, 18, 16, 14);
+    sl->setContentsMargins(14, 12, 14, 12);
     sl->setSpacing(10);
 
-    auto* logoRow = new QHBoxLayout; logoRow->setSpacing(10);
-    logoLbl_ = new QLabel;
-    QPixmap logo(QStringLiteral("assets/logo.png"));
-    if (logo.isNull()) { // фолбэк: рисуем мини-скверкл программно
-        logo = QPixmap(44, 44); logo.fill(Qt::transparent);
-        QPainter p(&logo); p.setRenderHint(QPainter::Antialiasing);
-        QPainterPath sp = SquircleCard::squirclePath(QRectF(1, 1, 42, 42), 4.6);
-        QLinearGradient g(0, 0, 44, 44);
-        g.setColorAt(0, QColor(166, 51, 77)); g.setColorAt(1, QColor(109, 31, 49));
-        p.fillPath(sp, g);
-        p.end();
-    }
-    {   // белые углы у PNG: клипаем лого по скверклу
-        QPixmap clipped(44, 44); clipped.fill(Qt::transparent);
-        QPainter p(&clipped); p.setRenderHint(QPainter::Antialiasing);
-        p.setClipPath(SquircleCard::squirclePath(QRectF(0.8, 0.8, 42.4, 42.4), 4.6));
-        const QPixmap s = logo.scaled(44, 44, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
-        p.drawPixmap((44 - s.width()) / 2, (44 - s.height()) / 2, s);
-        p.end();
-        logo = clipped;
-    }
-    logoLbl_->setPixmap(logo);
-    logoRow->addWidget(logoLbl_);
-    auto* nameCol = new QVBoxLayout; nameCol->setSpacing(1);
-    auto* appName = new QLabel(QStringLiteral("DeepSeekIDE")); appName->setObjectName(QStringLiteral("appName"));
-    auto* appTag = new QLabel(QStringLiteral("ваш код — его задача")); appTag->setObjectName(QStringLiteral("appTag"));
-    nameCol->addWidget(appName); nameCol->addWidget(appTag);
-    logoRow->addLayout(nameCol);
-    logoRow->addStretch(1);
-    sl->addLayout(logoRow);
-
-    auto* newBtn = new QPushButton(QStringLiteral("+  Новая сессия"));
+    auto* newBtn = new QPushButton(QStringLiteral("New Chat"));
     newBtn->setObjectName(QStringLiteral("newSession"));
     newBtn->setCursor(Qt::PointingHandCursor);
+    fa::apply(newBtn, fa::plus(), QColor(0xff, 0xff, 0xff), 12);
     connect(newBtn, &QPushButton::clicked, this, &MainWindow::onNewSession);
     sl->addWidget(newBtn);
 
-    auto* sideHdr = new QLabel(QStringLiteral("СЕССИИ")); sideHdr->setObjectName(QStringLiteral("sideHeader"));
-    sl->addWidget(sideHdr);
-
     sessionList_ = new QListWidget; sessionList_->setObjectName(QStringLiteral("sessions"));
-    sessionList_->setIconSize(QSize(0, 0));
+    sessionList_->setSpacing(1);
     connect(sessionList_, &QListWidget::currentRowChanged, this, &MainWindow::onPickSession);
     sl->addWidget(sessionList_, 1);
 
     auto* bottom = new QVBoxLayout; bottom->setSpacing(8);
-    auto* sbxBtn = new QPushButton(QStringLiteral("Песочница"))
-        ; sbxBtn->setObjectName(QStringLiteral("ghostBtn"));
+    auto* sbxBtn = new QPushButton(QStringLiteral("Sandbox"));
+    sbxBtn->setObjectName(QStringLiteral("ghostBtn"));
     sbxBtn->setCursor(Qt::PointingHandCursor);
+    fa::apply(sbxBtn, fa::box(), QColor(0x9a, 0x9c, 0xa6));
     connect(sbxBtn, &QPushButton::clicked, this, &MainWindow::onOpenSandbox);
-    auto* setBtn = new QPushButton(QStringLiteral("Настройки…")); setBtn->setObjectName(QStringLiteral("ghostBtn"));
+    auto* setBtn = new QPushButton(QStringLiteral("Settings"));
+    setBtn->setObjectName(QStringLiteral("ghostBtn"));
     setBtn->setCursor(Qt::PointingHandCursor);
+    fa::apply(setBtn, fa::gear(), QColor(0x9a, 0x9c, 0xa6));
     connect(setBtn, &QPushButton::clicked, this, &MainWindow::onSettings);
     bottom->addWidget(sbxBtn);
     bottom->addWidget(setBtn);
@@ -219,66 +258,98 @@ MainWindow::MainWindow() {
     cl->setContentsMargins(0, 0, 0, 0);
     cl->setSpacing(0);
 
-    // поток чата
     chatScroll_ = new QScrollArea;
     chatScroll_->setWidgetResizable(true);
     auto* chatHost = new QWidget;
     chatLay_ = new QVBoxLayout(chatHost);
-    chatLay_->setContentsMargins(0, 18, 0, 18);
-    chatLay_->setSpacing(14);
+    chatLay_->setContentsMargins(0, 20, 0, 20);
+    chatLay_->setSpacing(12);
     chatLay_->addStretch(1);
     chatScroll_->setWidget(chatHost);
     cl->addWidget(chatScroll_, 1);
 
-    // нижняя зона: чипы + композер
+    // композер: рамка-бокс, сверху текст, снизу чипы + отправка
     auto* bottomWrap = new QWidget;
     auto* bw = new QVBoxLayout(bottomWrap);
-    bw->setContentsMargins(26, 6, 26, 22);
-    bw->setSpacing(10);
+    bw->setContentsMargins(26, 4, 26, 18);
+    bw->setSpacing(0);
 
-    auto* chipsRow = new QHBoxLayout; chipsRow->setSpacing(8);
-    chipThink_  = new QPushButton(QStringLiteral("DeepThink"));  chipThink_->setObjectName(QStringLiteral("chip"));
-    chipSearch_ = new QPushButton(QStringLiteral("Поиск"));      chipSearch_->setObjectName(QStringLiteral("chip"));
-    chipImg_    = new QPushButton(QStringLiteral("Картинки"));   chipImg_->setObjectName(QStringLiteral("chip"));
-    for (auto* c : {chipThink_, chipSearch_, chipImg_}) { c->setCheckable(true); c->setCursor(Qt::PointingHandCursor); }
+    composerBox_ = new QFrame;
+    composerBox_->setObjectName(QStringLiteral("composerBox"));
+    auto* cv = new QVBoxLayout(composerBox_);
+    cv->setContentsMargins(4, 4, 8, 6);
+    cv->setSpacing(2);
+
+    input_ = new QPlainTextEdit; input_->setObjectName(QStringLiteral("composer"));
+    input_->setPlaceholderText(QStringLiteral("Describe the task or ask a question…"));
+    input_->setMinimumHeight(34);
+    input_->setMaximumHeight(96);
+    input_->setWordWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+    input_->installEventFilter(this);
+    new QShortcut(QKeySequence(QKeyCombination(Qt::ControlModifier, Qt::Key_Return)), this, SLOT(onSend()));
+    new QShortcut(QKeySequence(QKeyCombination(Qt::ControlModifier, Qt::Key_Enter)), this, SLOT(onSend()));
+    cv->addWidget(input_);
+
+    auto* crow = new QWidget;
+    auto* cr = new QHBoxLayout(crow);
+    cr->setContentsMargins(6, 0, 0, 0);
+    cr->setSpacing(2);
+
+    auto mkChip = [](const QString& title, const QString& g) {
+        auto* b = new QPushButton(title);
+        b->setObjectName(QStringLiteral("chipIcn"));
+        b->setCheckable(true);
+        b->setCursor(Qt::PointingHandCursor);
+        b->setProperty("faGlyph", g);
+        return b;
+    };
+    auto paintChip = [](QPushButton* b) {
+        const QColor c = b->isChecked() ? QColor(0xf0, 0xcd, 0xd5) : QColor(0x7d, 0x7f, 0x89);
+        b->setIcon(QIcon(fa::pix(b->property("faGlyph").toString(), 11, c)));
+        b->setIconSize(QSize(11, 11));
+    };
+    chipThink_  = mkChip(QStringLiteral("Deep Think"), fa::brain());
+    chipSearch_ = mkChip(QStringLiteral("Search"),     fa::search());
+    chipImg_    = mkChip(QStringLiteral("Images"),     fa::image());
     chipThink_->setChecked(cfg_.thinking);
     chipSearch_->setChecked(cfg_.search);
     chipImg_->setChecked(cfg_.imgOn);
+    for (auto* c : {chipThink_, chipSearch_, chipImg_}) {
+        paintChip(c);
+        connect(c, &QPushButton::toggled, this, [c, paintChip](bool) { paintChip(c); });
+    }
     connect(chipThink_, &QPushButton::toggled, this, [this](bool on){ cfg_.thinking = on; Cfg::save(cfg_); ds_->setCfg(cfg_); });
     connect(chipSearch_, &QPushButton::toggled, this, [this](bool on){ cfg_.search = on; Cfg::save(cfg_); ds_->setCfg(cfg_); });
     connect(chipImg_, &QPushButton::toggled, this, [this](bool on){ cfg_.imgOn = on; Cfg::save(cfg_); agent_->setCfg(cfg_); });
+    cr->addWidget(chipThink_);
+    cr->addWidget(chipSearch_);
+    cr->addWidget(chipImg_);
 
-    chipsRow->addWidget(chipThink_);
-    chipsRow->addWidget(chipSearch_);
-    chipsRow->addWidget(chipImg_);
-    chipsRow->addStretch(1);
-
-    folderPill_ = new QPushButton(QStringLiteral("папка не выбрана"));
-    folderPill_->setObjectName(QStringLiteral("chip"));
+    cr->addSpacing(6);
+    folderPill_ = new QPushButton(QStringLiteral("no folder"));
+    folderPill_->setObjectName(QStringLiteral("chipIcn"));
     folderPill_->setCursor(Qt::PointingHandCursor);
+    folderPill_->setIcon(QIcon(fa::pix(fa::folder(), 11, QColor(0x7d, 0x7f, 0x89))));
+    folderPill_->setIconSize(QSize(11, 11));
     connect(folderPill_, &QPushButton::clicked, this, &MainWindow::onPickFolder);
-    chipsRow->addWidget(folderPill_);
-    bw->addLayout(chipsRow);
+    cr->addWidget(folderPill_);
 
-    auto* inputRow = new QHBoxLayout; inputRow->setSpacing(12);
-    input_ = new QPlainTextEdit; input_->setObjectName(QStringLiteral("composer"));
-    input_->setPlaceholderText(QStringLiteral("Опишите задачу или задайте вопрос…"));
-    input_->setMinimumHeight(58);
-    input_->setMaximumHeight(150);
-    input_->setWordWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
-    new QShortcut(QKeySequence(QKeyCombination(Qt::ControlModifier, Qt::Key_Return)), this, SLOT(onSend()));
-    new QShortcut(QKeySequence(QKeyCombination(Qt::ControlModifier, Qt::Key_Enter)), this, SLOT(onSend()));
-    sendBtn_ = new QPushButton(QStringLiteral("↑"));
+    cr->addStretch(1);
+
+    sendBtn_ = new QPushButton;
     sendBtn_->setObjectName(QStringLiteral("sendBtn"));
     sendBtn_->setCursor(Qt::PointingHandCursor);
-    sendBtn_->setToolTip(QStringLiteral("Отправить (Ctrl+Enter)"));
+    sendBtn_->setToolTip(QStringLiteral("Send (Ctrl+Enter)"));
+    sendBtn_->setIcon(QIcon(fa::pix(fa::arrowUp(), 12, QColor(0xff, 0xff, 0xff))));
+    sendBtn_->setIconSize(QSize(12, 12));
     connect(sendBtn_, &QPushButton::clicked, this, &MainWindow::onSend);
-    inputRow->addWidget(input_, 1);
-    inputRow->addWidget(sendBtn_, 0, Qt::AlignBottom);
-    bw->addLayout(inputRow);
+    cr->addWidget(sendBtn_, 0, Qt::AlignBottom);
+
+    cv->addWidget(crow);
+    bw->addWidget(composerBox_);
     cl->addWidget(bottomWrap);
 
-    // ==================== сплит ====================
+    // ==================== сплит + корень ====================
     auto* split = new QSplitter;
     split->addWidget(side);
     split->addWidget(center);
@@ -291,13 +362,15 @@ MainWindow::MainWindow() {
     central->setProperty("themeRoot", true);
     auto* root = new QVBoxLayout(central);
     root->setContentsMargins(0, 0, 0, 0);
-    root->addWidget(split);
+    root->setSpacing(0);
+    root->addWidget(titleBar_);
+    root->addWidget(split, 1);
     setCentralWidget(central);
 
-    // лог-док (по умолчанию скрыт)
+    // лог-док (по умолчанию скрыт, F10)
     logView_ = new QPlainTextEdit; logView_->setObjectName(QStringLiteral("logView"));
     logView_->setReadOnly(true); logView_->setMaximumBlockCount(2000);
-    auto* logDock = new QDockWidget(QStringLiteral("ЛОГ"), this);
+    auto* logDock = new QDockWidget(QStringLiteral("LOG"), this);
     logDock->setObjectName(QStringLiteral("logDock"));
     logDock->setAllowedAreas(Qt::BottomDockWidgetArea);
     logDock->setWidget(logView_);
@@ -327,7 +400,6 @@ MainWindow::MainWindow() {
     sessions_ = SessionStore().load();
     refreshSessionList();
     if (sessions_.isEmpty()) {
-        // первая сессия — из cfg_.projectDir
         Session s = Session::create(cfg_.projectDir);
         sessions_.prepend(s);
         persistNow();
@@ -336,36 +408,122 @@ MainWindow::MainWindow() {
     activateSession(0);
 
     logLine(cfg_.token.isEmpty()
-        ? QStringLiteral("Токен не задан. Настройки (слева внизу) → DeepSeek token.")
-        : QStringLiteral("Готово. Опишите задачу."));
+        ? QStringLiteral("No token set. Settings (bottom-left) -> DeepSeek token.")
+        : QStringLiteral("Ready. Describe the task."));
 }
 
 // ============================================================================
-//  карточки чата: скверкл-обёртки, выравнивание в центр-контейнере
+//  frameless: drag титлбаром + ресайз за края (WM_NCHITTEST)
+// ============================================================================
+bool MainWindow::eventFilter(QObject* obj, QEvent* ev) {
+    if (obj == titleBar_) {
+        if (ev->type() == QEvent::MouseButtonPress) {
+            auto* me = static_cast<QMouseEvent*>(ev);
+            if (me->button() == Qt::LeftButton) {
+                dragOn_ = true;
+                dragOffset_ = me->globalPosition().toPoint() - frameGeometry().topLeft();
+                return false;
+            }
+        } else if (ev->type() == QEvent::MouseMove && dragOn_) {
+            auto* me = static_cast<QMouseEvent*>(ev);
+            if (isMaximized()) {
+                // вытаскиваем из maximized за курсор
+                const QPoint gp = me->globalPosition().toPoint();
+                showNormal();
+                move(gp.x() - width() / 2, gp.y() - 16);
+                dragOffset_ = QPoint(width() / 2, 16);
+            } else {
+                move(me->globalPosition().toPoint() - dragOffset_);
+            }
+            return false;
+        } else if (ev->type() == QEvent::MouseButtonRelease) {
+            dragOn_ = false;
+        } else if (ev->type() == QEvent::MouseButtonDblClick) {
+            toggleMax();
+            return true;
+        }
+    } else if (obj == input_) {
+        if (ev->type() == QEvent::FocusIn) {
+            composerBox_->setProperty("focus", true);
+            composerBox_->style()->unpolish(composerBox_);
+            composerBox_->style()->polish(composerBox_);
+        } else if (ev->type() == QEvent::FocusOut) {
+            composerBox_->setProperty("focus", false);
+            composerBox_->style()->unpolish(composerBox_);
+            composerBox_->style()->polish(composerBox_);
+        }
+    }
+    return QMainWindow::eventFilter(obj, ev);
+}
+
+void MainWindow::toggleMax() {
+    if (isMaximized()) showNormal(); else showMaximized();
+    winMaxBtn_->setIcon(QIcon(fa::pix(isMaximized() ? fa::winRestore() : fa::winMax(), 11,
+                                      QColor(0x9a, 0x9c, 0xa6))));
+}
+
+bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr* result) {
+#ifdef Q_OS_WIN
+    if (eventType == "windows_generic_MSG") {
+        MSG* msg = static_cast<MSG*>(message);
+        if (msg->message == WM_NCHITTEST && !isMaximized()) {
+            const int b = 6;
+            POINT pt{ GET_X_LPARAM(msg->lParam), GET_Y_LPARAM(msg->lParam) };
+            ScreenToClient(msg->hwnd, &pt);
+            const int w = width(), h = height();
+            const bool l = pt.x < b, r = pt.x > w - b, t = pt.y < b, bt = pt.y > h - b;
+            if (t && l)      { *result = HTTOPLEFT;     return true; }
+            if (t && r)      { *result = HTTOPRIGHT;    return true; }
+            if (bt && l)     { *result = HTBOTTOMLEFT;  return true; }
+            if (bt && r)     { *result = HTBOTTOMRIGHT; return true; }
+            if (l)  { *result = HTLEFT;   return true; }
+            if (r)  { *result = HTRIGHT;  return true; }
+            if (t)  { *result = HTTOP;    return true; }
+            if (bt) { *result = HTBOTTOM; return true; }
+        }
+    }
+#endif
+    return QMainWindow::nativeEvent(eventType, message, result);
+}
+
+// ============================================================================
+//  карточки чата — динамическая ширина по содержимому
 // ============================================================================
 SquircleCard* MainWindow::chatAppend(const QString& role, const QString& state, bool animate) {
     auto* card = new SquircleCard(role);
     if (!state.isEmpty()) card->setState(state);
     auto* l = new QVBoxLayout(card);
-    l->setContentsMargins(18, 13, 18, 13);
+    l->setContentsMargins(16, 11, 16, 11);
     l->setSpacing(6);
 
     auto* wrap = new QWidget;
     auto* hl = new QHBoxLayout(wrap);
     hl->setContentsMargins(26, 0, 26, 0);
     if (role == QStringLiteral("user")) {
-        hl->addStretch(2);
-        card->setMaximumWidth(680);
-        hl->addWidget(card, 8);
+        hl->addStretch(1);
+        hl->addWidget(card, 0);
     } else {
-        card->setMaximumWidth(820);
-        hl->addWidget(card, 8);
-        hl->addStretch(2);
+        hl->addWidget(card, 0);
+        hl->addStretch(1);
     }
     chatLay_->insertWidget(chatLay_->count() - 1, wrap);
     if (animate) fadeIn(wrap);
     QTimer::singleShot(0, this, [this] { smoothScrollBottom(); });
     return card;
+}
+
+void MainWindow::fitBubble(SquircleCard* card, QLabel* lbl, bool userSide) {
+    const int vw = chatScroll_->viewport() && chatScroll_->viewport()->width() > 0
+                       ? chatScroll_->viewport()->width() : 900;
+    const int limit = qMax(240, qMin(vw - 200, userSide ? 620 : 840));
+    QTextDocument td; td.setHtml(lbl->text());
+    const QString plain = td.toPlainText();
+    const QFontMetrics fm(lbl->font());
+    int maxw = 0;
+    for (const QString& ln : plain.split(QLatin1Char('\n')))
+        maxw = qMax(maxw, fm.horizontalAdvance(ln.left(400)));
+    const int w = qBound(64, maxw + 36, limit);
+    card->setFixedWidth(w);
 }
 
 void MainWindow::fadeIn(QWidget* w, int ms) {
@@ -408,9 +566,9 @@ void MainWindow::pulseTick() {
 QString MainWindow::mdToHtml(const QString& md) {
     QString s = md.toHtmlEscaped();
     s.replace(QRegularExpression(QStringLiteral("```(\\w*)\\n([\\s\\S]*?)```")),
-              QStringLiteral("<pre style='background:#101114;border:1px solid #2a2b30;border-radius:10px;padding:12px;font-family:Consolas,monospace;color:#d6d9df;'>\\2</pre>"));
+              QStringLiteral("<pre style='background:#101114;border:1px solid #2a2b30;border-radius:8px;padding:10px;font-family:Consolas,monospace;color:#d6d9df;'>\\2</pre>"));
     s.replace(QRegularExpression(QStringLiteral("`([^`\\n]+)`")),
-              QStringLiteral("<code style='background:#17181c;border:1px solid #2a2b30;border-radius:5px;padding:1px 7px;font-family:Consolas,monospace;color:#e1a9b5;'>\\1</code>"));
+              QStringLiteral("<code style='background:#17181c;border:1px solid #2a2b30;border-radius:4px;padding:1px 6px;font-family:Consolas,monospace;color:#e1a9b5;'>\\1</code>"));
     s.replace(QRegularExpression(QStringLiteral("^####?\\s+(.+)$"), QRegularExpression::MultilineOption),
               QStringLiteral("<b style='color:#d98b9c;font-size:14px'>\\1</b>"));
     s.replace(QRegularExpression(QStringLiteral("\\*\\*([^*\\n]+)\\*\\*")),
@@ -420,7 +578,7 @@ QString MainWindow::mdToHtml(const QString& md) {
 }
 
 // ============================================================================
-//  сессии
+//  сессии (группы TODAY / YESTERDAY / OLDER по полю updated)
 // ============================================================================
 void MainWindow::persistNow() {
     if (curSess_ >= 0 && curSess_ < sessions_.size()) {
@@ -430,26 +588,57 @@ void MainWindow::persistNow() {
     SessionStore().save(sessions_);
 }
 
+int MainWindow::sessionRowOf(int idx) const {
+    if (idx < 0) return -1;
+    for (int r = 0; r < sessionList_->count(); ++r)
+        if (sessionList_->item(r)->data(Qt::UserRole).toInt() == idx) return r;
+    return -1;
+}
+
 void MainWindow::refreshSessionList() {
     sessionList_->blockSignals(true);
     sessionList_->clear();
-    for (const Session& s : sessions_) {
-        auto* it = new QListWidgetItem(s.title.left(38) + (s.title.size() > 38 ? QStringLiteral("…") : QString()));
+    const QDate today = QDate::currentDate();
+    static const char* GNAME[3] = { "Today", "Yesterday", "Older" };
+    bool hdr[3] = { false, false, false };
+    QFont hf; hf.setBold(true); hf.setPointSize(qMax(7, hf.pointSize() - 3));
+    for (int i = 0; i < sessions_.size(); ++i) {
+        const Session& s = sessions_[i];
+        QDate d = QDateTime::fromString(s.updated.isEmpty() ? s.created : s.updated, Qt::ISODate).date();
+        if (!d.isValid()) d = today;
+        const qint64 days = d.daysTo(today);
+        const int g = days <= 0 ? 0 : (days == 1 ? 1 : 2);
+        if (!hdr[g]) {
+            hdr[g] = true;
+            auto* h = new QListWidgetItem(QString::fromLatin1(GNAME[g]));
+            h->setFlags(Qt::NoItemFlags);
+            h->setData(Qt::UserRole, -1);
+            h->setForeground(QColor(0x57, 0x59, 0x62));
+            h->setFont(hf);
+            h->setSizeHint(QSize(0, 24));
+            sessionList_->addItem(h);
+        }
+        auto* it = new QListWidgetItem(
+            QIcon(fa::pix(fa::comment(), 11, QColor(0x6f, 0x72, 0x7c))),
+            s.title.left(38) + (s.title.size() > 38 ? QStringLiteral("…") : QString()));
+        it->setData(Qt::UserRole, i);
         it->setToolTip(QStringLiteral("%1\n%2").arg(s.title, s.folder));
         sessionList_->addItem(it);
     }
     sessionList_->blockSignals(false);
-    if (curSess_ >= 0 && curSess_ < sessionList_->count())
-        sessionList_->setCurrentRow(curSess_);
+    const int row = sessionRowOf(curSess_);
+    if (row >= 0) sessionList_->setCurrentRow(row);
 }
 
 void MainWindow::activateSession(int i) {
     if (i < 0 || i >= sessions_.size()) return;
     curSess_ = i;
-    sessionList_->setCurrentRow(i);
+    const int row = sessionRowOf(i);
+    if (row >= 0) sessionList_->setCurrentRow(row);
     const Session& s = sessions_[i];
     setWindowTitle(QStringLiteral("%1 — DeepSeekIDE").arg(s.title.left(56)));
-    folderPill_->setText(s.folder.isEmpty() ? QStringLiteral("папка не выбрана") : QFileInfo(s.folder).fileName());
+    folderPill_->setText(QStringLiteral(" ") + (s.folder.isEmpty()
+        ? QStringLiteral("no folder") : QFileInfo(s.folder).fileName()));
     folderPill_->setToolTip(s.folder);
 
     clearChatUi();
@@ -461,13 +650,14 @@ void MainWindow::activateSession(int i) {
     ds_->setSession(s.dsSessionId, s.parentMessageId);
     agent_->setProjectRoot(s.folder);
     agent_->restoreSession(!s.dsSessionId.isEmpty() || !s.history.isEmpty());
-    if (!cfg_.projectDir.isEmpty()) logLine(QStringLiteral("Сессия: %1").arg(s.title));
 }
 
 void MainWindow::onPickSession(int row) {
-    if (busyOn_ || row == curSess_ || row < 0 || row >= sessions_.size()) return;
+    if (row < 0 || row >= sessionList_->count()) return;
+    const int idx = sessionList_->item(row)->data(Qt::UserRole).toInt();
+    if (idx < 0 || busyOn_ || idx == curSess_ || idx >= sessions_.size()) return;
     persistNow();
-    activateSession(row);
+    activateSession(idx);
 }
 
 void MainWindow::onNewSession() {
@@ -484,9 +674,10 @@ void MainWindow::onNewSession() {
 void MainWindow::setSessionTitleFromText(const QString& t) {
     if (curSess_ < 0) return;
     Session& s = sessions_[curSess_];
-    if (!s.title.isEmpty() && s.title != QStringLiteral("Новая сессия")) return;
+    if (!s.title.isEmpty() && s.title != QStringLiteral("New Chat")) return;
     s.title = t.simplified().left(48);
-    if (s.title.isEmpty()) s.title = QStringLiteral("Сессия");
+    if (s.title.isEmpty()) s.title = QStringLiteral("Chat");
+    setWindowTitle(QStringLiteral("%1 — DeepSeekIDE").arg(s.title.left(56)));
     refreshSessionList();
     persistNow();
 }
@@ -507,16 +698,21 @@ void MainWindow::showEmptyState() {
     auto* wrap = new QWidget;
     auto* vl = new QVBoxLayout(wrap);
     vl->setAlignment(Qt::AlignCenter);
-    auto* big = new QLabel(QStringLiteral("Что будем строить?"));
-    big->setStyleSheet(QStringLiteral("color:#f4f5f7; font-size:26px; font-weight:700;"));
+    auto* icon = new QLabel;
+    icon->setAlignment(Qt::AlignCenter);
+    icon->setPixmap(fa::pix(fa::sparkles(), 30, QColor(0xa6, 0x33, 0x4d)));
+    auto* big = new QLabel(QStringLiteral("What are we building?"));
+    big->setStyleSheet(QStringLiteral("color:#f4f5f7; font-size:24px; font-weight:700;"));
     big->setAlignment(Qt::AlignCenter);
     auto* sub = new QLabel(QStringLiteral(
-        "Агент читает и правит файлы проекта, выполняет команды,\n"
-        "ходит в интернет, генерирует картинки и сам всё собирает."));
-    sub->setStyleSheet(QStringLiteral("color:#6f727c; font-size:14px;"));
+        "The agent reads and edits your project files, runs commands,\n"
+        "browses the web and generates images — all inside the chosen folder."));
+    sub->setStyleSheet(QStringLiteral("color:#6f727c; font-size:13px;"));
     sub->setAlignment(Qt::AlignCenter);
+    vl->addWidget(icon);
+    vl->addSpacing(6);
     vl->addWidget(big);
-    vl->addSpacing(8);
+    vl->addSpacing(6);
     vl->addWidget(sub);
     chatLay_->insertWidget(chatLay_->count() - 1, wrap);
 }
@@ -545,11 +741,13 @@ void MainWindow::replayHistory() {
             auto* l = qobject_cast<QVBoxLayout*>(c->layout());
             auto* lbl = new QLabel(mdToHtml(e[QStringLiteral("text")].toString()));
             lbl->setWordWrap(true); l->addWidget(lbl);
+            fitBubble(c, lbl, true);
         } else if (role == QLatin1String("assistant")) {
             auto* c = chatAppend(QStringLiteral("assistant"), QString(), false);
             auto* l = qobject_cast<QVBoxLayout*>(c->layout());
             auto* lbl = new QLabel(mdToHtml(e[QStringLiteral("text")].toString()));
             lbl->setWordWrap(true); lbl->setTextInteractionFlags(Qt::TextSelectableByMouse); l->addWidget(lbl);
+            fitBubble(c, lbl, false);
         } else if (role == QLatin1String("tool")) {
             addToolRow(e[QStringLiteral("name")].toString(), e[QStringLiteral("sub")].toString(),
                        e[QStringLiteral("ok")].toBool(true), QString());
@@ -559,6 +757,7 @@ void MainWindow::replayHistory() {
             auto* lbl = new QLabel(QStringLiteral("<span style='color:#ffb7c5'>%1</span>")
                                        .arg(e[QStringLiteral("text")].toString().toHtmlEscaped()));
             lbl->setWordWrap(true); l->addWidget(lbl);
+            fitBubble(c, lbl, false);
         }
     }
 }
@@ -569,8 +768,8 @@ void MainWindow::replayHistory() {
 void MainWindow::onSend() {
     if (busyOn_) { ds_->abort(); return; }
     if (curSess_ >= 0 && sessions_[curSess_].folder.isEmpty()) {
-        QMessageBox::information(this, QStringLiteral("Папка проекта"),
-            QStringLiteral("Сначала укажите папку проекта для этой сессии (кнопка справа от чипов)."));
+        QMessageBox::information(this, QStringLiteral("Project folder"),
+            QStringLiteral("Pick a project folder for this chat first (button in the composer row)."));
         onPickFolder();
         if (curSess_ >= 0 && sessions_[curSess_].folder.isEmpty()) return;
     }
@@ -583,15 +782,15 @@ void MainWindow::onSend() {
 
 void MainWindow::onPickFolder() {
     if (curSess_ < 0) return;
-    QString d = QFileDialog::getExistingDirectory(this, QStringLiteral("Папка проекта"),
+    QString d = QFileDialog::getExistingDirectory(this, QStringLiteral("Project folder"),
         sessions_[curSess_].folder.isEmpty() ? cfg_.projectDir : sessions_[curSess_].folder);
     if (d.isEmpty()) return;
     sessions_[curSess_].folder = d;
     agent_->setProjectRoot(d);
-    folderPill_->setText(QFileInfo(d).fileName());
+    folderPill_->setText(QStringLiteral(" ") + QFileInfo(d).fileName());
     folderPill_->setToolTip(d);
     persistNow();
-    logLine(QStringLiteral("Папка сессии: %1").arg(d));
+    logLine(QStringLiteral("Session folder: %1").arg(d));
 }
 
 void MainWindow::onBusy(bool on) {
@@ -599,11 +798,11 @@ void MainWindow::onBusy(bool on) {
     sendBtn_->setProperty("busy", on);
     sendBtn_->style()->unpolish(sendBtn_);
     sendBtn_->style()->polish(sendBtn_);
-    sendBtn_->setText(on ? QStringLiteral("×") : QStringLiteral("↑"));
-    sendBtn_->setToolTip(on ? QStringLiteral("Остановить") : QStringLiteral("Отправить (Ctrl+Enter)"));
+    sendBtn_->setIcon(QIcon(fa::pix(on ? fa::xmark() : fa::arrowUp(), 12, QColor(0xff, 0xff, 0xff))));
+    sendBtn_->setToolTip(on ? QStringLiteral("Stop") : QStringLiteral("Send (Ctrl+Enter)"));
     input_->setDisabled(on);
-    input_->setPlaceholderText(on ? QStringLiteral("Агент пишет/работает…")
-                                  : QStringLiteral("Опишите задачу или задайте вопрос…"));
+    input_->setPlaceholderText(on ? QStringLiteral("Agent is working…")
+                                  : QStringLiteral("Describe the task or ask a question…"));
 }
 
 void MainWindow::addUser(const QString& text) {
@@ -614,16 +813,18 @@ void MainWindow::addUser(const QString& text) {
     lbl->setStyleSheet(QStringLiteral("color:#f5f0f2;"));
     lbl->setTextInteractionFlags(Qt::TextSelectableByMouse);
     l->addWidget(lbl);
+    fitBubble(c, lbl, true);
     pushHist(QStringLiteral("user"), text);
 }
 
 void MainWindow::beginAssistant() {
     liveCard_ = chatAppend(QStringLiteral("assistant"), QStringLiteral("live"));
     auto* l = qobject_cast<QVBoxLayout*>(liveCard_->layout());
-    liveBubble_ = new QLabel(QStringLiteral("<span style='color:#575962;font-style:italic'>печатает…</span>"));
+    liveBubble_ = new QLabel(QStringLiteral("<span style='color:#575962;font-style:italic'>typing…</span>"));
     liveBubble_->setWordWrap(true);
     liveBubble_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     l->addWidget(liveBubble_);
+    fitBubble(liveCard_, liveBubble_, false);
     liveRaw_.clear();
     pulsePhase_ = 0;
     pulseTimer_.start();
@@ -633,6 +834,7 @@ void MainWindow::appendAssistantDelta(const QString& delta) {
     if (!liveBubble_) beginAssistant();
     liveRaw_ += delta;
     liveBubble_->setText(liveRaw_);
+    fitBubble(liveCard_, liveBubble_, false);
     smoothScrollBottom();
 }
 
@@ -640,8 +842,9 @@ void MainWindow::endAssistant(const QString& cleanText) {
     pulseTimer_.stop();
     if (liveBubble_) {
         liveBubble_->setText(cleanText.isEmpty()
-            ? QStringLiteral("<span style='color:#575962;font-style:italic'>…продолжаю работу —</span>")
+            ? QStringLiteral("<span style='color:#575962;font-style:italic'>…continuing —</span>")
             : mdToHtml(cleanText));
+        fitBubble(liveCard_, liveBubble_, false);
     }
     if (liveCard_) {
         liveCard_->setState(QString()); // снять live
@@ -669,29 +872,32 @@ void MainWindow::addToolRow(const QString& name, const QString& sub, bool ok, co
         det->setWordWrap(true);
         l->addWidget(det);
     }
+    fitBubble(card, lbl, false);
     pushHist(QStringLiteral("tool"), QString(), name, sub, ok, detail.left(400));
 }
 
 void MainWindow::addImage(const QByteArray& bytes, const QString& mime, const QString& alt) {
     Q_UNUSED(mime);
     QPixmap pm;
-    if (!pm.loadFromData(bytes)) { addError(QStringLiteral("Картинка не декодирована")); return; }
+    if (!pm.loadFromData(bytes)) { addError(QStringLiteral("image decode failed")); return; }
     auto* card = chatAppend(QStringLiteral("assistant"));
     auto* l = qobject_cast<QVBoxLayout*>(card->layout());
     auto* lbl = new QLabel;
     lbl->setPixmap(pm.scaledToWidth(240, Qt::SmoothTransformation));
     lbl->setToolTip(alt.isEmpty() ? QStringLiteral("image") : alt);
     l->addWidget(lbl);
+    card->setFixedWidth(240 + 36);
 }
 
 void MainWindow::addError(const QString& err) {
     pulseTimer_.stop();
     auto* card = chatAppend(QStringLiteral("error"));
     auto* l = qobject_cast<QVBoxLayout*>(card->layout());
-    auto* lbl = new QLabel(QStringLiteral("<b style='color:#ff5470'>Ошибка</b><br><span style='color:#ffb7c5'>%1</span>")
+    auto* lbl = new QLabel(QStringLiteral("<b style='color:#ff5470'>Error</b><br><span style='color:#ffb7c5'>%1</span>")
                                .arg(err.toHtmlEscaped()));
     lbl->setWordWrap(true);
     l->addWidget(lbl);
+    fitBubble(card, lbl, false);
     pushHist(QStringLiteral("error"), err);
 }
 
@@ -712,15 +918,15 @@ void MainWindow::onOpenSandbox() {
 
     auto* d = new QDialog(this);
     d->setAttribute(Qt::WA_DeleteOnClose);
-    d->setWindowTitle(QStringLiteral("Песочница — временные файлы сессии"));
+    d->setWindowTitle(QStringLiteral("Sandbox — session temp files"));
     d->resize(620, 460);
     auto* vl = new QVBoxLayout(d);
     vl->setContentsMargins(16, 14, 16, 14);
     vl->setSpacing(10);
 
     auto* hint = new QLabel(QStringLiteral(
-        "Temp-зона агента: сюда он складывает промежуточные файлы, здесь же гоняются SANDBOX SHELL "
-        "и тесты. Можно закинуть свои файлы (агент их увидит) или забрать результат. Двойной клик — открыть."));
+        "Agent's temp zone: intermediate files, SANDBOX SHELL runs and tests live here. "
+        "Drop your own files in (the agent will see them) or grab results. Double-click to open."));
     hint->setWordWrap(true);
     hint->setStyleSheet(QStringLiteral("color:#7d7f89; font-size:12px;"));
     vl->addWidget(hint);
@@ -739,14 +945,14 @@ void MainWindow::onOpenSandbox() {
         const auto entries = qd.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
         for (const QFileInfo& fi : entries) {
             const QString size = fi.isFile()
-                ? QStringLiteral("  (%1 КБ)").arg(fi.size() / 1024) : QString();
+                ? QStringLiteral("  (%1 KB)").arg(fi.size() / 1024) : QString();
             auto* it = new QListWidgetItem(fi.isDir()
-                ? QStringLiteral("[папка] ") + fi.fileName() : fi.fileName() + size);
+                ? QStringLiteral("[folder] ") + fi.fileName() : fi.fileName() + size);
             it->setData(Qt::UserRole, fi.absoluteFilePath());
             list->addItem(it);
         }
         if (!list->count()) {
-            auto* it = new QListWidgetItem(QStringLiteral("(пусто — закиньте файлы кнопкой ниже)"));
+            auto* it = new QListWidgetItem(QStringLiteral("(empty — drop files using the button below)"));
             it->setFlags(Qt::NoItemFlags);
             list->addItem(it);
         }
@@ -758,24 +964,25 @@ void MainWindow::onOpenSandbox() {
         if (!path.isEmpty()) QDesktopServices::openUrl(QUrl::fromLocalFile(path));
     });
 
-    auto mk = [](const QString& title) {
+    auto mk = [](const QString& title, const QString& g) {
         auto* b = new QPushButton(title);
         b->setObjectName(QStringLiteral("ghostBtn"));
         b->setCursor(Qt::PointingHandCursor);
+        fa::apply(b, g, QColor(0x9a, 0x9c, 0xa6));
         return b;
     };
-    auto* addBtn = mk(QStringLiteral("Закинуть файлы…"));
-    auto* termBtn = mk(QStringLiteral("Терминал тут"));
-    auto* openBtn = mk(QStringLiteral("Проводник"));
-    auto* delBtn = mk(QStringLiteral("Удалить выбранное"));
-    auto* refBtn = mk(QStringLiteral("Обновить"));
+    auto* addBtn = mk(QStringLiteral("Add files…"), fa::upload());
+    auto* termBtn = mk(QStringLiteral("Terminal here"), fa::terminal());
+    auto* openBtn = mk(QStringLiteral("Explorer"), fa::folder());
+    auto* delBtn = mk(QStringLiteral("Delete"), fa::trash());
+    auto* refBtn = mk(QStringLiteral("Refresh"), fa::refresh());
     auto* row = new QHBoxLayout; row->setSpacing(8);
     row->addWidget(addBtn); row->addWidget(termBtn); row->addWidget(openBtn);
     row->addWidget(delBtn); row->addStretch(1); row->addWidget(refBtn);
     vl->addLayout(row);
 
     QObject::connect(addBtn, &QPushButton::clicked, d, [d, dir, refresh]() {
-        const QStringList files = QFileDialog::getOpenFileNames(d, QStringLiteral("Закинуть в песочницу"));
+        const QStringList files = QFileDialog::getOpenFileNames(d, QStringLiteral("Add files to sandbox"));
         const QDir qd(dir);
         for (const QString& f : files)
             QFile::copy(f, qd.filePath(QFileInfo(f).fileName()));
@@ -799,8 +1006,8 @@ void MainWindow::onOpenSandbox() {
         const QFileInfo fi(path);
         const bool ok = fi.isDir() ? QDir(path).removeRecursively() : QFile::remove(path);
         if (!ok)
-            QMessageBox::warning(d, QStringLiteral("Песочница"),
-                                 QStringLiteral("Не удалось удалить: %1").arg(path));
+            QMessageBox::warning(d, QStringLiteral("Sandbox"),
+                                 QStringLiteral("Could not delete: %1").arg(path));
         refresh();
     });
     QObject::connect(refBtn, &QPushButton::clicked, d, refresh);
@@ -815,7 +1022,7 @@ void MainWindow::onSettings() {
     chipThink_->setChecked(cfg_.thinking);
     chipSearch_->setChecked(cfg_.search);
     chipImg_->setChecked(cfg_.imgOn);
-    logLine(QStringLiteral("Настройки применены."));
+    logLine(QStringLiteral("Settings applied."));
 }
 
 void MainWindow::closeEvent(QCloseEvent* e) {

@@ -230,11 +230,24 @@ void DeepSeekClient::onReadyRead() {
                 const QString t = f.value(QStringLiteral("type")).toString();
                 const QString c = f.value(QStringLiteral("content")).toString();
                 if (t == QStringLiteral("RESPONSE") || t == QStringLiteral("SEARCH")) {
-                    fullText_ += c; lastFragType_ = t;
-                    if (!c.isEmpty()) emit chatDelta(c);
+                    lastFragType_ = t;
+                    // guard: протокол иногда присылает накопленный контент фрагмента целиком —
+                    // не дублируем, если суффикс уже совпадает
+                    if (!c.isEmpty() && !fullText_.endsWith(c)) {
+                        QString add = c;
+                        // если c — расширение уже накопленного хвоста, докидываем только дельту
+                        for (int k = qMin(c.size(), fullText_.size()); k > 1; --k)
+                            if (fullText_.endsWith(c.left(k))) { add = c.mid(k); break; }
+                        fullText_ += add; emit chatDelta(add);
+                    }
                 } else if (t == QStringLiteral("THINK") || t == QStringLiteral("REASONING")) {
-                    thinkText_ += c; lastFragType_ = t;
-                    if (!c.isEmpty()) emit thinkDelta(c);
+                    lastFragType_ = t;
+                    if (!c.isEmpty() && !thinkText_.endsWith(c)) {
+                        QString add = c;
+                        for (int k = qMin(c.size(), thinkText_.size()); k > 1; --k)
+                            if (thinkText_.endsWith(c.left(k))) { add = c.mid(k); break; }
+                        thinkText_ += add; emit thinkDelta(add);
+                    }
                 }
             }
         } else if (p == QStringLiteral("response/fragments/-1/content") && v.isString()) {

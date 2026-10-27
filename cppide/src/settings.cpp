@@ -53,7 +53,7 @@ void save(const AppCfg& c) {
 } // namespace Cfg
 
 SettingsDialog::SettingsDialog(AppCfg& c, QWidget* parent) : QDialog(parent), c_(c) {
-    setWindowTitle(tr("Настройки"));
+    setWindowTitle(tr("Settings"));
     setMinimumWidth(560);
     auto* lay = new QFormLayout(this);
 
@@ -62,7 +62,7 @@ SettingsDialog::SettingsDialog(AppCfg& c, QWidget* parent) : QDialog(parent), c_
     lay->addRow(tr("DeepSeek token:"), token);
 
     auto* hint = new QLabel(tr("chat.deepseek.com → F12 → Console: localStorage.getItem('userToken') || localStorage.getItem('token')\n"
-                               "Cookies: вкладка Application → Cookies → chat.deepseek.com (ds_session_id, smidV2)"));
+                               "Cookies: Application tab -> Cookies -> chat.deepseek.com (ds_session_id, smidV2)"));
     hint->setWordWrap(true); hint->setStyleSheet("color:#888;font-size:12px");
     lay->addRow(hint);
 
@@ -74,32 +74,32 @@ SettingsDialog::SettingsDialog(AppCfg& c, QWidget* parent) : QDialog(parent), c_
     lay->addRow(tr("PoW WASM URL:"), wasm);
 
     auto* folder = new QLineEdit(c_.projectDir);
-    auto* pick = new QPushButton(tr("Выбрать…"));
+    auto* pick = new QPushButton(tr("Browse…"));
     auto* frow = new QWidget; auto* fh = new QFormLayout(frow); fh->setContentsMargins(0,0,0,0);
     fh->addRow(folder, pick);
     connect(pick, &QPushButton::clicked, this, [this, folder]() {
-        QString d = QFileDialog::getExistingDirectory(this, tr("Папка проекта"), folder->text());
+        QString d = QFileDialog::getExistingDirectory(this, tr("Project folder"), folder->text());
         if (!d.isEmpty()) folder->setText(d);
     });
-    lay->addRow(tr("Папка проекта:"), frow);
+    lay->addRow(tr("Project folder:"), frow);
 
-    auto* thinking = new QCheckBox(tr("DeepThink (размышления)")); thinking->setChecked(c_.thinking);
-    auto* search = new QCheckBox(tr("Поиск в интернете")); search->setChecked(c_.search);
+    auto* thinking = new QCheckBox(tr("Deep Think (reasoning)")); thinking->setChecked(c_.thinking);
+    auto* search = new QCheckBox(tr("Web search")); search->setChecked(c_.search);
     lay->addRow(thinking); lay->addRow(search);
 
-    lay->addRow(new QLabel(QStringLiteral("— %1 —").arg(tr("Изображения (subnp.com, бесплатно)"))));
-    auto* imgOn = new QCheckBox(tr("[EXPERIMENTAL] Генерация фото")); imgOn->setChecked(c_.imgOn);
+    lay->addRow(new QLabel(QStringLiteral("— %1 —").arg(tr("Images (subnp.com, free)"))));
+    auto* imgOn = new QCheckBox(tr("[EXPERIMENTAL] Image generation")); imgOn->setChecked(c_.imgOn);
     auto* imgModel = new QComboBox; imgModel->addItems({"magic", "flux"});
     imgModel->setCurrentText(c_.imgModel == "flux" ? "flux" : "magic");
     lay->addRow(imgOn);
-    lay->addRow(tr("Модель:"), imgModel);
+    lay->addRow(tr("Model:"), imgModel);
 
     auto* lim = new QSpinBox; lim->setRange(0, 100); lim->setValue(c_.autoLimit);
-    lim->setToolTip(tr("Потолок авто-continue; 0 = без лимита"));
-    lay->addRow(tr("Авто-ходов подряд:"), lim);
+    lim->setToolTip(tr("Auto-continue cap; 0 = unlimited"));
+    lay->addRow(tr("Auto steps in a row:"), lim);
 
     auto* rules = new QPlainTextEdit(c_.rules); rules->setMaximumHeight(120);
-    lay->addRow(tr("Начальные правила:"), rules);
+    lay->addRow(tr("Custom rules:"), rules);
 
     auto* bb = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
     lay->addRow(bb);

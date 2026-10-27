@@ -190,6 +190,7 @@
   <!-- Хедеры с Q_OBJECT перечислены выше в CustomBuild и в ClInclude не дублируются,
        иначе VS выдаёт "Элемент ... уже существует в фильтре" -->
   <ItemGroup>
+    <ClInclude Include="src\fa.h" />
     <ClInclude Include="src\pow.h" />
     <ClInclude Include="src\sessionstore.h" />
   </ItemGroup>
@@ -202,7 +203,7 @@
 
   <Target Name="DeployQt" AfterTargets="Build">
     <MakeDir Directories="$(OutDir)assets" />
-    <Copy SourceFiles="$(ProjectDir)assets\logo.png" DestinationFolder="$(OutDir)assets" SkipUnchangedFiles="true" />
+    <Exec Command="xcopy &quot;$(ProjectDir)assets\*&quot; &quot;$(OutDir)assets\&quot; /D /Y /I" />
     <Exec Command="&quot;$(QtRoot)\bin\windeployqt.exe&quot; --no-translations --no-system-d3d-compiler --no-opengl-sw &quot;$(TargetPath)&quot;" Condition="Exists('$(QtRoot)\bin\windeployqt.exe')" />
   </Target>
 

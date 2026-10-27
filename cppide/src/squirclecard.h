@@ -4,8 +4,8 @@
 #include <QPainterPath>
 #include <QColor>
 
-// Карточка со сглаживанием superellipse (squircle, n≈4.6) вместо
-// стандартных border-radius. Роли: user / assistant / tool / error / hint.
+// Карточка сообщения с аккуратными скруглениями (обычный rounded rect,
+// класс исторически назван SquircleCard). Роли: user / assistant / tool / error / hint.
 class SquircleCard : public QFrame {
     Q_OBJECT
 public:
@@ -16,12 +16,20 @@ public:
     QString state() const { return state_; }
     void setPulseColor(const QColor& c) { pulseColor_ = c; update(); } // рисуется при state=="live"
 
+    // универсальный скруглённый путь (иконки, лого, превью)
+    static QPainterPath roundPath(const QRectF& r, double radius = 10.0) {
+        QPainterPath p;
+        p.addRoundedRect(r, radius, radius);
+        return p;
+    }
+
 protected:
     void paintEvent(QPaintEvent*) override {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing, true);
-        const QRectF r = rect().adjusted(1.2, 1.2, -1.2, -1.2);
-        QPainterPath path = squirclePath(r, 4.6);
+        const QRectF r = rect().adjusted(1.0, 1.0, -1.0, -1.0);
+        const double rad = 12.0;
+        QPainterPath path = roundPath(r, rad);
 
         // фон
         if (role_ == QLatin1String("user")) {
@@ -41,7 +49,7 @@ protected:
 
         // рамка
         QPen pen;
-        pen.setWidthF(1.3);
+        pen.setWidthF(1.2);
         if (role_ == QLatin1String("user")) pen.setColor(QColor(176, 87, 106));
         else if (role_ == QLatin1String("assistant") && state_ == QLatin1String("live"))
             pen.setColor(pulseColor_.isValid() ? pulseColor_ : QColor(192, 85, 112));
@@ -53,29 +61,10 @@ protected:
 
         // tool: цветная полоса слева
         if (role_ == QLatin1String("tool")) {
-            QRectF bar(r.left() + 1.0, r.top() + 1.0, 3.4, r.height() - 2.0);
-            QPainterPath bp = squirclePath(bar, 4.0);
+            QRectF bar(r.left() + 1.0, r.top() + r.height() / 2.0 - 10, 3.0, 20);
+            QPainterPath bp = roundPath(bar, 1.5);
             p.fillPath(bp, state_ == QLatin1String("fail") ? QColor(255, 84, 112) : QColor(53, 207, 127));
         }
-    }
-
-    // утилита: путь superellipse (нужна и снаружи — для лого/превью)
-public:
-    static QPainterPath squirclePath(const QRectF& r, double n) {
-        // superellipse |x|^n + |y|^n = a^n, параметризовано через степенной косинус
-        const double cx = r.center().x(), cy = r.center().y();
-        const double a = r.width() / 2.0, b = r.height() / 2.0;
-        QPainterPath path;
-        const int steps = 72;
-        for (int i = 0; i <= steps; ++i) {
-            const double t = (double)i / steps * 2.0 * 3.14159265358979323846;
-            const double ct = std::cos(t), st = std::sin(t);
-            const double x = cx + a * (ct < 0 ? -1.0 : 1.0) * std::pow(std::abs(ct), 2.0 / n);
-            const double y = cy + b * (st < 0 ? -1.0 : 1.0) * std::pow(std::abs(st), 2.0 / n);
-            if (i == 0) path.moveTo(x, y); else path.lineTo(x, y);
-        }
-        path.closeSubpath();
-        return path;
     }
 
 private:

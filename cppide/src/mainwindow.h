@@ -4,6 +4,7 @@
 #include <QLabel>
 #include <QTimer>
 #include <QList>
+#include <QPoint>
 #include "settings.h"
 #include "sessionstore.h"
 
@@ -13,6 +14,7 @@ class QVBoxLayout;
 class QPushButton;
 class QPlainTextEdit;
 class QScrollBar;
+class QFrame;
 class SquircleCard;
 class Agent;
 class DeepSeekClient;
@@ -24,6 +26,8 @@ public:
 
 protected:
     void closeEvent(class QCloseEvent* e) override;
+    bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result) override; // ресайз без рамки
+    bool eventFilter(QObject* obj, QEvent* ev) override;                                    // drag титлбара, фокус композера
 
 private slots:
     void onSend();
@@ -49,6 +53,7 @@ private slots:
 private:
     SquircleCard* chatAppend(const QString& role, const QString& state = QString(),
                              bool animate = true);
+    void fitBubble(SquircleCard* card, QLabel* lbl, bool userSide);
     void fadeIn(QWidget* w, int ms = 240);
     void smoothScrollBottom();
     void clearChatUi();
@@ -57,10 +62,12 @@ private:
                   const QString& sub = QString(), bool ok = true, const QString& detail = QString());
     void replayHistory();
     void refreshSessionList();
+    int  sessionRowOf(int idx) const;
     void persistNow();
     void setSessionTitleFromText(const QString& t);
     static QString mdToHtml(const QString& md);
     void activateSession(int i);
+    void toggleMax();
 
     AppCfg cfg_;
     Agent* agent_;
@@ -70,23 +77,30 @@ private:
     QList<Session> sessions_;
     int curSess_ = -1;
 
+    // кастомный титлбар (frameless)
+    QWidget*     titleBar_  = nullptr;
+    QLabel*      logoLbl_   = nullptr;
+    QPushButton* winMaxBtn_ = nullptr;
+    QPoint       dragOffset_;
+    bool         dragOn_ = false;
+
     // UI
     QListWidget* sessionList_ = nullptr;
-    QLabel* logoLbl_ = nullptr;
-    QPushButton* folderPill_ = nullptr;
-    QPushButton* chipThink_ = nullptr;
-    QPushButton* chipSearch_ = nullptr;
-    QPushButton* chipImg_ = nullptr;
-    QScrollArea* chatScroll_ = nullptr;
-    QVBoxLayout* chatLay_ = nullptr;
+    QPushButton* folderPill_  = nullptr;
+    QPushButton* chipThink_   = nullptr;
+    QPushButton* chipSearch_  = nullptr;
+    QPushButton* chipImg_     = nullptr;
+    QFrame*      composerBox_ = nullptr;
+    QScrollArea* chatScroll_  = nullptr;
+    QVBoxLayout* chatLay_     = nullptr;
     QPointer<SquircleCard> liveCard_;
     QPointer<QLabel> liveBubble_;
     QString  liveRaw_;
     QTimer   pulseTimer_;
     int      pulsePhase_ = 0;
-    QPlainTextEdit* input_ = nullptr;
-    QPushButton* sendBtn_ = nullptr;
-    QPlainTextEdit* logView_ = nullptr;
+    QPlainTextEdit* input_    = nullptr;
+    QPushButton*    sendBtn_  = nullptr;
+    QPlainTextEdit* logView_  = nullptr;
     bool     busyOn_ = false;
     bool     replaying_ = false;
 };

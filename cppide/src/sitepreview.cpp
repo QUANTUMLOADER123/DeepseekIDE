@@ -10,7 +10,7 @@
 
 SitePreviewDialog::SitePreviewDialog(const QString& url, const QString& html, QWidget* parent)
     : QDialog(parent) {
-    setWindowTitle(QStringLiteral("Предпросмотр сайта"));
+    setWindowTitle(QStringLiteral("Site Preview"));
     setMinimumSize(880, 640);
     setAttribute(Qt::WA_DeleteOnClose);
 
@@ -34,7 +34,7 @@ SitePreviewDialog::SitePreviewDialog(const QString& url, const QString& html, QW
     view->setHtml(html);
     lay->addWidget(view, 1);
 
-    auto* close = new QPushButton(QStringLiteral("Закрыть"));
+    auto* close = new QPushButton(QStringLiteral("Close"));
     close->setStyleSheet(QStringLiteral(
         "QPushButton{background:#1b1c20;border:1px solid #2a2b30;border-radius:10px;padding:8px 22px;color:#e2e3e8;}"
         "QPushButton:hover{background:#231d20;}"));

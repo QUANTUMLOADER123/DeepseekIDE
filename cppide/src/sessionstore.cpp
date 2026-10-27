@@ -13,7 +13,7 @@ Session Session::create(const QString& folder) {
     Session s;
     s.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     s.folder = folder;
-    s.title = QStringLiteral("Новая сессия");
+    s.title = QStringLiteral("New Chat");
     s.created = s.updated = nowIso();
     s.history = QJsonArray{};
     return s;
@@ -36,7 +36,7 @@ Session Session::fromJson(const QJsonObject& o) {
     Session s;
     s.id = o[QStringLiteral("id")].toString();
     if (s.id.isEmpty()) s.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    s.title = o[QStringLiteral("title")].toString(QStringLiteral("Сессия"));
+    s.title = o[QStringLiteral("title")].toString(QStringLiteral("New Chat"));
     s.folder = o[QStringLiteral("folder")].toString();
     s.dsSessionId = o[QStringLiteral("ds_session_id")].toString();
     s.parentMessageId = o[QStringLiteral("parent_message_id")].toString();

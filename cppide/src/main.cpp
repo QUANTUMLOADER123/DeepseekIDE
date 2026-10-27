@@ -24,11 +24,9 @@ int main(int argc, char** argv) {
     w.show();
 
 #ifdef Q_OS_WIN
-    // тёмный системный тайтлбар (Win10 1607+ / Win11)
-    const BOOL dark = TRUE;
-    HWND hw = reinterpret_cast<HWND>(w.winId());
-    DwmSetWindowAttribute(hw, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof(dark));
-    DwmSetWindowAttribute(hw, 19 /* старый id */,                       &dark, sizeof(dark));
+    // Win11: скруглённые углы у frameless-окна (DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_ROUND)
+    const DWORD roundPref = 2;
+    DwmSetWindowAttribute(reinterpret_cast<HWND>(w.winId()), 33, &roundPref, sizeof(roundPref));
 #endif
 
     return app.exec();
