@@ -2,3 +2,4 @@
 *.cmd text eol=crlf
 *.sh  text eol=lf
 assets/web/* text eol=lf
+cppide/build.bat -text
