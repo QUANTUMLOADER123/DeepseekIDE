@@ -36,6 +36,11 @@ private slots:
     void onPickFolder();
     void onSettings();
     void onOpenSandbox();
+    void onAttach();                       // прикрепить файлы (пути уйдут агенту)
+    void onCopyCard(const QString& plain); // копия ответа целиком
+    void onRegenerate(int histIdx);        // откат к точке этой карточки + resend
+    void compactNow();                     // /compact или лимит контекста
+    void onCompactDone(const QString& summary);
 
     // агент → UI
     void addUser(const QString& text);
@@ -53,19 +58,24 @@ private slots:
 private:
     SquircleCard* chatAppend(const QString& role, const QString& state = QString(),
                              bool animate = true);
-    void fitBubble(SquircleCard* card, QLabel* lbl, bool userSide);
+    void fitBubble(SquircleCard* card, const QString& text, bool userSide);
     void fadeIn(QWidget* w, int ms = 240);
     void smoothScrollBottom();
     void clearChatUi();
     void showEmptyState();
-    void pushHist(const QString& role, const QString& text, const QString& name = QString(),
+    int  pushHist(const QString& role, const QString& text, const QString& name = QString(),
                   const QString& sub = QString(), bool ok = true, const QString& detail = QString());
     void replayHistory();
     void refreshSessionList();
     int  sessionRowOf(int idx) const;
     void persistNow();
     void setSessionTitleFromText(const QString& t);
+    void autoTitleFromAnswer(const QString& t);
+    void maybeCompact();
     static QString mdToHtml(const QString& md);
+    void renderRich(QVBoxLayout* l, const QString& text);   // текст + код-блоки с кнопкой Copy
+    void addAssistantActions(QVBoxLayout* l, int histIdx, const QString& plain);
+    void refreshAttachUi();
     void activateSession(int i);
     void toggleMax();
 
@@ -96,6 +106,10 @@ private:
     QPointer<SquircleCard> liveCard_;
     QPointer<QLabel> liveBubble_;
     QString  liveRaw_;
+    QStringList attachPaths_;   // вложения, скопированные в песочницу (уйдут в текст сообщения)
+    QWidget*   attachRow_  = nullptr;
+    QLabel*    attachLbl_  = nullptr;
+    bool       compacting_ = false;
     QTimer   pulseTimer_;
     int      pulsePhase_ = 0;
     QPlainTextEdit* input_    = nullptr;

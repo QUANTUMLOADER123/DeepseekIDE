@@ -55,6 +55,38 @@ void Agent::restoreSession(bool contractSent) {
 }
 
 // ============================================================================
+//  compact: модель сжимает диалог → сводка (Сделали | Следующее действие)
+//  Штатный onChatFinished временно отключён, чтобы сводка не ушла в пайплайн
+//  маркеров; слушаем chatFinished/failed одноразово.
+// ============================================================================
+void Agent::compactSession() {
+    if (busy_ || compActive_) { emit compactDone(QString()); return; }
+    busy_ = true; emit busyChanged(true);
+    compActive_ = true;
+    disconnect(ds_, &DeepSeekClient::chatFinished, this, &Agent::onChatFinished);
+    const QString prompt = QStringLiteral(
+        "SYSTEM compact: сожми ВЕСЬ наш диалог в компактную, но содержательную сводку — по ней "
+        "ты продолжишь работу в НОВОЙ чистой сессии. Строгий формат, markdown, по-русски:\n"
+        "## Сделали\n- пункты: что меняли/создавали, важные файлы, решения, правила\n"
+        "## Следующее действие\n1. один конкретный следующий шаг\n"
+        "Без вступлений и лишнего текста.");
+    compOk_ = connect(ds_, &DeepSeekClient::chatFinished, this, [this](const QString& full, const QString&) {
+        disconnect(compOk_); disconnect(compFail_);
+        connect(ds_, &DeepSeekClient::chatFinished, this, &Agent::onChatFinished);
+        compActive_ = false; busy_ = false; emit busyChanged(false);
+        emit compactDone(cleanVisibleText(full));
+    });
+    compFail_ = connect(ds_, &DeepSeekClient::failed, this, [this](const QString&) {
+        disconnect(compOk_); disconnect(compFail_);
+        connect(ds_, &DeepSeekClient::chatFinished, this, &Agent::onChatFinished);
+        compActive_ = false; busy_ = false; emit busyChanged(false);
+        emit compactDone(QString());
+    });
+    emit log(QStringLiteral("AGT: compact запрос"));
+    ds_->ask(prompt);
+}
+
+// ============================================================================
 //  Видимый стрим: задерживаем потенциальные начала маркеров "[<{"
 // ============================================================================
 void Agent::onChatDelta(const QString& chunk) {

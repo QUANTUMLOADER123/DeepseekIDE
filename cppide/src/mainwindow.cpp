@@ -43,7 +43,11 @@
 #include <QUrl>
 #include <QDialog>
 #include <QMouseEvent>
+#include <QKeyEvent>
 #include <QCoreApplication>
+#include <QClipboard>
+#include <QGuiApplication>
+#include <QVariantAnimation>
 #include <functional>
 
 #ifdef Q_OS_WIN
@@ -83,7 +87,20 @@ QPushButton#ghostBtn {
 QPushButton#ghostBtn:hover { background:#1b1c20; color:#e2e3e8; border-color:#3a3b42; }
 
 QListWidget#sessions { background:transparent; border:none; outline:none; }
-QListWidget#sessions::item { padding:8px 10px; border-radius:8px; margin:1px 6px; color:#b8bac2; }
+QListWidget#sessions::item { padding:6px 10px; border-radius:8px; margin:1px 6px; color:#b8bac2; font-size:12px; }
+
+QFrame#codeBox { background:#101114; border:1px solid #2a2b30; border-radius:8px; }
+QPlainTextEdit#codeArea {
+  background:transparent; border:none; padding:2px 10px 8px 10px;
+  font-family:'Cascadia Code','Consolas',monospace; font-size:12px; color:#d6d9df;
+  selection-background-color:#7d2440;
+}
+QPushButton#miniBtn { background:transparent; border:none; border-radius:5px; min-width:20px; max-width:20px; min-height:20px; max-height:20px; padding:0; }
+QPushButton#miniBtn:hover { background:#1e1f24; }
+QPushButton#miniBtn:pressed { background:#26272c; }
+QPushButton#actBtn { background:transparent; border:none; border-radius:6px; padding:3px 8px; color:#6f727c; font-size:11px; }
+QPushButton#actBtn:hover { background:#1e1f24; color:#e2e3e8; }
+QPushButton#actBtn:pressed { background:#26272c; }
 QListWidget#sessions::item:hover { background:#1e1f24; }
 QListWidget#sessions::item:selected { background:#0f1013; color:#ffffff; border-left:2px solid #a6334d; }
 
@@ -168,6 +185,21 @@ static QPixmap logoPix(int size) {
     p.drawPixmap((size - s.width()) / 2, (size - s.height()) / 2, s);
     p.end();
     return out;
+}
+
+// слайд-ап при появлении карточки (ступенька вверх)
+static void slideUp(QWidget* w, QHBoxLayout* lay) {
+    lay->setContentsMargins(26, 10, 26, 0);
+    auto* a = new QVariantAnimation(w);
+    a->setDuration(240);
+    a->setStartValue(10);
+    a->setEndValue(0);
+    a->setEasingCurve(QEasingCurve::OutExpo);
+    QObject::connect(a, &QVariantAnimation::valueChanged, w, [lay](const QVariant& v) {
+        lay->setContentsMargins(26, v.toInt(), 26, 0);
+    });
+    QObject::connect(a, &QAbstractAnimation::finished, a, &QObject::deleteLater);
+    a->start();
 }
 
 // ============================================================================
@@ -290,6 +322,27 @@ MainWindow::MainWindow() {
     new QShortcut(QKeySequence(QKeyCombination(Qt::ControlModifier, Qt::Key_Enter)), this, SLOT(onSend()));
     cv->addWidget(input_);
 
+    // строка прикреплённых файлов (прячется, когда пусто)
+    attachRow_ = new QWidget;
+    auto* ar = new QHBoxLayout(attachRow_);
+    ar->setContentsMargins(8, 6, 10, 0);
+    ar->setSpacing(6);
+    auto* clipIco = new QLabel;
+    clipIco->setPixmap(fa::pix(fa::paperclip(), 10, QColor(0x7d, 0x7f, 0x89)));
+    ar->addWidget(clipIco);
+    attachLbl_ = new QLabel;
+    attachLbl_->setStyleSheet(QStringLiteral("color:#7d7f89; font-size:11px;"));
+    ar->addWidget(attachLbl_, 1);
+    auto* clr = new QPushButton;
+    clr->setObjectName(QStringLiteral("miniBtn"));
+    clr->setCursor(Qt::PointingHandCursor);
+    clr->setIcon(QIcon(fa::pix(fa::xmark(), 10, QColor(0x7d, 0x7f, 0x89))));
+    clr->setIconSize(QSize(10, 10));
+    connect(clr, &QPushButton::clicked, this, [this] { attachPaths_.clear(); refreshAttachUi(); });
+    ar->addWidget(clr);
+    attachRow_->hide();
+    cv->insertWidget(0, attachRow_);
+
     auto* crow = new QWidget;
     auto* cr = new QHBoxLayout(crow);
     cr->setContentsMargins(6, 0, 0, 0);
@@ -326,6 +379,14 @@ MainWindow::MainWindow() {
     cr->addWidget(chipImg_);
 
     cr->addSpacing(6);
+    auto* attachBtn = new QPushButton(QStringLiteral("Attach"));
+    attachBtn->setObjectName(QStringLiteral("chipIcn"));
+    attachBtn->setCursor(Qt::PointingHandCursor);
+    attachBtn->setIcon(QIcon(fa::pix(fa::paperclip(), 11, QColor(0x7d, 0x7f, 0x89))));
+    attachBtn->setIconSize(QSize(11, 11));
+    attachBtn->setToolTip(QStringLiteral("Attach files (agent gets the paths and can read them)"));
+    connect(attachBtn, &QPushButton::clicked, this, &MainWindow::onAttach);
+    cr->addWidget(attachBtn);
     folderPill_ = new QPushButton(QStringLiteral("no folder"));
     folderPill_->setObjectName(QStringLiteral("chipIcn"));
     folderPill_->setCursor(Qt::PointingHandCursor);
@@ -390,6 +451,7 @@ MainWindow::MainWindow() {
     connect(agent_, &Agent::errorBanner, this, &MainWindow::addError);
     connect(agent_, &Agent::sitePreview, this, &MainWindow::showSitePreview);
     connect(agent_, &Agent::busyChanged, this, &MainWindow::onBusy);
+    connect(agent_, &Agent::compactDone, this, &MainWindow::onCompactDone);
     connect(agent_, &Agent::log, this, &MainWindow::logLine);
     connect(ds_, &DeepSeekClient::log, this, &MainWindow::logLine);
 
@@ -443,6 +505,15 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* ev) {
             return true;
         }
     } else if (obj == input_) {
+        if (ev->type() == QEvent::KeyPress) {
+            auto* ke = static_cast<QKeyEvent*>(ev);
+            if ((ke->key() == Qt::Key_Return || ke->key() == Qt::Key_Enter)
+                && !(ke->modifiers() & Qt::ShiftModifier)) {
+                if (!input_->isEnabled()) return true;
+                onSend();
+                return true;
+            }
+        }
         if (ev->type() == QEvent::FocusIn) {
             composerBox_->setProperty("focus", true);
             composerBox_->style()->unpolish(composerBox_);
@@ -507,18 +578,21 @@ SquircleCard* MainWindow::chatAppend(const QString& role, const QString& state, 
         hl->addStretch(1);
     }
     chatLay_->insertWidget(chatLay_->count() - 1, wrap);
-    if (animate) fadeIn(wrap);
+    if (animate) { fadeIn(wrap); slideUp(wrap, hl); }
     QTimer::singleShot(0, this, [this] { smoothScrollBottom(); });
     return card;
 }
 
-void MainWindow::fitBubble(SquircleCard* card, QLabel* lbl, bool userSide) {
+void MainWindow::fitBubble(SquircleCard* card, const QString& text, bool userSide) {
     const int vw = chatScroll_->viewport() && chatScroll_->viewport()->width() > 0
                        ? chatScroll_->viewport()->width() : 900;
     const int limit = qMax(240, qMin(vw - 200, userSide ? 620 : 840));
-    QTextDocument td; td.setHtml(lbl->text());
-    const QString plain = td.toPlainText();
-    const QFontMetrics fm(lbl->font());
+    QString plain = text;
+    if (text.contains(QLatin1Char('<'))) {
+        QTextDocument td; td.setHtml(text); plain = td.toPlainText();
+    }
+    plain.remove(QRegularExpression(QStringLiteral("```[\\s\\S]*?```"))); // код не раздувает ширину
+    const QFontMetrics fm(QFont(QStringLiteral("Segoe UI"), 9));
     int maxw = 0;
     for (const QString& ln : plain.split(QLatin1Char('\n')))
         maxw = qMax(maxw, fm.horizontalAdvance(ln.left(400)));
@@ -646,10 +720,11 @@ void MainWindow::activateSession(int i) {
     replayHistory();
     replaying_ = false;
     if (s.history.isEmpty()) showEmptyState();
+    if (chatScroll_->widget()) fadeIn(chatScroll_->widget(), 180);
 
     ds_->setSession(s.dsSessionId, s.parentMessageId);
     agent_->setProjectRoot(s.folder);
-    agent_->restoreSession(!s.dsSessionId.isEmpty() || !s.history.isEmpty());
+    agent_->restoreSession(!s.dsSessionId.isEmpty());
 }
 
 void MainWindow::onPickSession(int row) {
@@ -665,8 +740,8 @@ void MainWindow::onNewSession() {
     persistNow();
     Session s = Session::create(curSess_ >= 0 ? sessions_[curSess_].folder : cfg_.projectDir);
     sessions_.prepend(s);
-    persistNow();
-    curSess_ = 0;
+    curSess_ = 0;   // ВАЖНО до persistNow: иначе id старого чата DeepSeek
+    persistNow();   // записывался бы в новую сессию — отсюда «помнит всё подряд»
     refreshSessionList();
     activateSession(0);
 }
@@ -717,47 +792,56 @@ void MainWindow::showEmptyState() {
     chatLay_->insertWidget(chatLay_->count() - 1, wrap);
 }
 
-void MainWindow::pushHist(const QString& role, const QString& text, const QString& name,
-                          const QString& sub, bool ok, const QString& detail) {
-    if (replaying_ || curSess_ < 0 || curSess_ >= sessions_.size()) return;
+int MainWindow::pushHist(const QString& role, const QString& text, const QString& name,
+                         const QString& sub, bool ok, const QString& detail) {
+    if (replaying_ || curSess_ < 0 || curSess_ >= sessions_.size()) return -1;
     QJsonObject e{{QStringLiteral("role"), role}};
     if (!text.isEmpty()) e[QStringLiteral("text")] = text;
     if (!name.isEmpty()) e[QStringLiteral("name")] = name;
     if (!sub.isEmpty()) e[QStringLiteral("sub")] = sub;
     e[QStringLiteral("ok")] = ok;
     if (!detail.isEmpty()) e[QStringLiteral("detail")] = detail;
+    if (role == QLatin1String("user"))
+        e[QStringLiteral("pprev")] = ds_->parentMessageId(); // точка отката для Regenerate
     sessions_[curSess_].history.append(e);
     if (sessions_[curSess_].history.size() > 400) sessions_[curSess_].history.removeFirst();
+    Session& s = sessions_[curSess_];
+    s.ctxChars += text.size() + name.size() + sub.size() + detail.size();
     persistNow();
+    return s.history.size() - 1;
 }
 
 void MainWindow::replayHistory() {
     if (curSess_ < 0 || curSess_ >= sessions_.size()) return;
-    for (const QJsonValue& v : sessions_[curSess_].history) {
-        const QJsonObject e = v.toObject();
+    const auto& hist = sessions_[curSess_].history;
+    for (int i = 0; i < hist.size(); ++i) {
+        const QJsonObject e = hist[i].toObject();
         const QString role = e[QStringLiteral("role")].toString();
+        const QString text = e[QStringLiteral("text")].toString();
         if (role == QLatin1String("user")) {
             auto* c = chatAppend(QStringLiteral("user"), QString(), false);
             auto* l = qobject_cast<QVBoxLayout*>(c->layout());
-            auto* lbl = new QLabel(mdToHtml(e[QStringLiteral("text")].toString()));
-            lbl->setWordWrap(true); l->addWidget(lbl);
-            fitBubble(c, lbl, true);
+            renderRich(l, text);
+            fitBubble(c, text, true);
         } else if (role == QLatin1String("assistant")) {
             auto* c = chatAppend(QStringLiteral("assistant"), QString(), false);
             auto* l = qobject_cast<QVBoxLayout*>(c->layout());
-            auto* lbl = new QLabel(mdToHtml(e[QStringLiteral("text")].toString()));
-            lbl->setWordWrap(true); lbl->setTextInteractionFlags(Qt::TextSelectableByMouse); l->addWidget(lbl);
-            fitBubble(c, lbl, false);
+            renderRich(l, text);
+            fitBubble(c, text, false);
+            addAssistantActions(l, i, text);
+        } else if (role == QLatin1String("hint")) {
+            auto* c = chatAppend(QStringLiteral("hint"), QString(), false);
+            auto* l = qobject_cast<QVBoxLayout*>(c->layout());
+            renderRich(l, text);
+            fitBubble(c, text, false);
         } else if (role == QLatin1String("tool")) {
             addToolRow(e[QStringLiteral("name")].toString(), e[QStringLiteral("sub")].toString(),
                        e[QStringLiteral("ok")].toBool(true), QString());
         } else if (role == QLatin1String("error")) {
             auto* c = chatAppend(QStringLiteral("error"), QString(), false);
             auto* l = qobject_cast<QVBoxLayout*>(c->layout());
-            auto* lbl = new QLabel(QStringLiteral("<span style='color:#ffb7c5'>%1</span>")
-                                       .arg(e[QStringLiteral("text")].toString().toHtmlEscaped()));
-            lbl->setWordWrap(true); l->addWidget(lbl);
-            fitBubble(c, lbl, false);
+            renderRich(l, text);
+            fitBubble(c, text, false);
         }
     }
 }
@@ -774,8 +858,19 @@ void MainWindow::onSend() {
         if (curSess_ >= 0 && sessions_[curSess_].folder.isEmpty()) return;
     }
     QString t = input_->toPlainText().trimmed();
-    if (t.isEmpty()) return;
+    if (t.isEmpty() && attachPaths_.isEmpty()) return;
     input_->clear();
+
+    if (t.compare(QStringLiteral("/compact"), Qt::CaseInsensitive) == 0) { compactNow(); return; }
+
+    if (!attachPaths_.isEmpty()) {
+        t += QStringLiteral(
+            "\n\n[ATTACHED FILES — лежат в песочнице агента, полные пути:\n%1\n"
+            "Прочитай через SHELL (type \"path\") или скопируй в проект при нужде.]\n")
+            .arg(attachPaths_.join(QStringLiteral("\n")));
+        attachPaths_.clear();
+        refreshAttachUi();
+    }
     setSessionTitleFromText(t);
     agent_->sendUserMessage(t);
 }
@@ -808,12 +903,8 @@ void MainWindow::onBusy(bool on) {
 void MainWindow::addUser(const QString& text) {
     auto* c = chatAppend(QStringLiteral("user"));
     auto* l = qobject_cast<QVBoxLayout*>(c->layout());
-    auto* lbl = new QLabel(mdToHtml(text));
-    lbl->setWordWrap(true);
-    lbl->setStyleSheet(QStringLiteral("color:#f5f0f2;"));
-    lbl->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    l->addWidget(lbl);
-    fitBubble(c, lbl, true);
+    renderRich(l, text);
+    fitBubble(c, text, true);
     pushHist(QStringLiteral("user"), text);
 }
 
@@ -824,7 +915,7 @@ void MainWindow::beginAssistant() {
     liveBubble_->setWordWrap(true);
     liveBubble_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     l->addWidget(liveBubble_);
-    fitBubble(liveCard_, liveBubble_, false);
+    fitBubble(liveCard_, QStringLiteral("typing…"), false);
     liveRaw_.clear();
     pulsePhase_ = 0;
     pulseTimer_.start();
@@ -834,24 +925,32 @@ void MainWindow::appendAssistantDelta(const QString& delta) {
     if (!liveBubble_) beginAssistant();
     liveRaw_ += delta;
     liveBubble_->setText(liveRaw_);
-    fitBubble(liveCard_, liveBubble_, false);
+    fitBubble(liveCard_, liveRaw_, false);
     smoothScrollBottom();
 }
 
 void MainWindow::endAssistant(const QString& cleanText) {
     pulseTimer_.stop();
-    if (liveBubble_) {
-        liveBubble_->setText(cleanText.isEmpty()
-            ? QStringLiteral("<span style='color:#575962;font-style:italic'>…continuing —</span>")
-            : mdToHtml(cleanText));
-        fitBubble(liveCard_, liveBubble_, false);
-    }
     if (liveCard_) {
         liveCard_->setState(QString()); // снять live
         liveCard_->setPulseColor(QColor());
+        auto* card = liveCard_;
+        auto* l = qobject_cast<QVBoxLayout*>(card->layout());
+        if (liveBubble_) { l->removeWidget(liveBubble_); delete liveBubble_; liveBubble_ = nullptr; }
+        if (cleanText.isEmpty()) {
+            auto* lbl = new QLabel(QStringLiteral("<span style='color:#575962;font-style:italic'>…continuing —</span>"));
+            lbl->setWordWrap(true);
+            l->addWidget(lbl);
+        } else {
+            renderRich(l, cleanText);
+            fitBubble(card, cleanText, false);
+            const int idx = pushHist(QStringLiteral("assistant"), cleanText);
+            addAssistantActions(l, idx, cleanText);
+            if (curSess_ >= 0) sessions_[curSess_].ctxChars += 0; // учёт уже в pushHist
+            autoTitleFromAnswer(cleanText);
+            maybeCompact();
+        }
         liveCard_ = nullptr;
-        liveBubble_ = nullptr;
-        if (!cleanText.isEmpty()) pushHist(QStringLiteral("assistant"), cleanText);
         liveRaw_.clear();
     }
     smoothScrollBottom();
@@ -872,7 +971,7 @@ void MainWindow::addToolRow(const QString& name, const QString& sub, bool ok, co
         det->setWordWrap(true);
         l->addWidget(det);
     }
-    fitBubble(card, lbl, false);
+    fitBubble(card, name + QStringLiteral(" ") + sub, false);
     pushHist(QStringLiteral("tool"), QString(), name, sub, ok, detail.left(400));
 }
 
@@ -897,7 +996,7 @@ void MainWindow::addError(const QString& err) {
                                .arg(err.toHtmlEscaped()));
     lbl->setWordWrap(true);
     l->addWidget(lbl);
-    fitBubble(card, lbl, false);
+    fitBubble(card, err, false);
     pushHist(QStringLiteral("error"), err);
 }
 
@@ -1028,4 +1127,234 @@ void MainWindow::onSettings() {
 void MainWindow::closeEvent(QCloseEvent* e) {
     persistNow();
     QMainWindow::closeEvent(e);
+}
+
+// ============================================================================
+//  rich-рендер: текст-куски markdown + код-блоки с кнопкой Copy
+// ============================================================================
+void MainWindow::renderRich(QVBoxLayout* l, const QString& text) {
+    static const QRegularExpression fenceRe(QStringLiteral("```(\\w*)\\n([\\s\\S]*?)(?:```|$)"));
+    auto addText = [l](const QString& chunk) {
+        auto* lbl = new QLabel(mdToHtml(chunk));
+        lbl->setWordWrap(true);
+        lbl->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        l->addWidget(lbl);
+    };
+    int pos = 0;
+    auto it = fenceRe.globalMatch(text);
+    while (it.hasNext()) {
+        const auto m = it.next();
+        const QString pre = text.mid(pos, m.capturedStart(0) - pos).trimmed();
+        if (!pre.isEmpty()) addText(pre);
+
+        const QString code = m.captured(2).trimmed();
+        const QString lang = m.captured(1);
+
+        auto* box = new QFrame; box->setObjectName(QStringLiteral("codeBox"));
+        auto* bl = new QVBoxLayout(box);
+        bl->setContentsMargins(0, 0, 0, 0);
+        bl->setSpacing(0);
+
+        auto* hdr = new QWidget;
+        auto* hl = new QHBoxLayout(hdr);
+        hl->setContentsMargins(10, 4, 6, 2);
+        auto* cap = new QLabel(lang.isEmpty() ? QStringLiteral("code") : lang);
+        cap->setStyleSheet(QStringLiteral("color:#7d7f89; font-size:11px;"));
+        hl->addWidget(cap);
+        hl->addStretch(1);
+        auto* cp = new QPushButton;
+        cp->setObjectName(QStringLiteral("miniBtn"));
+        cp->setCursor(Qt::PointingHandCursor);
+        cp->setToolTip(QStringLiteral("Copy"));
+        cp->setIcon(QIcon(fa::pix(fa::copy(), 11, QColor(0x7d, 0x7f, 0x89))));
+        cp->setIconSize(QSize(11, 11));
+        connect(cp, &QPushButton::clicked, this, [cp, code]() {
+            QGuiApplication::clipboard()->setText(code);
+            cp->setIcon(QIcon(fa::pix(fa::check(), 11, QColor(0x35, 0xcf, 0x7f))));
+            QTimer::singleShot(1100, cp, [cp]() {
+                cp->setIcon(QIcon(fa::pix(fa::copy(), 11, QColor(0x7d, 0x7f, 0x89))));
+            });
+        });
+        hl->addWidget(cp);
+        bl->addWidget(hdr);
+
+        auto* area = new QPlainTextEdit;
+        area->setObjectName(QStringLiteral("codeArea"));
+        area->setReadOnly(true);
+        area->setPlainText(code);
+        area->setWordWrapMode(QTextOption::NoWrap);
+        const QFontMetrics fm(QFont(QStringLiteral("Consolas"), 9));
+        const int lines = code.count(QLatin1Char('\n')) + 1;
+        area->setFixedHeight(qBound(34, lines * fm.lineSpacing() + 22, 340));
+        bl->addWidget(area);
+
+        l->addWidget(box);
+        pos = m.capturedEnd(0);
+    }
+    const QString tail = text.mid(pos).trimmed();
+    if (!tail.isEmpty() || pos == 0) addText(tail.isEmpty() ? text : tail);
+}
+
+// ============================================================================
+//  действия под ответом ассистента: Copy / Regenerate
+// ============================================================================
+void MainWindow::addAssistantActions(QVBoxLayout* l, int histIdx, const QString& plain) {
+    auto* row = new QWidget;
+    auto* rl = new QHBoxLayout(row);
+    rl->setContentsMargins(0, 2, 0, 0);
+    rl->setSpacing(2);
+    auto mk = [](const QString& txt, const QString& g) {
+        auto* b = new QPushButton(txt);
+        b->setObjectName(QStringLiteral("actBtn"));
+        b->setCursor(Qt::PointingHandCursor);
+        b->setIcon(QIcon(fa::pix(g, 10, QColor(0x6f, 0x72, 0x7c))));
+        b->setIconSize(QSize(10, 10));
+        return b;
+    };
+    auto* cpBtn = mk(QStringLiteral("Copy"), fa::copy());
+    auto* rgBtn = mk(QStringLiteral("Regenerate"), fa::rotateRight());
+    connect(cpBtn, &QPushButton::clicked, this, [this, cpBtn, plain]() {
+        onCopyCard(plain);
+        cpBtn->setIcon(QIcon(fa::pix(fa::check(), 10, QColor(0x35, 0xcf, 0x7f))));
+        QTimer::singleShot(1100, cpBtn, [cpBtn]() {
+            cpBtn->setIcon(QIcon(fa::pix(fa::copy(), 10, QColor(0x6f, 0x72, 0x7c))));
+        });
+    });
+    connect(rgBtn, &QPushButton::clicked, this, [this, histIdx]() { onRegenerate(histIdx); });
+    rl->addWidget(cpBtn);
+    rl->addWidget(rgBtn);
+    rl->addStretch(1);
+    l->addWidget(row);
+}
+
+void MainWindow::onCopyCard(const QString& plain) {
+    QGuiApplication::clipboard()->setText(plain);
+}
+
+// Regenerate: откат deepseek-цепочки к точке ДО того user-сообщения и повторная отправка
+void MainWindow::onRegenerate(int histIdx) {
+    if (busyOn_ || curSess_ < 0) return;
+    auto& hist = sessions_[curSess_].history;
+    if (histIdx < 0 || histIdx >= hist.size()) return;
+    // ближайший user ИЛИ точка отката до него
+    int j = histIdx - 1;
+    while (j >= 0 && hist[j].toObject().value(QStringLiteral("role")).toString() != QLatin1String("user")) --j;
+    if (j < 0) { addError(QStringLiteral("Nothing to regenerate — no user message above")); return; }
+    const QString userText = hist[j].toObject().value(QStringLiteral("text")).toString();
+    const QString pprev    = hist[j].toObject().value(QStringLiteral("pprev")).toString();
+    // откат цепочки DeepSeek к моменту до этого хода (история тоже обрезается)
+    ds_->setSession(sessions_[curSess_].dsSessionId, pprev);
+    hist.resize(j); // сам user-бабл пересоздастся при отправке
+    persistNow();
+    clearChatUi();
+    replaying_ = true; replayHistory(); replaying_ = false;
+    if (hist.isEmpty()) showEmptyState();
+    agent_->sendUserMessage(userText);
+}
+
+// ============================================================================
+//  compact: сводка → новая сессия у DeepSeek → бутстрап продолжения
+// ============================================================================
+void MainWindow::compactNow() {
+    if (compacting_) return;
+    if (curSess_ < 0) return;
+    if (busyOn_) { addError(QStringLiteral("Wait for the run to finish, then /compact")); return; }
+    if (sessions_[curSess_].history.isEmpty()) { addError(QStringLiteral("Nothing to compact yet")); return; }
+    compacting_ = true;
+    auto* card = chatAppend(QStringLiteral("tool"));
+    auto* l = qobject_cast<QVBoxLayout*>(card->layout());
+    auto* lbl = new QLabel(QStringLiteral("<b style='color:#35cf7f'>COMPACT</b> <span style='color:#6f727c'>squeezing context…</span>"));
+    lbl->setStyleSheet(QStringLiteral("font-family:'Cascadia Code','Consolas',monospace;font-size:12px;"));
+    l->addWidget(lbl);
+    fitBubble(card, QStringLiteral("COMPACT squeezing context…"), false);
+    agent_->compactSession();
+}
+
+void MainWindow::onCompactDone(const QString& summary) {
+    compacting_ = false;
+    if (curSess_ < 0) return;
+    if (summary.isEmpty()) { addError(QStringLiteral("Compact failed — context kept as is")); return; }
+
+    // контекст обнуляется ДО pushHist (иначе ссылка на сессию протухнет)
+    sessions_[curSess_].ctxChars = summary.size();
+
+    // новая память у DeepSeek + контракт тулов пойдёт первым сообщением заново
+    ds_->newChat();
+    sessions_[curSess_].dsSessionId.clear();
+    sessions_[curSess_].parentMessageId.clear();
+    agent_->restoreSession(false);
+
+    auto* card = chatAppend(QStringLiteral("hint"));
+    auto* l = qobject_cast<QVBoxLayout*>(card->layout());
+    auto* hdr = new QLabel(QStringLiteral("<b style='color:#b8455e'>Context compacted — new DeepSeek chat</b>"));
+    hdr->setWordWrap(true);
+    l->addWidget(hdr);
+    renderRich(l, summary);
+    fitBubble(card, summary, false);
+    pushHist(QStringLiteral("hint"), summary);
+    persistNow();
+
+    const QString boot = QStringLiteral(
+        "Контекст пересжат из прошлой сессии. Сводка:\n\n%1\n\n"
+        "Действуй строго по разделу «Следующее действие». Подтверди одним предложением и жди мою команду.").arg(summary);
+    agent_->sendUserMessage(boot);
+}
+
+void MainWindow::maybeCompact() {
+    if (curSess_ < 0 || compacting_) return;
+    if (sessions_[curSess_].ctxChars >= 190000) { // ~200k символов — прикидка лимита контекста
+        auto* card = chatAppend(QStringLiteral("hint"));
+        auto* l = qobject_cast<QVBoxLayout*>(card->layout());
+        auto* lbl = new QLabel(QStringLiteral("<i style='color:#b8455e'>Context limit is near — auto-compacting…</i>"));
+        l->addWidget(lbl);
+        fitBubble(card, QStringLiteral("Context limit is near — auto-compacting…"), false);
+        compactNow();
+    }
+}
+
+// ============================================================================
+//  авто-тайтл сессии из первого осмысленного ответа
+// ============================================================================
+void MainWindow::autoTitleFromAnswer(const QString& t) {
+    if (curSess_ < 0) return;
+    Session& s = sessions_[curSess_];
+    if (s.title != QStringLiteral("New Chat")) return;
+    QString flat = t.simplified();
+    flat.remove(QRegularExpression(QStringLiteral("^[#>*`\\-\\s]+")));
+    const int dot = flat.indexOf(QRegularExpression(QStringLiteral("[.!?]")));
+    if (dot > 8 && dot < 44) flat = flat.left(dot);
+    flat = flat.left(42).trimmed();
+    if (flat.size() < 3) return; // «typing…», маркер-огрызок и т.п.
+    s.title = flat;
+    setWindowTitle(QStringLiteral("%1 — DeepSeekIDE").arg(s.title.left(56)));
+    refreshSessionList();
+    persistNow();
+}
+
+// ============================================================================
+//  вложения: файлы копируются в sandbox/attachments, агенту уходят пути
+// ============================================================================
+void MainWindow::refreshAttachUi() {
+    if (!attachRow_) return;
+    if (attachPaths_.isEmpty()) { attachRow_->hide(); return; }
+    QStringList names;
+    for (const QString& ap : attachPaths_) names << QFileInfo(ap).fileName();
+    attachLbl_->setText(names.join(QStringLiteral(";  ")));
+    attachRow_->show();
+}
+
+void MainWindow::onAttach() {
+    const QStringList files = QFileDialog::getOpenFileNames(this, QStringLiteral("Attach files"));
+    if (files.isEmpty()) return;
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+                        + QStringLiteral("/sandbox/attachments");
+    QDir().mkpath(dir);
+    for (const QString& f : files) {
+        const QString dst = QDir(dir).filePath(QFileInfo(f).fileName());
+        QFile::remove(dst);
+        QFile::copy(f, dst);
+        if (!attachPaths_.contains(dst)) attachPaths_ << dst;
+    }
+    refreshAttachUi();
+    logLine(QStringLiteral("Attached %1 file(s)").arg(files.size()));
 }

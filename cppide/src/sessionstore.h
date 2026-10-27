@@ -13,7 +13,8 @@ struct Session {
     QString dsSessionId;    // chat_session_id DeepSeek
     QString parentMessageId;// контекстная цепочка
     QString created, updated;
-    QJsonArray history;     // карточки чата [{role,text,name,sub,ok,detail}]
+    int     ctxChars = 0;   // грубая оценка контекста (символы), для 200k-лимита и compact
+    QJsonArray history;     // карточки чата [{role,text,name,sub,ok,detail,pprev}]
 
     static Session create(const QString& folder);
     QJsonObject toJson() const;

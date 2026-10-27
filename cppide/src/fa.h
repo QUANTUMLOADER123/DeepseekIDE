@@ -44,6 +44,10 @@ inline QString winMax()      { return glyph(0xf2d0); }
 inline QString winRestore()  { return glyph(0xf2d2); }
 inline QString sparkles()    { return glyph(0xe2ca); }  // wand-magic-sparkles
 inline QString stop()        { return glyph(0xf04d); }
+inline QString copy()        { return glyph(0xf0c5); }
+inline QString check()       { return glyph(0xf00c); }
+inline QString rotateRight() { return glyph(0xf01e); }  // regenerate
+inline QString paperclip()   { return glyph(0xf0c6); }  // attach
 
 inline QPixmap pix(const QString& g, int px = 14, const QColor& c = QColor(0xe6, 0xe7, 0xea)) {
     QPixmap pm(px, px);

@@ -28,6 +28,7 @@ QJsonObject Session::toJson() const {
         {QStringLiteral("parent_message_id"), parentMessageId},
         {QStringLiteral("created"), created},
         {QStringLiteral("updated"), updated},
+        {QStringLiteral("ctx"), ctxChars},
         {QStringLiteral("history"), history},
     };
 }
@@ -42,6 +43,7 @@ Session Session::fromJson(const QJsonObject& o) {
     s.parentMessageId = o[QStringLiteral("parent_message_id")].toString();
     s.created = o[QStringLiteral("created")].toString();
     s.updated = o[QStringLiteral("updated")].toString();
+    s.ctxChars = o[QStringLiteral("ctx")].toInt(0);
     s.history = o[QStringLiteral("history")].toArray();
     return s;
 }
