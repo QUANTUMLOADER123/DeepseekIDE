@@ -21,25 +21,17 @@
 `[<{…}\>]`-формата — их агент интерпретирует и убирает из показа.
 Блоки правок: fenced-блоки с меткой `deepseekide-ops` или голые JSON-массивы ops в любом месте ответа.
 
-## Сборка (Windows, MSVC 2022 + Qt 6.8)
+## Сборка (Windows, MSVC + Qt 6.8)
 
-1. Установите Qt 6.8 (компоненты: MSVC 2022 64-bit + **Qt 5 Compatibility** — для CP866):
-   ```bat
-   aqt install-qt windows desktop 6.8.0 win64_msvc2022_64 -m qt5compat
-   ```
-   или Qt Online Installer: Qt → 6.8.x → MSVC 2022 64-bit, CMake, Ninja.
-
-2. Соберите:
-   ```bat
-   build.bat
-   :: или вручную:
-   cmake -S cppide -B cppide/build -G "Visual Studio 17 2022" -A x64 ^
-         -DCMAKE_PREFIX_PATH="C:/Qt/6.8.0/msvc2022_64"
-   cmake --build cppide/build --config Release
-   ```
-
-3. Запустите `cppide/build/Release/DeepSeekCppIDE.exe`
-   (Qt-рантаймы — через `windeployqt`).
+1. Поставьте Qt 6.8 (нужны компоненты: **MSVC 2022 64-bit** и **Qt 5 Compatibility** для CP866):
+   - через Qt Online Installer (qt.io/download-qt-installer-oss), **или**
+   - консолью: `pip install aqtinstall && aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 -m qt5compat --outputdir C:\Qt`
+2. Просто запустите `build.bat` из папки `cppide` — он сам:
+   - найдёт Qt (диски C:/D:/E:/F:, `%USERPROFILE%\Qt`; иначе задайте `QT6_DIR`),
+   - поднимет окружение Visual Studio (`vcvars64.bat`, включая `F:\Program Files\Microsoft Visual Studio\18\Community`),
+   - соберёт через Ninja (или генератор VS) и положит Qt-рантаймы рядом с exe.
+3. Итог: `cppide\build\DeepSeekCppIDE.exe` (Ninja) или `cppide\build\Release\` (VS-генератор).
+4. Если CMake не найден: `winget install Kitware.CMake` (или поставьте «C++ CMake tools» в VS Installer).
 
 ## Где взять токен DeepSeek
 
