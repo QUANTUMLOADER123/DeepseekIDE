@@ -115,6 +115,9 @@ private:
     QLabel*    attachLbl_  = nullptr;
     bool       compacting_ = false;
     int        typingTick_ = 0;
+    QWidget*   spinner_   = nullptr;   // крутилка «пишет» (сырой ptr, живёт в liveCard_)
+    QWidget*   hoverPill_ = nullptr;   // ползущая подсветка наведения в списке сессий
+    class QPropertyAnimation* pillAnim_ = nullptr;
     bool       titleQueued_ = false;   // ждём свободного ds для generateTitle
     QString    titleSeed_;
     QString    lastUserText_;          // последнее сообщение (для сида тайтла)

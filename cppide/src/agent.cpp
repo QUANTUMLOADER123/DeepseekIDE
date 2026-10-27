@@ -33,6 +33,18 @@
 // ============================================================================
 Agent::Agent(DeepSeekClient* ds, QObject* parent) : QObject(parent), ds_(ds) {
     connect(ds_, &DeepSeekClient::chatDelta,    this, &Agent::onChatDelta);
+    // анти-зависание: раз в секунду считаем секунды без прогресса; >75 с → стук в ds (abort → failed → ре-аск)
+    pulseTimer_ = new QTimer(this);
+    pulseTimer_->setInterval(1000);
+    connect(pulseTimer_, &QTimer::timeout, this, [this]() {
+        if (!busy_) { autoTmo_ = 0; return; }
+        if (++autoTmo_ <= 75) return;
+        autoTmo_ = 0;
+        emit log(QStringLiteral("AGT: нет прогресса 75с — перезапрашиваю"));
+        ds_->abort();
+        if (!lastOut_.isEmpty()) ds_->ask(lastOut_);
+    });
+    pulseTimer_->start();
     connect(ds_, &DeepSeekClient::chatFinished, this, &Agent::onChatFinished);
     connect(ds_, &DeepSeekClient::failed,       this, &Agent::onFailed);
     connect(ds_, &DeepSeekClient::log,          this, &Agent::log);
@@ -122,7 +134,7 @@ void Agent::generateTitle(const QString& convoSnippet) {
 //  Видимый стрим: задерживаем потенциальные начала маркеров "[<{"
 // ============================================================================
 void Agent::onChatDelta(const QString& chunk) {
-    answerRaw_ += chunk;
+    answerRaw_ += chunk; autoTmo_ = 0;
     carry_ += chunk;
     auto safeFlush = [&](int keep) {
         if (carry_.size() > keep) {
@@ -174,7 +186,7 @@ static QString buildSystemPrompt(const AppCfg& cfg) {
         "[<{SANDBOX SHELL: windows-cmd}>] -> то же, но в МИНИ-ПЕСОЧНИЦЕ (отдельная sandbox-папка; можно ставить пакеты, создавать файлы, тестировать — проект не трогать).\n"
         "[<{SITE VIEW: url}>] -> показать юзеру страницу во встроенном мини-браузере IDE (html-предпросмотр).\n"
         "[<{ASK: вопрос :: вариант1; вариант2}>] -> спросить юзера (варианты опциональны; MULTI — мультивыбор). Ответ вернётся SYSTEM-сообщением.\n"
-        "[<{IMAGE SHOW: image prompt}>] -> сгенерировать картинку (бесплатный API, без ключа) и показать ИНЛАЙН в чате. [<{IMAGE FILE: prompt :: path.png}>] -> сгенерировать и сохранить в файл проекта. Опиши стиль/свет/композицию; текст на картинках ненадёжен.\n\n"
+        "[<{IMAGE SHOW: image prompt}>] -> сгенерировать картинку (бесплатный API, без ключа) и показать ИНЛАЙН в чате. [<{IMAGE FILE: prompt :: path.png}>] -> сгенерировать и сохранить в файл проекта. Опиши стиль/свет/композицию; текст на картинках ненадёжен. ПРОМПТЫ ДЛЯ IMAGE пиши строго по-английски.\n\n"
         "# FILE EDITS: когда нужно изменить, создать или удалить файлы — пиши JSON-блок полностью:\n"
         "```deepseekide-ops\n"
         "[{\"name\":\"write_file\",\"args\":{\"path\":\"src/main.cpp\",\"content\":\"…\"}},\n"
@@ -209,6 +221,8 @@ void Agent::sendUserMessage(const QString& text) {
     busy_ = true; emit busyChanged(true);
     answerRaw_.clear(); answerVis_.clear(); carry_.clear();
     emit assistantBubbleStart();
+    lastOut_ = out;
+    autoTmo_ = 0;
     ds_->ask(out);
 }
 
@@ -326,6 +340,7 @@ void Agent::processAnswer(const QString& full) {
         emit log(QStringLiteral("AGT: авто-continue (%1 зн, шаг %2)").arg(svc.size()).arg(autoCount_));
         emit assistantBubbleStart();
         answerRaw_.clear(); answerVis_.clear(); carry_.clear();
+        lastOut_ = svc; autoTmo_ = 0;
         ds_->ask(svc);
         return;
     }

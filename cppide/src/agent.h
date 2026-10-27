@@ -5,6 +5,7 @@
 #include <QSet>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QTimer>
 #include "settings.h"
 
 class DeepSeekClient;
@@ -82,6 +83,9 @@ private:
     bool    busy_ = false;
     bool    firstPrompt_ = true;
     int     autoCount_ = 0;
+    int     autoTmo_ = 0;            // секунд без прогресса (пульс-таймер)
+    QString lastOut_;               // последний запрос — для авто-повтора при зависании
+    QTimer* pulseTimer_ = nullptr;
     QString carry_;                  // видимый хвост-демпинг маркеров "[<{…"
     QString answerRaw_, answerVis_;  // текущий ответ: сырой и видимый
 

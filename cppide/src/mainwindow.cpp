@@ -48,6 +48,7 @@
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QVariantAnimation>
+#include <QMenu>
 #include <functional>
 
 #ifdef Q_OS_WIN
@@ -101,7 +102,7 @@ QPushButton#miniBtn:pressed { background:#26272c; }
 QPushButton#actBtn { background:transparent; border:none; border-radius:6px; padding:3px 8px; color:#6f727c; font-size:11px; }
 QPushButton#actBtn:hover { background:#1e1f24; color:#e2e3e8; }
 QPushButton#actBtn:pressed { background:#26272c; }
-QListWidget#sessions::item:hover { background:#1e1f24; }
+QListWidget#sessions::item:hover { color:#e2e3e8; }  /* фон даёт анимированная пилюля */
 QListWidget#sessions::item:selected { background:#0f1013; color:#ffffff; border-left:2px solid #a6334d; }
 
 QPushButton#chipIcn {
@@ -160,6 +161,11 @@ QCheckBox { spacing:8px; }
 QCheckBox::indicator { width:16px; height:16px; border-radius:4px; border:1px solid #3a3b42; background:#161719; }
 QCheckBox::indicator:checked { background:#a6334d; border-color:#a6334d; }
 QToolTip { background:#1d1e22; color:#e6e7ea; border:1px solid #33343a; padding:7px 10px; border-radius:6px; }
+
+QMenu { background:#191a1e; border:1px solid #2c2d33; border-radius:8px; padding:4px; }
+QMenu::item { padding:6px 20px 6px 14px; border-radius:5px; color:#c9cad0; }
+QMenu::item:selected { background:#2b1a20; color:#f0cdd5; }
+QMenu::separator { height:1px; background:#2a2b30; margin:4px 8px; }
 )";
 
 // ============================================================================
@@ -184,6 +190,46 @@ static QPixmap logoPix(int size) {
     const QPixmap s = src.scaled(size, size, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
     p.drawPixmap((size - s.width()) / 2, (size - s.height()) / 2, s);
     p.end();
+    return out;
+}
+
+// круговой спиннер «печатает» — крутится дугой
+class Spinner : public QWidget {
+public:
+    explicit Spinner(QWidget* p = nullptr) : QWidget(p) { setFixedSize(16, 16); }
+    void advance() { angle_ = (angle_ + 24) % 360; update(); }
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        const QRectF r(2, 2, 12, 12);
+        QPen track(QColor(0x2a, 0x2b, 0x30)); track.setWidthF(2.0);
+        p.setPen(track); p.drawEllipse(r);
+        QPen pen(QColor(0xc0, 0x55, 0x70)); pen.setWidthF(2.2); pen.setCapStyle(Qt::RoundCap);
+        p.setPen(pen); p.drawArc(r, angle_ * 16, 100 * 16);
+    }
+    int angle_ = 0;
+};
+
+// живой стрим БЕЗ тулок: закрытые маркеры, ops-блоки и хвост недописанного маркера
+static QString liveClean(const QString& raw) {
+    QString s = raw;
+    static const QRegularExpression fullRe(QStringLiteral("\\[\\s*<\\{[\\s\\S]*?(?:\\}\\s*>\\s*\\]|\\}\\s*\\])"));
+    s.remove(fullRe);
+    static const QRegularExpression opsRe(QStringLiteral("```deepseekide-ops[\\s\\S]*?(?:```|$)"));
+    s.remove(opsRe);
+    int cut = s.lastIndexOf(QStringLiteral("[<{"));
+    if (cut >= 0) s = s.left(cut);
+    cut = s.lastIndexOf(QStringLiteral("&lt;{"));
+    if (cut >= 0) s = s.left(cut);
+    return s;
+}
+
+static QPixmap roundedPm(const QPixmap& src, qreal rad) {
+    QPixmap out(src.size()); out.fill(Qt::transparent);
+    QPainter p(&out); p.setRenderHint(QPainter::Antialiasing);
+    QPainterPath path; path.addRoundedRect(QRectF(0, 0, src.width(), src.height()), rad, rad);
+    p.setClipPath(path); p.drawPixmap(0, 0, src);
     return out;
 }
 
@@ -265,7 +311,17 @@ MainWindow::MainWindow() {
 
     sessionList_ = new QListWidget; sessionList_->setObjectName(QStringLiteral("sessions"));
     sessionList_->setSpacing(1);
+    sessionList_->setMouseTracking(true);
     connect(sessionList_, &QListWidget::currentRowChanged, this, &MainWindow::onPickSession);
+    // ползущая пилюля-наведение поверх строк (полупрозрачная — текст остаётся читаемым)
+    hoverPill_ = new QWidget(sessionList_->viewport());
+    hoverPill_->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    hoverPill_->setStyleSheet(QStringLiteral("background:rgba(255,255,255,9); border-radius:8px;"));
+    hoverPill_->hide();
+    sessionList_->viewport()->installEventFilter(this);
+    pillAnim_ = new QPropertyAnimation(hoverPill_, "geometry", this);
+    pillAnim_->setDuration(150);
+    pillAnim_->setEasingCurve(QEasingCurve::OutCubic);
     sl->addWidget(sessionList_, 1);
 
     auto* bottom = new QVBoxLayout; bottom->setSpacing(8);
@@ -513,6 +569,26 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* ev) {
             toggleMax();
             return true;
         }
+    } else if (obj == sessionList_->viewport()) {
+        if (ev->type() == QEvent::MouseMove) {
+            auto* me = static_cast<QMouseEvent*>(ev);
+            const QModelIndex ix = sessionList_->indexAt(me->pos());
+            if (ix.isValid() && sessionList_->item(ix.row())
+                && sessionList_->item(ix.row())->data(Qt::UserRole).toInt() >= 0) {
+                const QRect r = sessionList_->visualRect(ix);
+                pillAnim_->stop();
+                pillAnim_->setStartValue(hoverPill_->isVisible()
+                    ? hoverPill_->geometry()
+                    : QRect(r.x() + 4, r.y() + 1, r.width() - 8, r.height() - 2));
+                pillAnim_->setEndValue(QRect(r.x() + 4, r.y() + 1, r.width() - 8, r.height() - 2));
+                hoverPill_->show();
+                pillAnim_->start();
+            } else {
+                hoverPill_->hide();
+            }
+        } else if (ev->type() == QEvent::Leave) {
+            hoverPill_->hide();
+        }
     } else if (obj == input_) {
         if (ev->type() == QEvent::KeyPress) {
             auto* ke = static_cast<QKeyEvent*>(ev);
@@ -601,7 +677,7 @@ SquircleCard* MainWindow::chatAppend(const QString& role, const QString& state, 
 void MainWindow::fitBubble(SquircleCard* card, const QString& text, bool userSide) {
     const int vw = chatScroll_->viewport() && chatScroll_->viewport()->width() > 0
                        ? chatScroll_->viewport()->width() : 900;
-    const int limit = qMax(240, qMin(vw - 200, userSide ? 620 : 840));
+    const int limit = qMax(240, qMin(vw - 240, userSide ? 520 : 660));
     QString plain = text;
     if (text.contains(QLatin1Char('<'))) {
         QTextDocument td; td.setHtml(text); plain = td.toPlainText();
@@ -651,16 +727,7 @@ void MainWindow::pulseTick() {
             QColor(228, 146, 160), QColor(206, 116, 133) };
         liveCard_->setPulseColor(cols[pulsePhase_]);
     }
-    // пока стрим ещё не пошёл — весёлые фазы с анимированными точками
-    if (liveBubble_ && liveRaw_.isEmpty()) {
-        static const char* PH[6] = { "thinking", "orchestrating", "reading context",
-                                     "drafting answer", "polishing", "summoning tokens" };
-        ++typingTick_;
-        const int dots = (typingTick_ / 2) % 4;
-        const int ph = (typingTick_ / 14) % 6;
-        liveBubble_->setText(QStringLiteral("<span style='color:#7d828e;font-style:italic'>%1%2</span>")
-                                 .arg(QLatin1String(PH[ph]), QString(dots, QLatin1Char('.'))));
-    }
+    if (spinner_) static_cast<Spinner*>(spinner_)->advance();
 }
 
 QString MainWindow::mdToHtml(const QString& md) {
@@ -669,6 +736,10 @@ QString MainWindow::mdToHtml(const QString& md) {
               QStringLiteral("<pre style='background:#101114;border:1px solid #2a2b30;border-radius:8px;padding:10px;font-family:Consolas,monospace;color:#d6d9df;'>\\2</pre>"));
     s.replace(QRegularExpression(QStringLiteral("`([^`\\n]+)`")),
               QStringLiteral("<code style='background:#17181c;border:1px solid #2a2b30;border-radius:4px;padding:1px 6px;font-family:Consolas,monospace;color:#e1a9b5;'>\\1</code>"));
+    s.replace(QRegularExpression(QStringLiteral("^#\\s+(.+)$"), QRegularExpression::MultilineOption),
+              QStringLiteral("<span style='color:#d98b9c;font-size:17px;font-weight:700'>\\1</span><br>"));
+    s.replace(QRegularExpression(QStringLiteral("^##\\s+(.+)$"), QRegularExpression::MultilineOption),
+              QStringLiteral("<span style='color:#d98b9c;font-size:15px;font-weight:700'>\\1</span><br>"));
     s.replace(QRegularExpression(QStringLiteral("^####?\\s+(.+)$"), QRegularExpression::MultilineOption),
               QStringLiteral("<b style='color:#d98b9c;font-size:14px'>\\1</b>"));
     s.replace(QRegularExpression(QStringLiteral("\\*\\*([^*\\n]+)\\*\\*")),
@@ -788,7 +859,7 @@ void MainWindow::setSessionTitleFromText(const QString& t) {
 
 void MainWindow::clearChatUi() {
     pulseTimer_.stop();
-    liveCard_ = nullptr; liveBubble_ = nullptr; liveRaw_.clear();
+    liveCard_ = nullptr; liveBubble_ = nullptr; spinner_ = nullptr; liveRaw_.clear();
     for (int i = chatLay_->count() - 2; i >= 0; --i) {
         QLayoutItem* it = chatLay_->itemAt(i);
         if (!it) continue;
@@ -945,21 +1016,32 @@ void MainWindow::addUser(const QString& text) {
 void MainWindow::beginAssistant() {
     liveCard_ = chatAppend(QStringLiteral("assistant"), QStringLiteral("live"));
     auto* l = qobject_cast<QVBoxLayout*>(liveCard_->layout());
-    liveBubble_ = new QLabel(QStringLiteral("<span style='color:#575962;font-style:italic'>typing…</span>"));
-    liveBubble_->setWordWrap(true);
-    liveBubble_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    l->addWidget(liveBubble_);
-    fitBubble(liveCard_, QStringLiteral("typing…"), false);
+    auto* sp = new Spinner(liveCard_.data());
+    spinner_ = sp;
+    l->addWidget(sp, 0, Qt::AlignLeft);
+    liveCard_->setFixedWidth(120);
+    liveBubble_ = nullptr;
     liveRaw_.clear();
     pulsePhase_ = 0;
     pulseTimer_.start();
 }
 
 void MainWindow::appendAssistantDelta(const QString& delta) {
-    if (!liveBubble_) beginAssistant();
+    if (!liveCard_) beginAssistant();
     liveRaw_ += delta;
-    liveBubble_->setText(liveRaw_);
-    fitBubble(liveCard_, liveRaw_, false);
+    if (!liveBubble_) { // пришёл первый текст — спиннер заменяем баблом
+        if (spinner_ && liveCard_) {
+            qobject_cast<QVBoxLayout*>(liveCard_->layout())->removeWidget(spinner_);
+            delete spinner_;
+            spinner_ = nullptr;
+        }
+        liveBubble_ = new QLabel;
+        liveBubble_->setWordWrap(true);
+        liveBubble_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        qobject_cast<QVBoxLayout*>(liveCard_->layout())->addWidget(liveBubble_);
+    }
+    liveBubble_->setText(liveClean(liveRaw_));      // ВАЖНО: маркеры/ops в стриме не видны
+    fitBubble(liveCard_, liveClean(liveRaw_), false);
     smoothScrollBottom();
 }
 
@@ -971,6 +1053,8 @@ void MainWindow::endAssistant(const QString& cleanText) {
         SquircleCard* card = liveCard_.data();   // QPointer -> raw
         auto* l = qobject_cast<QVBoxLayout*>(card->layout());
         if (liveBubble_) { l->removeWidget(liveBubble_); delete liveBubble_; liveBubble_ = nullptr; }
+        if (spinner_)    { qobject_cast<QVBoxLayout*>(card->layout())->removeWidget(spinner_);
+                           delete spinner_; spinner_ = nullptr; }
         if (cleanText.isEmpty()) {
             auto* lbl = new QLabel(QStringLiteral("<span style='color:#575962;font-style:italic'>…continuing —</span>"));
             lbl->setWordWrap(true);
@@ -994,7 +1078,10 @@ void MainWindow::endAssistant(const QString& cleanText) {
 }
 
 void MainWindow::addToolRow(const QString& name, const QString& sub, bool ok, const QString& detail) {
-    auto* card = chatAppend(QStringLiteral("tool"), ok ? QString() : QStringLiteral("fail"));
+    // во время работы агента — в ту же живую карточку; при реплее истории — отдельной
+    const bool inside = (liveCard_ != nullptr);
+    SquircleCard* card = inside ? liveCard_.data()
+                                : chatAppend(QStringLiteral("tool"), ok ? QString() : QStringLiteral("fail"));
     auto* l = qobject_cast<QVBoxLayout*>(card->layout());
     auto* lbl = new QLabel(QStringLiteral("<b style='color:%1'>%2</b> <span style='color:#6f727c'>%3</span>")
                                .arg(ok ? QStringLiteral("#35cf7f") : QStringLiteral("#ff5470"),
@@ -1008,7 +1095,7 @@ void MainWindow::addToolRow(const QString& name, const QString& sub, bool ok, co
         det->setWordWrap(true);
         l->addWidget(det);
     }
-    fitBubble(card, name + QStringLiteral(" ") + sub, false);
+    if (!inside) fitBubble(card, name + QStringLiteral(" ") + sub, false);
     pushHist(QStringLiteral("tool"), QString(), name, sub, ok, detail.left(400));
 }
 
@@ -1016,13 +1103,32 @@ void MainWindow::addImage(const QByteArray& bytes, const QString& mime, const QS
     Q_UNUSED(mime);
     QPixmap pm;
     if (!pm.loadFromData(bytes)) { addError(QStringLiteral("image decode failed")); return; }
-    auto* card = chatAppend(QStringLiteral("assistant"));
+    const bool inside = (liveCard_ != nullptr);
+    SquircleCard* card = inside ? liveCard_.data() : chatAppend(QStringLiteral("assistant"));
     auto* l = qobject_cast<QVBoxLayout*>(card->layout());
+
     auto* lbl = new QLabel;
-    lbl->setPixmap(pm.scaledToWidth(240, Qt::SmoothTransformation));
+    lbl->setPixmap(roundedPm(pm.scaledToWidth(240, Qt::SmoothTransformation), 12)); // скруглённое
     lbl->setToolTip(alt.isEmpty() ? QStringLiteral("image") : alt);
+    lbl->setCursor(Qt::PointingHandCursor);
+    lbl->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(lbl, &QLabel::customContextMenuRequested, this, [this, lbl, bytes](const QPoint& pos) {
+        QMenu m(lbl);
+        QAction* aCopy = m.addAction(QStringLiteral("Copy image"));
+        QAction* aSave = m.addAction(QStringLiteral("Save as…"));
+        QAction* sel = m.exec(lbl->mapToGlobal(pos));
+        QPixmap full; full.loadFromData(bytes);
+        if (sel == aCopy) {
+            QGuiApplication::clipboard()->setPixmap(full);
+        } else if (sel == aSave) {
+            const QString fn = QFileDialog::getSaveFileName(this, QStringLiteral("Save image"),
+                QDir::homePath() + QStringLiteral("/image.png"),
+                QStringLiteral("PNG (*.png);;JPEG (*.jpg)"));
+            if (!fn.isEmpty()) full.save(fn);
+        }
+    });
     l->addWidget(lbl);
-    card->setFixedWidth(240 + 36);
+    if (!inside) card->setFixedWidth(240 + 36);
 }
 
 void MainWindow::addError(const QString& err) {

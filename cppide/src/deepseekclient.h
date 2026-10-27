@@ -7,6 +7,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QPointer>
+#include <QTimer>
 #include "pow.h"
 #include "settings.h"
 
@@ -67,6 +68,7 @@ private:
     QString     legacy_, lastPath_, streamErr_, respMsgId_;
     int         emittedChat_ = 0, emittedThink_ = 0;
 
+    QTimer* watchdog_ = nullptr;   // зависание SSE: 45 с без чанков => abort
     void    processSsePayload(const QByteArray& pay);
     QString answerText() const;
     QString thinkText() const;

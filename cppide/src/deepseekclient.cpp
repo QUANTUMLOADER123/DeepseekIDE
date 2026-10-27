@@ -11,7 +11,17 @@ static const char* DS_BASE = "https://chat.deepseek.com";
 static const char* DS_UA   = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                              "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
 
-DeepSeekClient::DeepSeekClient(QObject* parent) : QObject(parent) {}
+DeepSeekClient::DeepSeekClient(QObject* parent) : QObject(parent) {
+    watchdog_ = new QTimer(this);
+    watchdog_->setSingleShot(true);
+    watchdog_->setInterval(45000); // SSE-стрим завис: 45 с без ни одного чанка
+    connect(watchdog_, &QTimer::timeout, this, [this]() {
+        if (reply_) {
+            emit log(QStringLiteral("DS: watchdog — нет данных 45с, сбрасываю соединение"));
+            reply_->abort();
+        }
+    });
+}
 
 void DeepSeekClient::setCfg(const AppCfg& c) {
     if (c.token != cfg_.token) newChat();           // смена аккаунта — новая беседа
@@ -25,6 +35,7 @@ void DeepSeekClient::newChat() {
 }
 
 void DeepSeekClient::abort() {
+    if (watchdog_) watchdog_->stop();
     if (reply_) { reply_->abort(); }
 }
 
@@ -168,6 +179,7 @@ void DeepSeekClient::startCompletion(const QString& prompt, const QString& powB6
         reply_ = nullptr;
         const int httpCode = r->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const QNetworkReply::NetworkError netErr = r->error();
+        if (watchdog_) watchdog_->stop();
         const QByteArray errBody = r->readAll();
         r->deleteLater();
 
@@ -200,6 +212,7 @@ void DeepSeekClient::startCompletion(const QString& prompt, const QString& powB6
 void DeepSeekClient::onReadyRead() {
     QNetworkReply* r = reply_.data();
     if (!r) return;
+    if (watchdog_) watchdog_->start(); // данные пришли — перезарядка watchdog
     sseBuf_ += r->readAll();
     int cut;
     while ((cut = sseBuf_.indexOf('\n')) >= 0) {
