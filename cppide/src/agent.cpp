@@ -167,39 +167,45 @@ void Agent::onFailed(const QString& err) {
 }
 
 // ============================================================================
-//  Системный промпт (порт контракта маркеров из браузерной версии)
+//  Системный промпт — единый JSON-контракт (тулы и правки одним форматом)
 // ============================================================================
 static QString buildSystemPrompt(const AppCfg& cfg) {
-    QString s = QStringLiteral(
-        "Ты — агент десктопной IDE (DeepSeek CppIDE). Можешь безопасно исполнять команды, читать/писать файлы проекта, ходить в интернет и генерировать картинки. Эти возможности вызываются СПЕЦИАЛЬНЫМИ МАРКЕРАМИ — ты пишешь их в тексте ответа, а IDE молча исполняет и присылает результат сообщением, начинающимся со слова SYSTEM:.\n\n"
-        "# MARKER SYNTAX — STRICT CONTRACT:\n"
-        "- Пиши маркеры ТОЧНО как [<{NAME: argument}>] (каноническое закрытие }>]). Один маркер на строку, обычным текстом, НЕ внутри ``` (в коде = пример для человека = игнорируется).\n"
-        "- Никогда не экранируй HTML: < > & буквально, без &lt; &gt; &amp;.\n"
-        "- Кавычки и > внутри аргумента разрешены: [<{SHELL: cmd /c \"dir \"C:\\Program Files\"\" 2>&1}>] — валидная команда.\n"
-        "- Пути в маркерах — относительные, прямые слэши. Абсолютные пути только внутри SHELL.\n"
-        "- Маркеры исполняются автоматически; результаты прилетают как SYSTEM-сообщения. Не комментируй их (\"сейчас запрошу...\") — просто пиши маркер и продолжай.\n\n"
-        "# MARKERS — СТРОГО ОДИН инструмент на весь ответ (ОДИН маркер ИЛИ один блок deepseekide-ops). Всё лишнее игнорируется; маркер исполняется и ответ придёт SYSTEM-сообщением — продолжай следующим ответом:\n"
-        "[<{NEED FILE: path}>] -> полное содержимое файла проекта. [<{FILE INFO: path}>] -> размер/строки. [<{READ RANGE: path:start-end}>] -> фрагмент с номерами строк.\n"
-        "[<{NEED SEARCH: query}>] -> быстрый поиск в интернете. [<{WEB FETCH: url}>] -> страница (текст ≤25k). [<{WEB DOWNLOAD: url :: path}>] -> скачать файл в проект (≤16 MB). [<{WEB GREP: url :: query}>] -> скачать и найти строки.\n"
-        "# Более одной тулки в ответе ЗАПРЕЩЕНО — используй ровно ОДИН маркер или один блок правок.\n"
-        "[<{SHELL: windows-cmd}>] -> выполнить в папке проекта (cmd /c, таймаут 120 c). stdout/stderr вернутся в SYSTEM. Для PowerShell: powershell -NoProfile -Command \"…\".\n"
-        "[<{SANDBOX SHELL: windows-cmd}>] -> то же, но в МИНИ-ПЕСОЧНИЦЕ (отдельная sandbox-папка; можно ставить пакеты, создавать файлы, тестировать — проект не трогать).\n"
-        "[<{SITE VIEW: url}>] -> показать юзеру страницу во встроенном мини-браузере IDE (html-предпросмотр).\n"
-        "[<{ASK: вопрос :: вариант1; вариант2}>] -> спросить юзера (варианты опциональны; MULTI — мультивыбор). Ответ вернётся SYSTEM-сообщением.\n"
-        "[<{IMAGE SHOW: image prompt}>] -> сгенерировать картинку (бесплатный API, без ключа) и показать ИНЛАЙН в чате. [<{IMAGE FILE: prompt :: path.png}>] -> сгенерировать и сохранить в файл проекта. Опиши стиль/свет/композицию; текст на картинках ненадёжен. ПРОМПТЫ ДЛЯ IMAGE пиши строго по-английски.\n\n"
-        "# FILE EDITS: когда нужно изменить, создать или удалить файлы — пиши JSON-блок полностью:\n"
+    QString s =         QStringLiteral(
+        "Ты — агент десктопной IDE (DeepSeek CppIDE). Можешь безопасно исполнять команды, читать/писать файлы проекта, ходить в интернет и генерировать картинки. Все эти возможности вызываются ЕДИНЫМ способом — валидным JSON. IDE молча исполняет вызов, убирает его из видимого чата и присылает результат сообщением, начинающимся со слова SYSTEM:.\n"
+        "\n"
+        "# JSON TOOL CONTRACT — STRICT:\n"
+        "Вызов инструмента и правки файлов делаются одинаково — блоком\n"
+        "```deepseekide-ops\n"
+        "[{\"name\":\"<имя>\",\"args\":{...}}]\n"
+        "```\n"
+        "(или тем же массивом голым JSON в тексте, без обёртки). Двойные кавычки; переносы строк внутри строк — только \\n. Пути проекта — относительные, прямые слэши; абсолютные пути только внутри shell-команд.\n"
+        "СТРОГО ОДИН блок на весь ответ: в нём либо НЕСКОЛЬКО файловых правок, либо ОДИН инструмент — не смешивай. Лишние вызовы игнорируются. Не комментируй вызов («сейчас запрошу…») — просто выводи блок; результат вернётся SYSTEM-сообщением — продолжай следующим ответом.\n"
+        "\n"
+        "# TOOLS (строго один за ответ):\n"
+        "{\"name\":\"need_file\",\"args\":{\"path\":\"src/main.cpp\"}} -> полное содержимое файла проекта.\n"
+        "{\"name\":\"file_info\",\"args\":{\"path\":...}} -> размер/строки. {\"name\":\"read_range\",\"args\":{\"path\":...,\"from\":10,\"to\":80}} -> фрагмент с номерами строк.\n"
+        "{\"name\":\"web_search\",\"args\":{\"query\":...}} -> быстрый поиск в интернете. {\"name\":\"web_fetch\",\"args\":{\"url\":...}} -> страница (текст ≤25k). {\"name\":\"web_download\",\"args\":{\"url\":...,\"path\":\"assets/x.bin\"}} -> скачать файл в проект (≤16 MB). {\"name\":\"web_grep\",\"args\":{\"url\":...,\"query\":...}} -> страница и найденные строки.\n"
+        "{\"name\":\"shell\",\"args\":{\"cmd\":\"dir /b\"}} -> выполнить в папке проекта (cmd /c, таймаут 120 с; stdout/stderr вернутся в SYSTEM). PowerShell: powershell -NoProfile -Command \"…\".\n"
+        "{\"name\":\"sandbox_shell\",\"args\":{\"cmd\":...}} -> то же, но в МИНИ-ПЕСОЧНИЦЕ (ставить пакеты, создавать файлы, тестировать — проект не трогать).\n"
+        "{\"name\":\"site_view\",\"args\":{\"url\":...}} -> показать юзеру страницу во встроенном мини-браузере IDE (html-предпросмотр).\n"
+        "{\"name\":\"ask\",\"args\":{\"question\":...,\"options\":[\"вариант1\",\"вариант2\"],\"multi\":false}} -> спросить юзера (options/multi опциональны). Ответ придёт SYSTEM-сообщением.\n"
+        "{\"name\":\"memory_add\",\"args\":{\"key\":...,\"value\":...}} -> запомнить в долгой памяти проекта. {\"name\":\"memory_search\",\"args\":{\"query\":...}} -> найти в памяти.\n"
+        "{\"name\":\"image_show\",\"args\":{\"prompt\":\"...\"}} -> сгенерировать картинку (бесплатный API, без ключа) и показать ИНЛАЙН в чате. {\"name\":\"image_file\",\"args\":{\"prompt\":\"...\",\"path\":\"cover.png\"}} -> сгенерировать и сохранить в файл проекта. Опиши стиль/свет/композицию; текст на картинках ненадёжен. ПРОМПТЫ ДЛЯ IMAGE пиши строго по-английски.\n"
+        "\n"
+        "# FILE EDITS (несколько правок за раз — одним блоком):\n"
         "```deepseekide-ops\n"
         "[{\"name\":\"write_file\",\"args\":{\"path\":\"src/main.cpp\",\"content\":\"…\"}},\n"
         " {\"name\":\"edit_file\",\"args\":{\"path\":\"a.cpp\",\"old\":\"точный старый текст\",\"new\":\"новый текст\"}}]\n"
         "```\n"
         "Операции: write_file {path,content} | edit_file {path,old,new} (old должен встретиться ТОЧНО один раз) | append_file {path,content} | insert_lines {path,line,content} | replace_lines {path,start_line,end_line,content} | make_dir {path} | delete_path {path} | copy_file {from,to} | move_file {from,to}\n"
-        "JSON строго: один массив, двойные кавычки; переносы строк — только как \\n, иначе блок сломается. IDE применяет его один раз и сносит из видимого чата.\n\n"
+        "JSON строго: один массив, двойные кавычки; переносы внутри строк — только \\n, иначе блок сломается.\n"
+        "\n"
         "# РАБОЧИЙ ПРОЦЕСС:\n"
-        "1) Если нужно посмотреть файлы/интернет/команду — пиши ТОЛЬКО маркеры, почти без своего текста (короткое вступление можно).\n"
-        "2) Получив SYSTEM-ответы, продолжай анализ; если маркеров достаточно — делай правки блоком deepseekide-ops.\n"
-        "3) Когда всё готово — итоговый ответ: что сделано + где лежит. Отвечай на языке пользователя (русском), развёрнуто и по существу — как сильный сеньор-помощник; не здоровайся без нужды, не отвечай одним словом.\n");
+        "1) Нужен файл/интернет/команда — выведи ops-блок с инструментом, почти без своего текста (короткое вступление можно).\n"
+        "2) Получив SYSTEM-ответ, продолжай анализ; данных достаточно — делай правки блоком deepseekide-ops.\n"
+        "3) Когда всё готово — итоговый ответ: что сделано + где лежит. Отвечай на языке пользователя (русском), развёрнуто и по существу — как сильный сеньор-помощник; не здоровайся без нужды, не отвечай одним словом"));
     if (!cfg.imgOn)
-        s += QStringLiteral("\nКартинки СЕЙЧАС ВЫКЛЮЧЕНЫ в настройках (Settings → Изображения): маркеры IMAGE обслуживаться не будут — если юзер просит картинку, вежливо напомни включить свич, и продолжай текстом.\n");
+        s += QStringLiteral("\nКартинки СЕЙЧАС ВЫКЛЮЧЕНЫ в настройках (Settings → Изображения): image_show/image_file обслуживаться не будут — если юзер просит картинку, вежливо напомни включить свич, и продолжай текстом.\n");
     if (!cfg.rules.trimmed().isEmpty())
         s += QStringLiteral("\n# ПРАВИЛА ЮЗЕРА:\n") + cfg.rules.trimmed() + QStringLiteral("\n");
     return s;
@@ -241,36 +247,51 @@ void Agent::onChatFinished(const QString& full, const QString& thinking) {
 void Agent::processAnswer(const QString& full) {
     emit log(QStringLiteral("AGT: ответ %1 зн — парсинг").arg(full.size()));
 
-    QList<Request> reqs = parseMarkers(full);
-    if (!reqs.isEmpty())
-        emit log(QStringLiteral("AGT: маркеры: ") + [&](const QList<Request>& rr){
-            QStringList kinds; for (const auto& x : rr) kinds << x.kind; return kinds.join(QStringLiteral(", "));
-        }(reqs));
-
     QStringList opsErrors;
     QList<Op> ops = parseOps(full, opsErrors);
-    if (!ops.isEmpty()) emit log(QStringLiteral("AGT: правки: %1 оп (errors: %2)").arg(ops.size()).arg(opsErrors.size()));
+    if (!ops.isEmpty() || !opsErrors.isEmpty())
+        emit log(QStringLiteral("AGT: JSON-блок: %1 op (errors: %2)").arg(ops.size()).arg(opsErrors.size()));
+
+    // единый JSON-контракт: файловые правки — пакетом, инструменты — по одному за ответ
+    static const QStringList FILE_OPS = {
+        QStringLiteral("write_file"), QStringLiteral("edit_file"), QStringLiteral("append_file"),
+        QStringLiteral("insert_lines"), QStringLiteral("replace_lines"), QStringLiteral("make_dir"),
+        QStringLiteral("delete_path"), QStringLiteral("copy_file"), QStringLiteral("move_file")
+    };
+    QList<Op> fileOps;
+    QList<Request> reqs;
+    QStringList surplus;
+    for (const Op& op : ops) {
+        if (FILE_OPS.contains(op.name)) { fileOps.append(op); continue; }
+        if (!reqs.isEmpty()) { surplus << op.name; continue; } // строго одна тулка за ответ
+        Request rq;
+        if (opToTool(op, rq)) reqs.append(rq);
+        else opsErrors << QStringLiteral("op «%1»: невалидные args").arg(op.name);
+    }
+    if (!reqs.isEmpty()) emit log(QStringLiteral("AGT: тулка: %1 %2").arg(reqs.first().kind, reqs.first().arg.left(60)));
 
     const QString answerHash = QString::fromUtf8(QCryptographicHash::hash(full.toUtf8(), QCryptographicHash::Sha1).toHex().left(12));
 
     // --- правки (один раз на ответ)
     QString svc;
-    if (!ops.isEmpty() && !appliedOps_.contains(answerHash)) {
+    if (!surplus.isEmpty())
+        svc += QStringLiteral("SYSTEM: only ONE tool call per reply is executed — repeat the skipped ones in your NEXT replies: %1.\n").arg(surplus.join(QStringLiteral(", ")));
+    if (!fileOps.isEmpty() && !appliedOps_.contains(answerHash)) {
         appliedOps_.insert(answerHash);
         int okN = 0;
-        for (int i = 0; i < ops.size(); ++i) {
+        for (int i = 0; i < fileOps.size(); ++i) {
             bool ok = false;
-            QString detail = applyOp(ops[i], ok);
-            emit toolRow(QStringLiteral("Edit"), ops[i].args.value(QStringLiteral("path")).toString(ops[i].args.value(QStringLiteral("from")).toString()), ok, detail);
+            QString detail = applyOp(fileOps[i], ok);
+            emit toolRow(QStringLiteral("Edit"), fileOps[i].args.value(QStringLiteral("path")).toString(fileOps[i].args.value(QStringLiteral("from")).toString()), ok, detail);
             if (ok) ++okN;
         }
-        emit log(QStringLiteral("AGT: применено %1/%2 правок").arg(okN).arg(ops.size()));
-        svc += QStringLiteral("SYSTEM: ops applied: %1/%2 OK.\n").arg(okN).arg(ops.size());
+        emit log(QStringLiteral("AGT: применено %1/%2 правок").arg(okN).arg(fileOps.size()));
+        svc += QStringLiteral("SYSTEM: ops applied: %1/%2 OK.\n").arg(okN).arg(fileOps.size());
     } else if (!opsErrors.isEmpty()) {
-        emit toolRow(QStringLiteral("Edit"), QStringLiteral("блок правок"), false, opsErrors.join(QStringLiteral("; ")));
+        emit toolRow(QStringLiteral("JSON"), QStringLiteral("блок ops"), false, opsErrors.join(QStringLiteral("; ")));
     }
 
-    // --- маркеры
+    // --- исполнение тулки из JSON
     int done = 0;
     bool needContinue = false;
     for (const Request& rq : reqs) {
@@ -348,116 +369,8 @@ void Agent::processAnswer(const QString& full) {
 }
 
 // ============================================================================
-//  ПАРСИНГ МАРКЕРОВ (порт findBracketRequests)
+//  Маркерного протокола [<{…}>] больше нет — тулки приходят ТОЛЬКО JSON-ops
 // ============================================================================
-QList<Agent::Request> Agent::parseMarkers(const QString& answer0) {
-    QString answer = answer0;
-    answer.replace(QStringLiteral("&lt;"), QStringLiteral("<"))
-          .replace(QStringLiteral("&gt;"), QStringLiteral(">"))
-          .replace(QStringLiteral("&quot;"), QStringLiteral("\""))
-          .replace(QStringLiteral("&#39;"), QStringLiteral("'"))
-          .replace(QStringLiteral("&amp;"), QStringLiteral("&"));
-
-    static const QRegularExpression BRACKET_RE(
-        QStringLiteral("\\[<\\{\\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH|MEMORY ADD|ASK MULTI|ASK|"
-                       "REVERT FILE|WEB FETCH|WEB DOWNLOAD|WEB GREP|SANDBOX SHELL|SITE VIEW|SHELL|IMAGE FILE|IMAGE SHOW)\\s*[:：]\\s*"
-                       "([\\s\\S]*?)(?:\\s*\\}>\\]|\\s*\\}\\])"),
-        QRegularExpression::CaseInsensitiveOption);
-
-    QList<Request> out;
-    bool inFence = false;
-    QSet<QString> seen;
-    int shells = 0;
-    for (const QString& line : answer.split(QLatin1Char('\n'))) {
-        if (line.startsWith(QLatin1String("```"))) { inFence = !inFence; continue; }
-        if (inFence) continue;
-        auto it = BRACKET_RE.globalMatch(line);
-        while (it.hasNext() && out.size() < 1) { // строго 1 тулка на ответ
-            auto m = it.next();
-            QString kind = m.captured(1).toUpper();
-            QString val  = m.captured(2).trimmed();
-            Request rq; rq.kind = kind;
-            if (kind == QLatin1String("SHELL") || kind == QLatin1String("SANDBOX SHELL")) {
-                if (++shells > 1) continue;
-                QString v = val; v.replace(QRegularExpression(QStringLiteral("[\\r\\n]+")), QStringLiteral(" "));
-                if (v.isEmpty() || v.size() > 500) continue;
-                rq.arg = v;
-                QString key = QStringLiteral("SHELL|") + v.toLower();
-                if (sentShells_.contains(key)) continue;
-                sentShells_.insert(key);
-            } else if (kind == QLatin1String("NEED FILE") || kind == QLatin1String("FILE INFO") ||
-                       kind == QLatin1String("REVERT FILE") || kind == QLatin1String("READ RANGE")) {
-                QString p = sanitizeRel(val.split(QRegularExpression(QStringLiteral(":\\s*\\d+[-–—]\\d+$"))).first());
-                if (kind == QLatin1String("READ RANGE")) {
-                    static const QRegularExpression rangeRe(QStringLiteral("^(.+?)\\s*[:\\:]\\s*(\\d+)\\s*[-–—]\\s*(\\d+)$"));
-                    auto rm = rangeRe.match(val.trimmed());
-                    if (!rm.hasMatch()) continue;
-                    QString pth = sanitizeRel(rm.captured(1)), pf = rm.captured(2), pt = rm.captured(3);
-                    int f = pf.toInt(), t = qMax(f, pt.toInt());
-                    if (t - f > 1199) t = f + 1199;
-                    rq.arg = pth; rq.extra = QString::number(f) + QLatin1Char('-') + QString::number(t);
-                } else rq.arg = p;
-                if (rq.arg.isEmpty()) continue;
-                if (kind == QLatin1String("NEED FILE")) {
-                    if (sentFiles_.contains(rq.arg.toLower())) continue;
-                    sentFiles_.insert(rq.arg.toLower());
-                }
-            } else if (kind == QLatin1String("NEED SEARCH") || kind == QLatin1String("MEMORY SEARCH")) {
-                if (val.isEmpty()) continue;
-                rq.arg = val.left(200);
-                if (kind == QLatin1String("NEED SEARCH")) {
-                    if (sentSearch_.contains(rq.arg.toLower())) continue;
-                    sentSearch_.insert(rq.arg.toLower());
-                }
-            } else if (kind == QLatin1String("WEB FETCH")) {
-                static const QRegularExpression urlRe(QStringLiteral("^https?://\\S+$"));
-                if (!urlRe.match(val).hasMatch() || val.size() > 500) continue;
-                rq.arg = val;
-                if (sentWeb_.contains(rq.arg)) continue;
-                sentWeb_.insert(rq.arg);
-            } else if (kind == QLatin1String("WEB DOWNLOAD") || kind == QLatin1String("WEB GREP") ||
-                       kind == QLatin1String("MEMORY ADD")) {
-                int dc = val.indexOf(QStringLiteral("::"));
-                if (dc < 0) continue;
-                QString a = val.left(dc).trimmed(), b = val.mid(dc + 2).trimmed();
-                if (a.isEmpty() || b.isEmpty()) continue;
-                if (kind == QLatin1String("MEMORY ADD")) { rq.arg = a.left(120); rq.extra = b.left(1500); }
-                else {
-                    static const QRegularExpression urlRe(QStringLiteral("^https?://\\S+$"));
-                    QString pth = kind == QLatin1String("WEB DOWNLOAD") ? sanitizeRel(b) : b.left(200);
-                    if (!urlRe.match(a).hasMatch() || a.size() > 500 || pth.isEmpty()) continue;
-                    rq.arg = a; rq.extra = pth;
-                }
-            } else if (kind == QLatin1String("ASK") || kind == QLatin1String("ASK MULTI")) {
-                int dc = val.indexOf(QStringLiteral("::"));
-                if (dc >= 0) {
-                    rq.arg = val.left(dc).trimmed();
-                    for (const QString& o : val.mid(dc + 2).split(QLatin1Char(';')))
-                        if (!o.trimmed().isEmpty() && rq.opts.size() < 8) rq.opts << o.trimmed();
-                } else rq.arg = val;
-                if (rq.arg.isEmpty()) continue;
-                if (rq.arg.size() > 300) rq.arg = rq.arg.left(300);
-            } else if (kind == QLatin1String("IMAGE FILE")) {
-                int dc = val.indexOf(QStringLiteral("::"));
-                if (dc < 0) continue;
-                QString pr = val.left(dc).trimmed(), pp = sanitizeRel(val.mid(dc + 2));
-                static const QRegularExpression imgRe(QStringLiteral("\\.(png|jpe?g|webp)$"), QRegularExpression::CaseInsensitiveOption);
-                if (pr.isEmpty() || pr.size() > 900 || pp.isEmpty() || !imgRe.match(pp).hasMatch()) continue;
-                rq.arg = pr; rq.extra = pp;
-            } else if (kind == QLatin1String("IMAGE SHOW")) {
-                if (val.isEmpty() || val.size() > 900) continue;
-                rq.arg = val;
-            } else {
-                continue; // неизвестный вид
-            }
-            QString key = rq.kind + QLatin1Char('|') + rq.arg.toLower() + QLatin1Char('|') + rq.extra.toLower();
-            if (seen.contains(key)) continue;
-            seen.insert(key);
-            out.append(rq);
-        }
-    }
-    return out;
-}
 
 // ============================================================================
 //  ПАРСИНГ ops: fence ```deepseekide-ops + голые массивы + repairJson
@@ -515,6 +428,14 @@ bool Agent::jsonArrayToOps(const QString& body, QList<Agent::Op>& out, QStringLi
         QStringLiteral("insert_lines"), QStringLiteral("replace_lines"), QStringLiteral("make_dir"),
         QStringLiteral("delete_path"), QStringLiteral("copy_file"), QStringLiteral("move_file")
     };
+    static const QStringList TOOL_OPS = {
+        QStringLiteral("shell"), QStringLiteral("sandbox_shell"),
+        QStringLiteral("need_file"), QStringLiteral("file_info"), QStringLiteral("read_range"),
+        QStringLiteral("revert_file"), QStringLiteral("web_search"), QStringLiteral("web_fetch"),
+        QStringLiteral("web_download"), QStringLiteral("web_grep"), QStringLiteral("site_view"),
+        QStringLiteral("ask"), QStringLiteral("memory_add"), QStringLiteral("memory_search"),
+        QStringLiteral("image_show"), QStringLiteral("image_file")
+    };
     auto tryParse = [](const QString& s, QJsonDocument& j) {
         QJsonParseError e{}; j = QJsonDocument::fromJson(s.toUtf8(), &e);
         return e.error == QJsonParseError::NoError;
@@ -530,7 +451,7 @@ bool Agent::jsonArrayToOps(const QString& body, QList<Agent::Op>& out, QStringLi
         const QJsonObject o = v.toObject();
         const QString name = o.value(QStringLiteral("name")).toString();
         const QJsonObject args = o.value(QStringLiteral("args")).toObject();
-        if (name.isEmpty() || !MUT_OPS.contains(name)) { errors << QStringLiteral("#%1: операция «%2» не разрешена").arg(idx).arg(name); continue; }
+        if (name.isEmpty() || !(MUT_OPS.contains(name) || TOOL_OPS.contains(name))) { errors << QStringLiteral("#%1: операция «%2» не разрешена").arg(idx).arg(name); continue; }
         if (args.isEmpty()) { errors << QStringLiteral("#%1: нет объекта args").arg(idx); continue; }
         Agent::Op op; op.name = name; op.args = args; out.append(op); ++added;
     }
@@ -753,6 +674,120 @@ QString Agent::askDialog(const QString& q, const QStringList& opts, bool multi) 
     if (!okc) ans.clear();
     return QStringLiteral("ANSWER to \"%1\": %2\n").arg(q, ans.isEmpty() ? QStringLiteral("(пользователь закрыл вопрос)") : ans);
 }
+
+// ============================================================================
+//  JSON-тула → Request: {"name":"shell","args":{…}} — единый формат с правками
+// ============================================================================
+bool Agent::opToTool(const Op& op, Request& rq) {
+    const QJsonObject& a = op.args;
+    auto S = [&a](const QLatin1String k) { return a.value(k).toString().trimmed(); };
+    static const QRegularExpression urlRe(QStringLiteral("^https?://\\S+$"));
+    static const QRegularExpression imgRe(QStringLiteral("\\.(png|jpe?g|webp)$"),
+                                          QRegularExpression::CaseInsensitiveOption);
+    const QString& n = op.name;
+
+    if (n == QLatin1String("shell") || n == QLatin1String("sandbox_shell")) {
+        QString v = S(QLatin1String("cmd"));
+        v.replace(QRegularExpression(QStringLiteral("[\\r\\n]+")), QStringLiteral(" "));
+        v = v.trimmed();
+        if (v.isEmpty() || v.size() > 500) return false;
+        const QString key = QStringLiteral("SHELL|") + v.toLower();
+        if (sentShells_.contains(key)) return false;
+        sentShells_.insert(key);
+        rq.kind = n == QLatin1String("shell") ? QStringLiteral("SHELL") : QStringLiteral("SANDBOX SHELL");
+        rq.arg = v; return true;
+    }
+    if (n == QLatin1String("need_file") || n == QLatin1String("file_info") || n == QLatin1String("revert_file")) {
+        const QString pth = sanitizeRel(S(QLatin1String("path")));
+        if (pth.isEmpty()) return false;
+        if (n == QLatin1String("need_file")) {
+            if (sentFiles_.contains(pth.toLower())) return false;
+            sentFiles_.insert(pth.toLower());
+        }
+        rq.kind = n == QLatin1String("need_file") ? QStringLiteral("NEED FILE")
+                : n == QLatin1String("file_info") ? QStringLiteral("FILE INFO") : QStringLiteral("REVERT FILE");
+        rq.arg = pth; return true;
+    }
+    if (n == QLatin1String("read_range")) {
+        const QString pth = sanitizeRel(S(QLatin1String("path")));
+        int f = a.value(QStringLiteral("from")).toInt(1), t = a.value(QStringLiteral("to")).toInt(0);
+        if (pth.isEmpty() || f < 1) return false;
+        if (t < f) t = f + 59;
+        if (t - f > 1199) t = f + 1199;
+        rq.kind = QStringLiteral("READ RANGE"); rq.arg = pth;
+        rq.extra = QString::number(f) + QLatin1Char('-') + QString::number(t);
+        return true;
+    }
+    if (n == QLatin1String("web_search") || n == QLatin1String("memory_search")) {
+        const QString q = S(QLatin1String("query")).left(200);
+        if (q.isEmpty()) return false;
+        if (n == QLatin1String("web_search")) {
+            if (sentSearch_.contains(q.toLower())) return false;
+            sentSearch_.insert(q.toLower());
+            rq.kind = QStringLiteral("NEED SEARCH");
+        } else rq.kind = QStringLiteral("MEMORY SEARCH");
+        rq.arg = q; return true;
+    }
+    if (n == QLatin1String("web_fetch") || n == QLatin1String("site_view")) {
+        const QString u = S(QLatin1String("url"));
+        if (u.isEmpty() || u.size() > 500 || !urlRe.match(u).hasMatch()) return false;
+        if (n == QLatin1String("web_fetch")) {
+            if (sentWeb_.contains(u)) return false;
+            sentWeb_.insert(u);
+            rq.kind = QStringLiteral("WEB FETCH");
+        } else rq.kind = QStringLiteral("SITE VIEW");
+        rq.arg = u; return true;
+    }
+    if (n == QLatin1String("web_download") || n == QLatin1String("web_grep")) {
+        const QString u = S(QLatin1String("url"));
+        if (u.isEmpty() || u.size() > 500 || !urlRe.match(u).hasMatch()) return false;
+        if (n == QLatin1String("web_download")) {
+            const QString pth = sanitizeRel(S(QLatin1String("path")));
+            if (pth.isEmpty()) return false;
+            rq.kind = QStringLiteral("WEB DOWNLOAD"); rq.arg = u; rq.extra = pth;
+        } else {
+            const QString q = S(QLatin1String("query")).left(200);
+            if (q.isEmpty()) return false;
+            rq.kind = QStringLiteral("WEB GREP"); rq.arg = u; rq.extra = q;
+        }
+        return true;
+    }
+    if (n == QLatin1String("ask")) {
+        const QString q = S(QLatin1String("question")).left(300);
+        if (q.isEmpty()) return false;
+        rq.kind = a.value(QStringLiteral("multi")).toBool(false)
+                ? QStringLiteral("ASK MULTI") : QStringLiteral("ASK");
+        rq.arg = q;
+        const QJsonArray opts = a.value(QStringLiteral("options")).toArray();
+        for (const QJsonValue& v : opts) {
+            const QString o = v.toString().trimmed();
+            if (!o.isEmpty() && rq.opts.size() < 8) rq.opts << o;
+        }
+        return true;
+    }
+    if (n == QLatin1String("image_show") || n == QLatin1String("image_file")) {
+        const QString pr = S(QLatin1String("prompt"));
+        if (pr.isEmpty() || pr.size() > 900) return false;
+        rq.arg = pr;
+        if (n == QLatin1String("image_file")) {
+            const QString pth = sanitizeRel(S(QLatin1String("path")).toLower());
+            if (pth.isEmpty() || !imgRe.match(pth).hasMatch()) return false;
+            rq.kind = QStringLiteral("IMAGE FILE"); rq.extra = pth;
+        } else rq.kind = QStringLiteral("IMAGE SHOW");
+        return true;
+    }
+    if (n == QLatin1String("memory_add")) {
+        const QString k = S(QLatin1String("key")).left(120), v = S(QLatin1String("value")).left(1500);
+        if (k.isEmpty() || v.isEmpty()) return false;
+        rq.kind = QStringLiteral("MEMORY ADD"); rq.arg = k; rq.extra = v;
+        return true;
+    }
+    return false;
+}
+
+// ============================================================================
+//  SERVICE REQUESTS (read/search/web/ask/memory/…)
+// ============================================================================
 
 QString Agent::serviceRequest(const Request& rq) {
     const QString kind = rq.kind;

@@ -50,8 +50,8 @@ private slots:
 private:
     // --- парсинг
     struct Request { QString kind, arg, extra; QStringList opts; };
-    QList<Request> parseMarkers(const QString& answer);
     struct Op { QString name; QJsonObject args; };
+    bool opToTool(const Op& op, Request& rq); // {"name":"shell","args":{…}} → Request
     QList<Op> parseOps(const QString& answer, QStringList& errors) const;
     static QString repairJson(const QString& in);
     static bool    jsonArrayToOps(const QString& body, QList<Op>& out, QStringList& errors);
