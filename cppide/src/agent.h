@@ -17,7 +17,9 @@ public:
     explicit Agent(DeepSeekClient* ds, QObject* parent = nullptr);
     void setCfg(const AppCfg& c);
     void setProjectRoot(const QString& dir);
+    QString projectRoot() const { return root_; }
     void newChat();
+    void restoreSession(bool contractSent); // переключение на существующую сессию
     bool busy() const { return busy_; }
 
 public slots:
@@ -32,6 +34,7 @@ signals:
     void assistantBubbleDone(const QString& text); // итог (полностью очищен)
     void toolRow(const QString& name, const QString& sub, bool ok, const QString& detail);
     void imageShown(const QByteArray& bytes, const QString& mime, const QString& alt);
+    void sitePreview(const QString& url, const QString& html); // мини-браузер
     void errorBanner(const QString& err);
 
 private slots:
@@ -53,7 +56,8 @@ private:
     // --- исполнение
     QString serviceRequest(const Request& rq);
     QString applyOp(const Op& op, bool& ok);
-    QString runShell(const QString& cmd);
+    QString runShell(const QString& cmd, const QString& cwd = QString());
+    QString sandboxDir() const;
     QString webFetch(const QString& url);
     QPair<QByteArray, QString> genImage(const QString& prompt, const QString& model); // bytes+mime или пусто
     QString askDialog(const QString& q, const QStringList& opts, bool multi);

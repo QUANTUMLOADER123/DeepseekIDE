@@ -31,15 +31,23 @@ set(APP_SOURCES
     src/main.cpp
     src/mainwindow.cpp        src/mainwindow.h
     src/settings.cpp          src/settings.h
-    src/codeeditor.cpp        src/codeeditor.h
     src/pow.cpp               src/pow.h
     src/deepseekclient.cpp    src/deepseekclient.h
     src/agent.cpp             src/agent.h
+    src/sessionstore.cpp      src/sessionstore.h
+    src/sitepreview.cpp       src/sitepreview.h
+    src/squirclecard.h
 )
+
 
 add_executable(DeepSeekCppIDE WIN32 ${APP_SOURCES})
 target_include_directories(DeepSeekCppIDE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/wasm3")
-target_link_libraries(DeepSeekCppIDE PRIVATE Qt6::Widgets Qt6::Network wasm3)
+target_link_libraries(DeepSeekCppIDE PRIVATE Qt6::Widgets Qt6::Network wasm3 dwmapi)
+
+# ассеты к exe (лого и пр.)
+add_custom_command(TARGET DeepSeekCppIDE POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:DeepSeekCppIDE>/assets")
 if (Qt6Core5Compat_FOUND)
     target_link_libraries(DeepSeekCppIDE PRIVATE Qt6::Core5Compat)
 endif()

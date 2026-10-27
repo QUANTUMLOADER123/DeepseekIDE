@@ -23,6 +23,9 @@ public:
 
     void setCfg(const AppCfg& c);   // копия настроек + сброс wasm при смене URL
     void newChat();                 // сбросить chat_session (создастся при след. ask)
+    void setSession(const QString& sid, const QString& parentId) { sessionId_ = sid; parentMessageId_ = parentId; }
+    QString sessionId() const { return sessionId_; }
+    QString parentMessageId() const { return parentMessageId_; }
     bool busy() const { return reply_ != nullptr; }
     void abort();
 

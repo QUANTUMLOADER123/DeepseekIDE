@@ -24,6 +24,7 @@
 #include <QDateTime>
 #include <QUrl>
 #include <QElapsedTimer>
+#include <QStandardPaths>
 #include <QLineEdit>
 #include <QJsonValue>
 
@@ -44,6 +45,13 @@ void Agent::newChat() {
     sentFiles_.clear(); sentSearch_.clear(); sentWeb_.clear(); sentShells_.clear(); sentImgs_.clear(); appliedOps_.clear();
     ds_->newChat();
     emit log(QStringLiteral("AGT: новый чат"));
+}
+
+void Agent::restoreSession(bool contractSent) {
+    firstPrompt_ = !contractSent; autoCount_ = 0; carry_.clear();
+    answerRaw_.clear(); answerVis_.clear();
+    sentFiles_.clear(); sentSearch_.clear(); sentWeb_.clear(); sentShells_.clear(); sentImgs_.clear(); appliedOps_.clear();
+    emit log(QStringLiteral("AGT: сессия восстановлена (контракт %1)").arg(contractSent ? QStringLiteral("уже слали") : QStringLiteral("пойдёт с первым сообщением")));
 }
 
 // ============================================================================
@@ -94,10 +102,13 @@ static QString buildSystemPrompt(const AppCfg& cfg) {
         "- Кавычки и > внутри аргумента разрешены: [<{SHELL: cmd /c \"dir \"C:\\Program Files\"\" 2>&1}>] — валидная команда.\n"
         "- Пути в маркерах — относительные, прямые слэши. Абсолютные пути только внутри SHELL.\n"
         "- Маркеры исполняются автоматически; результаты прилетают как SYSTEM-сообщения. Не комментируй их (\"сейчас запрошу...\") — просто пиши маркер и продолжай.\n\n"
-        "# MARKERS (max 6 за ответ, SHELL — только 1):\n"
+        "# MARKERS — СТРОГО ОДИН инструмент на весь ответ (ОДИН маркер ИЛИ один блок deepseekide-ops). Всё лишнее игнорируется; маркер исполняется и ответ придёт SYSTEM-сообщением — продолжай следующим ответом:\n"
         "[<{NEED FILE: path}>] -> полное содержимое файла проекта. [<{FILE INFO: path}>] -> размер/строки. [<{READ RANGE: path:start-end}>] -> фрагмент с номерами строк.\n"
         "[<{NEED SEARCH: query}>] -> быстрый поиск в интернете. [<{WEB FETCH: url}>] -> страница (текст ≤25k). [<{WEB DOWNLOAD: url :: path}>] -> скачать файл в проект (≤16 MB). [<{WEB GREP: url :: query}>] -> скачать и найти строки.\n"
-        "[<{SHELL: windows-cmd}>] -> выполнить в папке проекта (cmd /c, таймаут 120 c, один маркер на ответ). stdout/stderr вернутся в SYSTEM. Для PowerShell: powershell -NoProfile -Command \"…\".\n"
+        "# Более одной тулки в ответе ЗАПРЕЩЕНО — используй ровно ОДИН маркер или один блок правок.\n"
+        "[<{SHELL: windows-cmd}>] -> выполнить в папке проекта (cmd /c, таймаут 120 c). stdout/stderr вернутся в SYSTEM. Для PowerShell: powershell -NoProfile -Command \"…\".\n"
+        "[<{SANDBOX SHELL: windows-cmd}>] -> то же, но в МИНИ-ПЕСОЧНИЦЕ (отдельная sandbox-папка; можно ставить пакеты, создавать файлы, тестировать — проект не трогать).\n"
+        "[<{SITE VIEW: url}>] -> показать юзеру страницу во встроенном мини-браузере IDE (html-предпросмотр).\n"
         "[<{ASK: вопрос :: вариант1; вариант2}>] -> спросить юзера (варианты опциональны; MULTI — мультивыбор). Ответ вернётся SYSTEM-сообщением.\n"
         "[<{IMAGE SHOW: image prompt}>] -> сгенерировать картинку (бесплатный API, без ключа) и показать ИНЛАЙН в чате. [<{IMAGE FILE: prompt :: path.png}>] -> сгенерировать и сохранить в файл проекта. Опиши стиль/свет/композицию; текст на картинках ненадёжен.\n\n"
         "# FILE EDITS: когда нужно изменить, создать или удалить файлы — пиши JSON-блок полностью:\n"
@@ -187,9 +198,16 @@ void Agent::processAnswer(const QString& full) {
     for (const Request& rq : reqs) {
         if (done >= 6) { svc += QStringLiteral("(more requests pending — re-emit them next turn)\n"); needContinue = true; break; }
         if (rq.kind == QLatin1String("SHELL")) {
-            emit toolRow(QStringLiteral("Bash"), rq.arg.left(90), true, QStringLiteral("выполняется…"));
+            emit toolRow(QStringLiteral("Shell"), rq.arg.left(90), true, QStringLiteral("выполняется…"));
             QString res = runShell(rq.arg);
             svc += QStringLiteral("SHELL `%1`:\n%2\n").arg(rq.arg, res);
+            ++done; needContinue = true; continue;
+        }
+        if (rq.kind == QLatin1String("SANDBOX SHELL")) {
+            const QString dir = sandboxDir();
+            emit toolRow(QStringLiteral("Sandbox"), rq.arg.left(90), true, QStringLiteral("cwd: sandbox"));
+            QString res = runShell(rq.arg, dir);
+            svc += QStringLiteral("SANDBOX SHELL (cwd=%1):\n%2\n").arg(dir, res);
             ++done; needContinue = true; continue;
         }
         if (rq.kind == QLatin1String("IMAGE SHOW") || rq.kind == QLatin1String("IMAGE FILE")) {
@@ -263,7 +281,7 @@ QList<Agent::Request> Agent::parseMarkers(const QString& answer0) {
 
     static const QRegularExpression BRACKET_RE(
         QStringLiteral("\\[<\\{\\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH|MEMORY ADD|ASK MULTI|ASK|"
-                       "REVERT FILE|WEB FETCH|WEB DOWNLOAD|WEB GREP|SHELL|IMAGE FILE|IMAGE SHOW)\\s*[:：]\\s*"
+                       "REVERT FILE|WEB FETCH|WEB DOWNLOAD|WEB GREP|SANDBOX SHELL|SITE VIEW|SHELL|IMAGE FILE|IMAGE SHOW)\\s*[:：]\\s*"
                        "([\\s\\S]*?)(?:\\s*\\}>\\]|\\s*\\}\\])"),
         QRegularExpression::CaseInsensitiveOption);
 
@@ -275,12 +293,12 @@ QList<Agent::Request> Agent::parseMarkers(const QString& answer0) {
         if (line.startsWith(QLatin1String("```"))) { inFence = !inFence; continue; }
         if (inFence) continue;
         auto it = BRACKET_RE.globalMatch(line);
-        while (it.hasNext() && out.size() < 12) {
+        while (it.hasNext() && out.size() < 1) { // строго 1 тулка на ответ
             auto m = it.next();
             QString kind = m.captured(1).toUpper();
             QString val  = m.captured(2).trimmed();
             Request rq; rq.kind = kind;
-            if (kind == QLatin1String("SHELL")) {
+            if (kind == QLatin1String("SHELL") || kind == QLatin1String("SANDBOX SHELL")) {
                 if (++shells > 1) continue;
                 QString v = val; v.replace(QRegularExpression(QStringLiteral("[\\r\\n]+")), QStringLiteral(" "));
                 if (v.isEmpty() || v.size() > 500) continue;
@@ -511,10 +529,18 @@ bool Agent::writeTextFile(const QString& rel, const QString& text, QString* err)
 // ============================================================================
 //  ИСПОЛНИТЕЛИ МАРКЕРОВ
 // ============================================================================
-QString Agent::runShell(const QString& cmd) {
+QString Agent::sandboxDir() const {
+    const QString d = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+                      + QStringLiteral("/sandbox");
+    QDir().mkpath(d);
+    return d;
+}
+
+QString Agent::runShell(const QString& cmd, const QString& cwd) {
     emit log(QStringLiteral("AGT: SHELL $ %1").arg(cmd.left(110)));
     QProcess p;
-    p.setWorkingDirectory(root_);
+    const QString effCwd = cwd.isEmpty() ? root_ : cwd;
+    if (!effCwd.isEmpty()) p.setWorkingDirectory(effCwd);
     p.start(QStringLiteral("cmd"), QStringList{ QStringLiteral("/c"), cmd });
     if (!p.waitForStarted(5000)) return QStringLiteral("(не стартовал: %1)").arg(p.errorString());
     QElapsedTimer t; t.start();
@@ -541,7 +567,7 @@ QString Agent::runShell(const QString& cmd) {
     QString out = decode866(p.readAllStandardOutput());
     QString err = decode866(p.readAllStandardError());
     while (out.endsWith(QLatin1Char('\n')) || out.endsWith(QLatin1Char('\r'))) out.chop(1);
-    QString res = QStringLiteral("CWD: %1\nEXIT %2\n\n%3").arg(root_.isEmpty() ? QStringLiteral("(без папки проекта)") : root_).arg(p.exitCode()).arg(out.isEmpty() ? QStringLiteral("(пусто)") : out);
+    QString res = QStringLiteral("CWD: %1\nEXIT %2\n\n%3").arg(effCwd.isEmpty() ? QStringLiteral("(нет рабочей папки)") : effCwd).arg(p.exitCode()).arg(out.isEmpty() ? QStringLiteral("(пусто)") : out);
     if (!err.trimmed().isEmpty()) res += QStringLiteral("\n\nSTDERR:\n") + err.trimmed();
     emit toolRow(QStringLiteral("Bash"), cmd.left(90), p.exitCode() == 0, QStringLiteral("exit %1").arg(p.exitCode()));
     return res.left(8000);
@@ -651,6 +677,26 @@ QString Agent::askDialog(const QString& q, const QStringList& opts, bool multi) 
 
 QString Agent::serviceRequest(const Request& rq) {
     const QString kind = rq.kind;
+    if (kind == QLatin1String("SANDBOX SHELL")) { return QString(); } // обрабатывается в цикле
+    if (kind == QLatin1String("SITE VIEW")) {
+        QNetworkAccessManager nam;
+        QNetworkRequest req{QUrl(rq.arg)};
+        req.setRawHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140 Safari/537.36");
+        QNetworkReply* r = nam.get(req);
+        QEventLoop loop; QTimer to2; to2.setSingleShot(true);
+        connect(r, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+        connect(&to2, &QTimer::timeout, &loop, &QEventLoop::quit);
+        to2.start(30000);
+        loop.exec();
+        const QByteArray body = r->readAll();
+        const int status = r->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        r->deleteLater();
+        if (status >= 400 || body.isEmpty()) return QStringLiteral("SITE VIEW fail %1 HTTP %2\n").arg(rq.arg).arg(status);
+        QString html = QString::fromUtf8(body);
+        if (html.size() > 900000) html = html.left(900000);
+        emit sitePreview(rq.arg, html);
+        return QStringLiteral("SITE VIEW показан юзеру (%1 зн html).\n").arg(html.size());
+    }
     if (kind == QLatin1String("NEED FILE")) {
         bool ok = false; QString txt = readTextFile(rq.arg, &ok);
         emit toolRow(QStringLiteral("Read"), rq.arg, ok, ok ? QStringLiteral("%1 зн").arg(txt.size()) : QStringLiteral("нет файла"));
@@ -852,7 +898,7 @@ QString Agent::cleanVisibleText(const QString& full) const {
     // маркеры → «✓ Команда: …»
     static const QRegularExpression BRACKET_RE(
         QStringLiteral("\\[<\\{\\s*(NEED FILE|NEED SEARCH|FILE INFO|READ RANGE|MEMORY SEARCH|MEMORY ADD|ASK MULTI|ASK|"
-                       "REVERT FILE|WEB FETCH|WEB DOWNLOAD|WEB GREP|SHELL|IMAGE FILE|IMAGE SHOW)\\s*[:：]\\s*"
+                       "REVERT FILE|WEB FETCH|WEB DOWNLOAD|WEB GREP|SANDBOX SHELL|SITE VIEW|SHELL|IMAGE FILE|IMAGE SHOW)\\s*[:：]\\s*"
                        "([\\s\\S]*?)(?:\\s*\\}>\\]|\\s*\\}\\])"),
         QRegularExpression::CaseInsensitiveOption);
     out.replace(BRACKET_RE, QStringLiteral(""));
