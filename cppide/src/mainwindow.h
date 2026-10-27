@@ -3,6 +3,7 @@
 #include <QFileSystemModel>
 #include <QPointer>
 #include <QLabel>
+#include <QTimer>
 #include "settings.h"
 
 class QTreeView;
@@ -11,6 +12,7 @@ class QPlainTextEdit;
 class QScrollArea;
 class QVBoxLayout;
 class QPushButton;
+class QScrollBar;
 class CodeEditor;
 class Agent;
 class DeepSeekClient;
@@ -42,11 +44,14 @@ private slots:
     void onBusy(bool on);
 
 private:
-    QWidget* chatAddCard(const QString& role, const QString& state = QString());
+    QFrame*  chatAddCard(const QString& role, const QString& state = QString()); // внутр. карточка
+    QWidget* chatAppend(const QString& role, const QString& state = QString());  // обёртка с выравниванием
+    void     fadeIn(QWidget* w, int ms = 220);
+    void     smoothScrollBottom();
+    void     pulseTick();   // анимация «печатает…»
     static QString mdToHtml(const QString& md);
     CodeEditor* openFile(const QString& absPath);
     void rebuildTreeRoot();
-    QWidget* bottomBar();
 
     AppCfg cfg_;
     Agent* agent_;
@@ -58,9 +63,13 @@ private:
 
     QScrollArea* chatScroll_ = nullptr;
     QVBoxLayout* chatLay_ = nullptr;
-    QLabel* liveBubble_ = nullptr;
-    QString liveRaw_;
+    QPointer<QFrame> liveCard_;
+    QPointer<QLabel> liveBubble_;
+    QString  liveRaw_;
+    QTimer   pulseTimer_;
+    int      pulsePhase_ = 0;
     QPlainTextEdit* input_ = nullptr;
     QPushButton* sendBtn_ = nullptr;
     QPlainTextEdit* logView_ = nullptr;
+    bool     busyOn_ = false;
 };
