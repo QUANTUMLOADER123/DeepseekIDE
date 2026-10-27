@@ -64,7 +64,7 @@ exit /b 1
 :ms_ok
 echo [*] MSBuild %MSBUILD%
 
-"%MSBUILD%" "%~dp0DeepSeekIDE.sln" /p:Configuration=Release /p:Platform=x64 /m -v:minimal
+"%MSBUILD%" "%~dp0DeepSeekIDE.vcxproj" /p:Configuration=Release /p:Platform=x64 /m -v:minimal
 if errorlevel 1 exit /b 1
 
 if exist "%~dp0out\Release\DeepSeekIDE.exe" goto copied
