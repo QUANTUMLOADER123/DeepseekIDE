@@ -114,7 +114,7 @@ void Agent::generateTitle(const QString& convoSnippet) {
         connect(ds_, &DeepSeekClient::chatFinished, this, &Agent::onChatFinished);
         titleActive_ = false; busy_ = false;
         QString tt = full.simplified();
-        tt.remove(QLatin1Char('"')); tt.remove(QLatin1Char('«')); tt.remove(QLatin1Char('»'));
+        tt.remove(QLatin1Char('"')); tt.remove(QLatin1Char(0xAB)); tt.remove(QLatin1Char(0xBB)); // « »
         tt.remove(QRegularExpression(QStringLiteral("^[#>*`\\-\\s]+")));
         tt = tt.left(42).trimmed();
         if (tt.endsWith(QLatin1Char('.'))) tt.chop(1);
