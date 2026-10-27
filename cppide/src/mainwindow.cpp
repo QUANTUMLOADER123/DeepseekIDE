@@ -934,7 +934,7 @@ void MainWindow::endAssistant(const QString& cleanText) {
     if (liveCard_) {
         liveCard_->setState(QString()); // снять live
         liveCard_->setPulseColor(QColor());
-        auto* card = liveCard_;
+        SquircleCard* card = liveCard_.data();   // QPointer -> raw
         auto* l = qobject_cast<QVBoxLayout*>(card->layout());
         if (liveBubble_) { l->removeWidget(liveBubble_); delete liveBubble_; liveBubble_ = nullptr; }
         if (cleanText.isEmpty()) {
@@ -1244,7 +1244,7 @@ void MainWindow::onRegenerate(int histIdx) {
     const QString pprev    = hist[j].toObject().value(QStringLiteral("pprev")).toString();
     // откат цепочки DeepSeek к моменту до этого хода (история тоже обрезается)
     ds_->setSession(sessions_[curSess_].dsSessionId, pprev);
-    hist.resize(j); // сам user-бабл пересоздастся при отправке
+    while (hist.size() > j) hist.removeLast(); // QJsonArray без resize; user-бабл пересоздастся при отправке
     persistNow();
     clearChatUi();
     replaying_ = true; replayHistory(); replaying_ = false;
