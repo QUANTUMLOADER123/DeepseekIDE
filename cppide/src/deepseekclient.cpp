@@ -186,7 +186,7 @@ void DeepSeekClient::startCompletion(const QString& prompt, const QString& powB6
     reply_ = r;
     sseBuf_.clear(); frags_.clear(); legacy_.clear(); lastPath_.clear(); streamErr_.clear(); respMsgId_.clear(); emittedChat_ = emittedThink_ = 0;
     connect(r, &QNetworkReply::readyRead, this, &DeepSeekClient::onReadyRead);
-    connect(r, &QNetworkReply::finished, this, [this, r]() {
+    connect(r, &QNetworkReply::finished, this, [this, r, prompt, powB64]() {
         reply_ = nullptr;
         const int httpCode = r->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const QNetworkReply::NetworkError netErr = r->error();
@@ -205,6 +205,13 @@ void DeepSeekClient::startCompletion(const QString& prompt, const QString& powB6
         sseBuf_.clear();
 
         if (netErr != QNetworkReply::NoError) {
+            if (httpCode == 400 && !parentMessageId_.isEmpty()) {
+                // частая причина 400 — протухший parent_message_id: один ретрай без него
+                emit log(QStringLiteral("DS: 400 — повторяю без parent_message_id…"));
+                parentMessageId_.clear();
+                startCompletion(prompt, powB64);
+                return;
+            }
             emit failed(QStringLiteral("completion stream: %1").arg(compactErr(httpCode, errBody)));
             return;
         }

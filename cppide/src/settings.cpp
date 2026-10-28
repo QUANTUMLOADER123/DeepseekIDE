@@ -19,6 +19,10 @@ AppCfg load() {
     QSettings s("DeepSeekCppIDE", "DeepSeekCppIDE");
     AppCfg c;
     c.token      = s.value("token").toString();
+    if (c.token.isEmpty()) {                 // дефолт из окружения: DEEPSEEK_TOKEN / DS_TOKEN
+        c.token = qEnvironmentVariable("DEEPSEEK_TOKEN");
+        if (c.token.isEmpty()) c.token = qEnvironmentVariable("DS_TOKEN");
+    }
     c.cookie     = s.value("cookie").toString();
     c.hifDliq    = s.value("hif_dliq").toString();
     c.hifLeim    = s.value("hif_leim").toString();
