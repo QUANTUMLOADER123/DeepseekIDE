@@ -236,8 +236,8 @@ static QPixmap dsLogoPix(int h) {
         path = QCoreApplication::applicationDirPath() + QStringLiteral("/assets/deepseek_logo.png");
     QPixmap src(path);
     if (src.isNull())
-        src.loadFromData(reinterpret_cast<const char*>(blob::deepseek_logo_png),
-                         int(sizeof(blob::deepseek_logo_png)), "PNG");
+        src.loadFromData(reinterpret_cast<const uchar*>(blob::deepseek_logo_png),
+                         uint(sizeof(blob::deepseek_logo_png)), "PNG");
     if (src.isNull()) return QPixmap();
     QPixmap pm = src.scaledToHeight(h * 2, Qt::SmoothTransformation);
     pm.setDevicePixelRatio(2.0);
@@ -251,8 +251,8 @@ static QPixmap whalePix(int h) {
         path = QCoreApplication::applicationDirPath() + QStringLiteral("/assets/whale.png");
     QPixmap src(path);
     if (src.isNull())
-        src.loadFromData(reinterpret_cast<const char*>(blob::whale_png),
-                         int(sizeof(blob::whale_png)), "PNG");
+        src.loadFromData(reinterpret_cast<const uchar*>(blob::whale_png),
+                         uint(sizeof(blob::whale_png)), "PNG");
     if (src.isNull()) return QPixmap();
     QPixmap pm = src.scaledToHeight(h * 2, Qt::SmoothTransformation);
     pm.setDevicePixelRatio(2.0);
@@ -266,8 +266,8 @@ static QPixmap avatarPix(int size) {
         path = QCoreApplication::applicationDirPath() + QStringLiteral("/assets/avatar.png");
     QPixmap src(path);
     if (src.isNull())
-        src.loadFromData(reinterpret_cast<const char*>(blob::avatar_png),
-                         int(sizeof(blob::avatar_png)), "PNG");
+        src.loadFromData(reinterpret_cast<const uchar*>(blob::avatar_png),
+                         uint(sizeof(blob::avatar_png)), "PNG");
     QPixmap out(size * 2, size * 2); out.fill(Qt::transparent);
     QPainter pt(&out); pt.setRenderHint(QPainter::Antialiasing);
     QPainterPath clip; clip.addEllipse(QRectF(0.0, 0.0, size * 2.0, size * 2.0));
