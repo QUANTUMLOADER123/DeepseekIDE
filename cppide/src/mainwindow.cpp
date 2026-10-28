@@ -64,7 +64,7 @@
 // ============================================================================
 static const char* kTheme = R"(
 QMainWindow, QDialog { background:#151517; }
-QWidget { color:#ebeef2; font-size:13px; font-family:'Segoe UI','Inter',sans-serif; background:transparent; }
+QWidget { color:#ffffff; font-size:13px; font-family:'Segoe UI','Inter',sans-serif; background:transparent; }
 *[themeRoot="true"] { background:#151517; }
 
 /* оверлей кнопок окна (min/max/close) справа сверху */
@@ -87,22 +87,22 @@ QPushButton#ghostBtn {
 QPushButton#ghostBtn:hover { background:rgba(255,255,255,14); color:#ebeef2; border-color:rgba(255,255,255,34); }
 
 QPushButton#newSession {
-  background:#2C2C2E; border:none; border-radius:14px; padding:11px 12px;
+  background:#43454A; border:none; border-radius:16px; padding:11px 12px;
   color:#ffffff; font-weight:600; font-size:13px;
 }
-QPushButton#newSession:hover { background:#343438; }
-QPushButton#newSession:pressed { background:#262628; }
+QPushButton#newSession:hover { background:#4C4E55; }
+QPushButton#newSession:pressed { background:#3A3C41; }
 
 QFrame#userCard { background:#202022; border:1px solid #282829; border-radius:12px; }
 QFrame#userCard:hover { background:#242426; }
-QLabel#userName { color:#ebeef2; font-size:12px; font-weight:600; }
+QLabel#userName { color:#ffffff; font-size:12px; font-weight:600; }
 
 QFrame#collapsedPill { background:#1B1B1C; border:1px solid #282829; border-radius:15px; }
 
 QListWidget#sessions { background:transparent; border:none; outline:none; }
-QListWidget#sessions::item { padding:10px 12px; border-radius:10px; margin:2px 2px; color:#b8bac2; font-size:13px; }
-QListWidget#sessions::item:hover { color:#ebeef2; }  /* фон даёт анимированная пилюля */
-QListWidget#sessions::item:selected { background:#2C2C2E; color:#ffffff; }
+QListWidget#sessions::item { padding:8px 12px; border-radius:10px; margin:2px 2px; color:#ffffff; font-size:13px; }
+QListWidget#sessions::item:hover { color:#ffffff; }  /* фон даёт анимированная пилюля */
+QListWidget#sessions::item:selected { background:#353638; color:#ffffff; }
 
 QFrame#codeBox { background:#181819; border:1px solid #282829; border-radius:10px; }
 QPlainTextEdit#codeArea {
@@ -136,12 +136,12 @@ QPlainTextEdit#composer {
 QPlainTextEdit#composer:disabled { color:#575962; }
 
 QPushButton#sendBtn {
-  background:#3964fe; border:none; border-radius:15px;
+  background:#5686FE; border:none; border-radius:15px;
   min-width:30px; min-height:30px; max-width:30px; max-height:30px;
 }
-QPushButton#sendBtn:hover { background:#5686fe; }
-QPushButton#sendBtn:pressed { background:#3156e8; }
-QPushButton#sendBtn:!enabled { background:#232529; }
+QPushButton#sendBtn:hover { background:#6f97ff; }
+QPushButton#sendBtn:pressed { background:#4a74e8; }
+QPushButton#sendBtn:!enabled { background:#3C5082; }
 QPushButton#sendBtn[busy="true"] { background:#3f434c; }
 QPushButton#sendBtn[busy="true"]:hover { background:#4a4e59; }
 
@@ -283,6 +283,16 @@ static QPixmap avatarPix(int size) {
     return out;
 }
 
+// плавная автовысота текстбокса: растёт/уменьшается по контенту в пределах [minH, maxH]
+static void autoGrowEdit(QPlainTextEdit* e, int minH, int maxH) {
+    if (!e) return;
+    const int doc = int(e->document()->documentLayout()->documentSize().height()) + 1;
+    const int h = doc + e->contentsMargins().top() + e->contentsMargins().bottom()
+                  + e->frameWidth() * 2 + 14;
+    e->setFixedHeight(qBound(minH, h, maxH));
+    e->setVerticalScrollBarPolicy(h > maxH ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);
+}
+
 // иконка «сообщение с плюсиком» (New chat)
 static QPixmap msgPlusPix(int px, const QColor& c) {
     QPixmap pm(px, px); pm.fill(Qt::transparent);
@@ -335,7 +345,7 @@ MainWindow::MainWindow() {
     sidePanel_->setProperty("dragZone", true);          // окно двигаем за фон сайдбара
     sidePanel_->installEventFilter(this);
     auto* sl = new QVBoxLayout(sidePanel_);
-    sl->setContentsMargins(10, 10, 10, 10);
+    sl->setContentsMargins(14, 18, 14, 10);
     sl->setSpacing(6);
 
     // верхняя строка: логотип слева, стрелка сворачивания справа
@@ -346,7 +356,7 @@ MainWindow::MainWindow() {
     hl->setContentsMargins(6, 2, 2, 2);
     hl->setSpacing(4);
     auto* logoLbl = new QLabel;
-    const QPixmap logoPm = dsLogoPix(22);
+    const QPixmap logoPm = dsLogoPix(31);
     if (!logoPm.isNull()) {
         logoLbl->setPixmap(logoPm);
         logoLbl->setFixedSize(qRound(logoPm.width() / logoPm.devicePixelRatio()),
@@ -368,13 +378,16 @@ MainWindow::MainWindow() {
     connect(collapseBtn, &QPushButton::clicked, this, [this] { setSidebarCollapsed(true); });
     hl->addWidget(collapseBtn, 0, Qt::AlignVCenter);
     sl->addWidget(head);
-    sl->addSpacing(4);
+    sl->addSpacing(8);
+    auto* div = new QFrame;
+    div->setFixedHeight(1);
+    div->setStyleSheet(QStringLiteral("background:#282829;"));
+    sl->addWidget(div);
+    sl->addSpacing(8);
 
     auto* newBtn = new QPushButton(QStringLiteral("New chat"));
     newBtn->setObjectName(QStringLiteral("newSession"));
     newBtn->setCursor(Qt::PointingHandCursor);
-    newBtn->setIcon(QIcon(msgPlusPix(13, QColor(0xe8, 0xe9, 0xec)))); // сообщение + плюсик
-    newBtn->setIconSize(QSize(13, 13));
     connect(newBtn, &QPushButton::clicked, this, &MainWindow::onNewSession);
     sl->addWidget(newBtn);
 
@@ -443,7 +456,7 @@ MainWindow::MainWindow() {
     // композер: рамка-бокс, сверху текст, снизу чипы + отправка
     bottomWrap_ = new QWidget;
     auto* bw = new QVBoxLayout(bottomWrap_);
-    bw->setContentsMargins(26, 4, 26, 18);
+    bw->setContentsMargins(18, 4, 18, 18);
     bw->setSpacing(0);
 
     composerBox_ = new QFrame;
@@ -454,8 +467,10 @@ MainWindow::MainWindow() {
 
     input_ = new QPlainTextEdit; input_->setObjectName(QStringLiteral("composer"));
     input_->setPlaceholderText(QStringLiteral("Describe the task or ask a question…"));
-    input_->setMinimumHeight(34);
-    input_->setMaximumHeight(96);
+    input_->setFixedHeight(115);            // минимум 115, растёт до 350 по тексту
+    input_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    connect(input_, &QPlainTextEdit::textChanged, this,
+            [this] { autoGrowEdit(input_, 115, 350); });
     input_->setWordWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
     input_->installEventFilter(this);
     new QShortcut(QKeySequence(QKeyCombination(Qt::ControlModifier, Qt::Key_Return)), this, SLOT(onSend()));
@@ -521,7 +536,7 @@ MainWindow::MainWindow() {
     brow->setContentsMargins(0, 0, 0, 0);
     brow->addStretch(1);
     composerBox_->setMinimumWidth(520);
-    composerBox_->setMaximumWidth(880);
+    composerBox_->setMaximumWidth(980);
     brow->addWidget(composerBox_, 1);
     brow->addStretch(1);
     bw->addLayout(brow);
@@ -950,7 +965,7 @@ void MainWindow::refreshSessionList() {
             s.title.left(42) + (s.title.size() > 42 ? QStringLiteral("…") : QString()));
         it->setData(Qt::UserRole, i);
         it->setToolTip(QStringLiteral("%1\n%2").arg(s.title, s.folder));
-        it->setSizeHint(QSize(0, 46));
+        it->setSizeHint(QSize(0, 40));
         sessionList_->addItem(it);
     }
     sessionList_->blockSignals(false);
@@ -1035,7 +1050,7 @@ void MainWindow::showEmptyState() {
     vl->setSpacing(0);
     vl->addStretch(5);
 
-    const QPixmap wm = whalePix(58);
+    const QPixmap wm = whalePix(81);
     if (!wm.isNull()) {
         auto* icon = new QLabel;
         icon->setPixmap(wm);
@@ -1053,16 +1068,18 @@ void MainWindow::showEmptyState() {
     // центрированный pill-инпут — как на deepseek.com
     auto* box = new QFrame;
     box->setObjectName(QStringLiteral("emptyBox"));
-    box->setMinimumWidth(520);
-    box->setMaximumWidth(720);
+    box->setMinimumWidth(560);
+    box->setMaximumWidth(820);
     auto* bv = new QVBoxLayout(box);
     bv->setContentsMargins(6, 6, 10, 8);
     bv->setSpacing(2);
     emptyInp_ = new QPlainTextEdit;
     emptyInp_->setObjectName(QStringLiteral("composer"));
     emptyInp_->setPlaceholderText(QStringLiteral("Create a desktop application, refactor this file, ask about the code\u2026"));
-    emptyInp_->setMinimumHeight(30);
-    emptyInp_->setMaximumHeight(90);
+    emptyInp_->setFixedHeight(115);
+    emptyInp_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    connect(emptyInp_, &QPlainTextEdit::textChanged, this,
+            [this] { if (emptyInp_) autoGrowEdit(emptyInp_, 115, 350); });
     emptyInp_->setWordWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
     emptyInp_->installEventFilter(this);
     bv->addWidget(emptyInp_);
@@ -1615,32 +1632,42 @@ void MainWindow::renderRich(QVBoxLayout* l, const QString& text) {
 //  действия под ответом ассистента: Copy / Regenerate
 // ============================================================================
 void MainWindow::addAssistantActions(QVBoxLayout* l, int histIdx, const QString& plain) {
+    // иконки под карточкой слева, ВНЕ контейнера сообщения
+    QWidget* card = l->parentWidget();
+    QWidget* wrap = card ? card->parentWidget() : nullptr;
     auto* row = new QWidget;
     auto* rl = new QHBoxLayout(row);
-    rl->setContentsMargins(0, 2, 0, 0);
-    rl->setSpacing(2);
-    auto mk = [](const QString& txt, const QString& g) {
-        auto* b = new QPushButton(txt);
+    rl->setContentsMargins(28, 0, 28, 0);
+    rl->setSpacing(4);
+    auto mk = [](const QString& g, const QString& tip) {
+        auto* b = new QPushButton;
         b->setObjectName(QStringLiteral("actBtn"));
         b->setCursor(Qt::PointingHandCursor);
-        b->setIcon(QIcon(fa::pix(g, 10, QColor(0x6f, 0x72, 0x7c))));
-        b->setIconSize(QSize(10, 10));
+        b->setToolTip(tip);
+        b->setIcon(QIcon(fa::pix(g, 11, QColor(0x8d, 0x8f, 0x99))));
+        b->setIconSize(QSize(11, 11));
+        b->setFixedSize(24, 24);
         return b;
     };
-    auto* cpBtn = mk(QStringLiteral("Copy"), fa::copy());
-    auto* rgBtn = mk(QStringLiteral("Regenerate"), fa::rotateRight());
+    auto* cpBtn = mk(fa::copy(), QStringLiteral("Copy"));
+    auto* rgBtn = mk(fa::rotateRight(), QStringLiteral("Regenerate"));
     connect(cpBtn, &QPushButton::clicked, this, [this, cpBtn, plain]() {
         onCopyCard(plain);
-        cpBtn->setIcon(QIcon(fa::pix(fa::check(), 10, QColor(0x35, 0xcf, 0x7f))));
+        cpBtn->setIcon(QIcon(fa::pix(fa::check(), 11, QColor(0x56, 0x86, 0xfe))));
         QTimer::singleShot(1100, cpBtn, [cpBtn]() {
-            cpBtn->setIcon(QIcon(fa::pix(fa::copy(), 10, QColor(0x6f, 0x72, 0x7c))));
+            cpBtn->setIcon(QIcon(fa::pix(fa::copy(), 11, QColor(0x8d, 0x8f, 0x99))));
         });
     });
     connect(rgBtn, &QPushButton::clicked, this, [this, histIdx]() { onRegenerate(histIdx); });
     rl->addWidget(cpBtn);
     rl->addWidget(rgBtn);
     rl->addStretch(1);
-    l->addWidget(row);
+    if (wrap) {
+        const int at = chatLay_->indexOf(wrap);
+        chatLay_->insertWidget(at >= 0 ? at + 1 : chatLay_->count() - 1, row);
+    } else {
+        l->addWidget(row);
+    }
 }
 
 void MainWindow::onCopyCard(const QString& plain) {
