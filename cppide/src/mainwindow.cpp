@@ -52,6 +52,7 @@
 #include <QGridLayout>
 #include <QSysInfo>
 #include <functional>
+#include "assets_blob.h"
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -62,9 +63,9 @@
 //  тема: графитовый фон, бордовый акцент, умеренные скругления
 // ============================================================================
 static const char* kTheme = R"(
-QMainWindow, QDialog { background:#0f1115; }
+QMainWindow, QDialog { background:#101013; }
 QWidget { color:#ebeef2; font-size:13px; font-family:'Segoe UI','Inter',sans-serif; background:transparent; }
-*[themeRoot="true"] { background:#0f1115; }
+*[themeRoot="true"] { background:#101013; }
 
 /* оверлей кнопок окна (min/max/close) справа сверху */
 QPushButton#winOvBtn { background:transparent; border:none; border-radius:6px; }
@@ -78,7 +79,7 @@ QPushButton#iconBtn { background:transparent; border:none; border-radius:6px; }
 QPushButton#iconBtn:hover { background:rgba(255,255,255,20); }
 QPushButton#iconBtn:pressed { background:rgba(255,255,255,32); }
 
-QFrame#sidePanel { background:#0f1115; border:none; border-right:1px solid rgba(255,255,255,12); }
+QFrame#sidePanel { background:#101013; border:none; border-right:1px solid rgba(255,255,255,12); }
 
 QPushButton#ghostBtn {
   background:transparent; border:1px solid rgba(255,255,255,20); border-radius:8px; padding:8px 12px; color:#9a9ca6;
@@ -86,24 +87,24 @@ QPushButton#ghostBtn {
 QPushButton#ghostBtn:hover { background:rgba(255,255,255,14); color:#ebeef2; border-color:rgba(255,255,255,34); }
 
 QPushButton#newSession {
-  background:#212123; border:none; border-radius:10px; padding:10px 12px;
+  background:#1c1c1f; border:none; border-radius:10px; padding:10px 12px;
   color:#ffffff; font-weight:600; font-size:13px;
 }
-QPushButton#newSession:hover { background:#26272b; }
-QPushButton#newSession:pressed { background:#1a1b1f; }
+QPushButton#newSession:hover { background:#242427; }
+QPushButton#newSession:pressed { background:#18181b; }
 
-QFrame#userCard { background:#17181c; border:1px solid rgba(255,255,255,12); border-radius:12px; }
-QFrame#userCard:hover { background:#1b1c21; }
+QFrame#userCard { background:#161618; border:1px solid rgba(255,255,255,12); border-radius:12px; }
+QFrame#userCard:hover { background:#1b1b1e; }
 QLabel#userName { color:#ebeef2; font-size:12px; font-weight:600; }
 
-QFrame#collapsedPill { background:#1a1b1f; border:1px solid rgba(255,255,255,14); border-radius:14px; }
+QFrame#collapsedPill { background:#1b1b1e; border:1px solid rgba(255,255,255,14); border-radius:14px; }
 
 QListWidget#sessions { background:transparent; border:none; outline:none; }
 QListWidget#sessions::item { padding:6px 10px; border-radius:8px; margin:1px 2px; color:#b8bac2; font-size:12px; }
 QListWidget#sessions::item:hover { color:#ebeef2; }  /* фон даёт анимированная пилюля */
 QListWidget#sessions::item:selected { background:rgba(255,255,255,16); color:#ffffff; }
 
-QFrame#codeBox { background:#101114; border:1px solid rgba(255,255,255,14); border-radius:8px; }
+QFrame#codeBox { background:#131315; border:1px solid rgba(255,255,255,14); border-radius:8px; }
 QPlainTextEdit#codeArea {
   background:transparent; border:none; padding:2px 10px 8px 10px;
   font-family:'Cascadia Code','Consolas',monospace; font-size:12px; color:#d6d9df;
@@ -123,10 +124,10 @@ QPushButton#chipIcn {
 QPushButton#chipIcn:hover { background:rgba(255,255,255,16); color:#c9cad0; }
 QPushButton#chipIcn:checked { background:#283142; border-color:#4868b2; color:#b7c8fe; }
 
-QFrame#composerBox { background:#1b1c20; border:1px solid rgba(255,255,255,15); border-radius:16px; }
+QFrame#composerBox { background:#1a1a1d; border:1px solid rgba(255,255,255,15); border-radius:16px; }
 QFrame#composerBox[focus="true"] { border:1px solid rgba(77,107,254,150); }
 
-QFrame#emptyBox { background:#212123; border:1px solid rgba(255,255,255,15); border-radius:20px; }
+QFrame#emptyBox { background:#1c1c1f; border:1px solid rgba(255,255,255,15); border-radius:20px; }
 
 QPlainTextEdit#composer {
   background:transparent; border:none; padding:10px 12px 2px 12px; font-size:13px;
@@ -147,30 +148,30 @@ QPushButton#sendBtn[busy="true"]:hover { background:#4a4e59; }
 QPlainTextEdit#logView { font-family:'Cascadia Code','Consolas',monospace; font-size:12px; color:#8d8f99; }
 
 QDockWidget { color:#6f727c; font-weight:600; }
-QDockWidget::title { background:#0f1115; padding:9px 14px; border-top:1px solid rgba(255,255,255,12); }
+QDockWidget::title { background:#101013; padding:9px 14px; border-top:1px solid rgba(255,255,255,12); }
 
 QScrollBar:vertical { background:transparent; width:10px; margin:4px 2px; }
-QScrollBar::handle:vertical { background:#2f3036; border-radius:5px; min-height:36px; }
-QScrollBar::handle:vertical:hover { background:#3d3f47; }
+QScrollBar::handle:vertical { background:#2c2c30; border-radius:5px; min-height:36px; }
+QScrollBar::handle:vertical:hover { background:#3a3a3f; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }
 QScrollBar:horizontal { background:transparent; height:10px; margin:2px 4px; }
-QScrollBar::handle:horizontal { background:#2f3036; border-radius:5px; min-width:36px; }
-QScrollBar::handle:horizontal:hover { background:#3d3f47; }
+QScrollBar::handle:horizontal { background:#2c2c30; border-radius:5px; min-width:36px; }
+QScrollBar::handle:horizontal:hover { background:#3a3a3f; }
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width:0; }
 QScrollArea { border:none; background:transparent; }
 
 QLineEdit, QSpinBox, QComboBox {
-  background:#17181c; border:1px solid rgba(255,255,255,16); border-radius:8px; padding:7px 12px; min-height:20px;
+  background:#161618; border:1px solid rgba(255,255,255,16); border-radius:8px; padding:7px 12px; min-height:20px;
 }
 QLineEdit:focus, QSpinBox:focus, QComboBox:focus { border-color:#4d6bfe; }
-QComboBox QAbstractItemView { background:#212123; border:1px solid rgba(255,255,255,16); selection-background-color:rgba(255,255,255,16); }
+QComboBox QAbstractItemView { background:#1c1c1f; border:1px solid rgba(255,255,255,16); selection-background-color:rgba(255,255,255,16); }
 QComboBox::drop-down { border:none; width:24px; }
 QCheckBox { spacing:8px; }
-QCheckBox::indicator { width:16px; height:16px; border-radius:4px; border:1px solid rgba(255,255,255,40); background:#17181c; }
+QCheckBox::indicator { width:16px; height:16px; border-radius:4px; border:1px solid rgba(255,255,255,40); background:#161618; }
 QCheckBox::indicator:checked { background:#3964fe; border-color:#3964fe; }
-QToolTip { background:#212123; color:#ebeef2; border:1px solid rgba(255,255,255,20); padding:7px 10px; border-radius:6px; }
+QToolTip { background:#1c1c1f; color:#ebeef2; border:1px solid rgba(255,255,255,20); padding:7px 10px; border-radius:6px; }
 
-QMenu { background:#212123; border:1px solid rgba(255,255,255,16); border-radius:8px; padding:4px; }
+QMenu { background:#1c1c1f; border:1px solid rgba(255,255,255,16); border-radius:8px; padding:4px; }
 QMenu::item { padding:6px 20px 6px 14px; border-radius:5px; color:#c9cad0; }
 QMenu::item:selected { background:rgba(255,255,255,16); color:#ffffff; }
 QMenu::separator { height:1px; background:rgba(255,255,255,14); margin:4px 8px; }
@@ -228,12 +229,30 @@ static QPixmap roundedPm(const QPixmap& src, qreal rad) {
     return out;
 }
 
-// логотип DeepSeek (растеризованный SVG 143x23, грузим с 2x запасом)
+// логотип DeepSeek (растеризованный оригинальный SVG 143x23): сначала файл, фолбэк — вшитый blob
 static QPixmap dsLogoPix(int h) {
     QString path = QStringLiteral("assets/deepseek_logo.png");
     if (!QFile::exists(path))
         path = QCoreApplication::applicationDirPath() + QStringLiteral("/assets/deepseek_logo.png");
     QPixmap src(path);
+    if (src.isNull())
+        src.loadFromData(reinterpret_cast<const char*>(blob::deepseek_logo_png),
+                         int(sizeof(blob::deepseek_logo_png)), "PNG");
+    if (src.isNull()) return QPixmap();
+    QPixmap pm = src.scaledToHeight(h * 2, Qt::SmoothTransformation);
+    pm.setDevicePixelRatio(2.0);
+    return pm;
+}
+
+// оригинальный «кит» DeepSeek (иконка пустого чата)
+static QPixmap whalePix(int h) {
+    QString path = QStringLiteral("assets/whale.png");
+    if (!QFile::exists(path))
+        path = QCoreApplication::applicationDirPath() + QStringLiteral("/assets/whale.png");
+    QPixmap src(path);
+    if (src.isNull())
+        src.loadFromData(reinterpret_cast<const char*>(blob::whale_png),
+                         int(sizeof(blob::whale_png)), "PNG");
     if (src.isNull()) return QPixmap();
     QPixmap pm = src.scaledToHeight(h * 2, Qt::SmoothTransformation);
     pm.setDevicePixelRatio(2.0);
@@ -246,6 +265,9 @@ static QPixmap avatarPix(int size) {
     if (!QFile::exists(path))
         path = QCoreApplication::applicationDirPath() + QStringLiteral("/assets/avatar.png");
     QPixmap src(path);
+    if (src.isNull())
+        src.loadFromData(reinterpret_cast<const char*>(blob::avatar_png),
+                         int(sizeof(blob::avatar_png)), "PNG");
     QPixmap out(size * 2, size * 2); out.fill(Qt::transparent);
     QPainter pt(&out); pt.setRenderHint(QPainter::Antialiasing);
     QPainterPath clip; clip.addEllipse(QRectF(0.0, 0.0, size * 2.0, size * 2.0));
@@ -361,7 +383,7 @@ MainWindow::MainWindow() {
     // ползущая пилюля-наведение поверх строк (полупрозрачная — текст остаётся читаемым)
     hoverPill_ = new QWidget(sessionList_->viewport());
     hoverPill_->setAttribute(Qt::WA_TransparentForMouseEvents, true);
-    hoverPill_->setStyleSheet(QStringLiteral("background:rgba(255,255,255,14); border-radius:8px;"));
+    hoverPill_->setStyleSheet(QStringLiteral("background:rgba(255,255,255,26); border-radius:8px;"));
     hoverPill_->hide();
     sessionList_->viewport()->installEventFilter(this);
     pillAnim_ = new QPropertyAnimation(hoverPill_, "geometry", this);
@@ -417,8 +439,8 @@ MainWindow::MainWindow() {
     cl->addWidget(chatScroll_, 1);
 
     // композер: рамка-бокс, сверху текст, снизу чипы + отправка
-    auto* bottomWrap = new QWidget;
-    auto* bw = new QVBoxLayout(bottomWrap);
+    bottomWrap_ = new QWidget;
+    auto* bw = new QVBoxLayout(bottomWrap_);
     bw->setContentsMargins(26, 4, 26, 18);
     bw->setSpacing(0);
 
@@ -531,7 +553,7 @@ MainWindow::MainWindow() {
     brow->addWidget(composerBox_, 1);
     brow->addStretch(1);
     bw->addLayout(brow);
-    cl->addWidget(bottomWrap);
+    cl->addWidget(bottomWrap_);
 
     // ==================== чат-стек + корень (сайдбар слева) ====================
     auto* chatStack = new QWidget;
@@ -568,14 +590,6 @@ MainWindow::MainWindow() {
     auto* cl2 = new QHBoxLayout(collapsedBar_);
     cl2->setContentsMargins(10, 10, 0, 0);
     cl2->setSpacing(6);
-    auto* expandBtn = new QPushButton;
-    expandBtn->setObjectName(QStringLiteral("iconBtn"));
-    expandBtn->setToolTip(QStringLiteral("Open sidebar"));
-    expandBtn->setCursor(Qt::PointingHandCursor);
-    expandBtn->setIcon(QIcon(fa::pix(fa::anglesRight(), 13, QColor(0x9a, 0x9c, 0xa6))));
-    expandBtn->setIconSize(QSize(13, 13));
-    expandBtn->setFixedSize(26, 26);
-    connect(expandBtn, &QPushButton::clicked, this, [this] { setSidebarCollapsed(false); });
     auto* pill = new QFrame; pill->setObjectName(QStringLiteral("collapsedPill"));
     auto* pl = new QHBoxLayout(pill);
     pl->setContentsMargins(5, 3, 5, 3);
@@ -597,7 +611,6 @@ MainWindow::MainWindow() {
     pillExp->setFixedSize(26, 24);
     connect(pillExp, &QPushButton::clicked, this, [this] { setSidebarCollapsed(false); });
     pl->addWidget(pillNew); pl->addWidget(pillExp);
-    cl2->addWidget(expandBtn, 0, Qt::AlignVCenter);
     cl2->addWidget(pill, 0, Qt::AlignVCenter);
     grid->addWidget(collapsedBar_, 0, 0, Qt::AlignTop | Qt::AlignLeft);
     collapsedBar_->hide();
@@ -684,6 +697,7 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* ev) {
             }
         } else if (ev->type() == QEvent::MouseMove && dragOn_) {
             auto* me = static_cast<QMouseEvent*>(ev);
+            if (!(me->buttons() & Qt::LeftButton)) { dragOn_ = false; return false; } // отпустили вне окна
             if (isMaximized()) {
                 // вытаскиваем из maximized за курсор
                 const QPoint gp = me->globalPosition().toPoint();
@@ -710,6 +724,7 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* ev) {
             }
         } else if (ev->type() == QEvent::MouseMove && dragOn_) {
             auto* me = static_cast<QMouseEvent*>(ev);
+            if (!(me->buttons() & Qt::LeftButton)) { dragOn_ = false; return false; }
             move(me->globalPosition().toPoint() - dragOffset_);
             return false;
         } else if (ev->type() == QEvent::MouseButtonRelease && dragOn_) {
@@ -802,6 +817,7 @@ bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr
 //  карточки чата — динамическая ширина по содержимому
 // ============================================================================
 SquircleCard* MainWindow::chatAppend(const QString& role, const QString& state, bool animate) {
+    if (bottomWrap_) bottomWrap_->setVisible(true);
     // сносим empty-state, когда появляется первое реальное сообщение
     for (int i = chatLay_->count() - 2; i >= 0; --i) {
         QLayoutItem* it = chatLay_->itemAt(i);
@@ -902,7 +918,7 @@ void MainWindow::pulseTick() {
 QString MainWindow::mdToHtml(const QString& md) {
     QString s = md.toHtmlEscaped();
     s.replace(QRegularExpression(QStringLiteral("```(\\w*)\\n([\\s\\S]*?)```")),
-              QStringLiteral("<pre style='background:#101114;border:1px solid #2a2b30;border-radius:8px;padding:10px;font-family:Consolas,monospace;color:#d6d9df;'>\\2</pre>"));
+              QStringLiteral("<pre style='background:#131315;border:1px solid #2a2b30;border-radius:8px;padding:10px;font-family:Consolas,monospace;color:#d6d9df;'>\\2</pre>"));
     s.replace(QRegularExpression(QStringLiteral("`([^`\\n]+)`")),
               QStringLiteral("<code style='background:#17181c;border:1px solid #2a2b30;border-radius:4px;padding:1px 6px;font-family:Consolas,monospace;color:#b7c8fe;'>\\1</code>"));
     s.replace(QRegularExpression(QStringLiteral("^#\\s+(.+)$"), QRegularExpression::MultilineOption),
@@ -955,15 +971,14 @@ void MainWindow::refreshSessionList() {
             h->setData(Qt::UserRole, -1);
             h->setForeground(QColor(0x57, 0x59, 0x62));
             h->setFont(hf);
-            h->setSizeHint(QSize(0, 20));
+            h->setSizeHint(QSize(0, 18));
             sessionList_->addItem(h);
         }
         auto* it = new QListWidgetItem(
-            QIcon(fa::pix(fa::comment(), 11, QColor(0x6f, 0x72, 0x7c))),
-            s.title.left(38) + (s.title.size() > 38 ? QStringLiteral("…") : QString()));
+            s.title.left(42) + (s.title.size() > 42 ? QStringLiteral("…") : QString()));
         it->setData(Qt::UserRole, i);
         it->setToolTip(QStringLiteral("%1\n%2").arg(s.title, s.folder));
-        it->setSizeHint(QSize(0, 28));
+        it->setSizeHint(QSize(0, 24));
         sessionList_->addItem(it);
     }
     sessionList_->blockSignals(false);
@@ -1040,6 +1055,7 @@ void MainWindow::clearChatUi() {
 
 void MainWindow::showEmptyState() {
     liveCard_ = nullptr;
+    if (bottomWrap_) bottomWrap_->setVisible(false);   // нижнего композера в пустом чате нет
     auto* wrap = new QWidget;
     wrap->setProperty("emptyState", true);
     auto* vl = new QVBoxLayout(wrap);
@@ -1047,7 +1063,16 @@ void MainWindow::showEmptyState() {
     vl->setSpacing(0);
     vl->addStretch(5);
 
-    const QPixmap lg = dsLogoPix(24);
+    const QPixmap wm = whalePix(46);
+    if (!wm.isNull()) {
+        auto* icon = new QLabel;
+        icon->setPixmap(wm);
+        icon->setFixedSize(qRound(wm.width() / wm.devicePixelRatio()),
+                           qRound(wm.height() / wm.devicePixelRatio()));
+        vl->addWidget(icon, 0, Qt::AlignHCenter);
+        vl->addSpacing(6);
+    }
+    const QPixmap lg = dsLogoPix(20);
     if (!lg.isNull()) {
         auto* logo = new QLabel;
         logo->setPixmap(lg);
@@ -1102,7 +1127,7 @@ void MainWindow::showEmptyState() {
     vl->addWidget(sub);
 
     vl->addStretch(6);
-    chatLay_->insertWidget(chatLay_->count() - 1, wrap);
+    chatLay_->insertWidget(chatLay_->count() - 1, wrap, 1); // wrap тянется на весь вьюпорт — контент по центру
     emptyInp_->setFocus();
 }
 

@@ -33,9 +33,9 @@ protected:
 
         // фон (assistant — прозрачный, как на deepseek.com; user — плоская плашка)
         if (role_ == QLatin1String("user")) {
-            p.fillPath(path, QColor(42, 45, 52));
+            p.fillPath(path, QColor(44, 44, 48));
         } else if (role_ == QLatin1String("assistant")) {
-            // без фона
+            p.fillPath(path, QColor(255, 255, 255, 7));   // лёгкая панель ответа
         } else if (role_ == QLatin1String("tool")) {
             p.fillPath(path, QColor(255, 255, 255, 8));
         } else if (role_ == QLatin1String("error")) {

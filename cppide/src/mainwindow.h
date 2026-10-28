@@ -109,6 +109,7 @@ private:
     QPushButton* chipSearch_  = nullptr;
     QPushButton* chipImg_     = nullptr;
     QFrame*      composerBox_ = nullptr;
+    QWidget*     bottomWrap_  = nullptr;   // прячем, пока виден empty-state
     QScrollArea* chatScroll_  = nullptr;
     QVBoxLayout* chatLay_     = nullptr;
     QPointer<SquircleCard> liveCard_;
