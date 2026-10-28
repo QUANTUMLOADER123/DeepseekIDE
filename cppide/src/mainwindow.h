@@ -105,9 +105,6 @@ private:
     QWidget*     collapsedBar_ = nullptr;   // оверлей слева сверху при свёрнутом сайдбаре
     QListWidget* sessionList_ = nullptr;
     QPushButton* folderPill_  = nullptr;
-    QPushButton* chipThink_   = nullptr;
-    QPushButton* chipSearch_  = nullptr;
-    QPushButton* chipImg_     = nullptr;
     QFrame*      composerBox_ = nullptr;
     QWidget*     bottomWrap_  = nullptr;   // прячем, пока виден empty-state
     QScrollArea* chatScroll_  = nullptr;

@@ -32,16 +32,10 @@ protected:
         QPainterPath path = roundPath(r, rad);
 
         // фон (assistant — прозрачный, как на deepseek.com; user — плоская плашка)
-        if (role_ == QLatin1String("user")) {
-            p.fillPath(path, QColor(44, 44, 48));
-        } else if (role_ == QLatin1String("assistant")) {
-            p.fillPath(path, QColor(255, 255, 255, 7));   // лёгкая панель ответа
-        } else if (role_ == QLatin1String("tool")) {
-            p.fillPath(path, QColor(255, 255, 255, 8));
-        } else if (role_ == QLatin1String("error")) {
+        if (role_ == QLatin1String("error")) {
             p.fillPath(path, QColor(255, 84, 112, 16));
-        } else { // hint
-            p.fillPath(path, QColor(255, 255, 255, 8));
+        } else { // user / assistant / tool / hint — единая панель сообщений #2C2C2E
+            p.fillPath(path, QColor(0x2C, 0x2C, 0x2E));
         }
 
         // рамка
@@ -49,11 +43,9 @@ protected:
         pen.setWidthF(1.2);
         if (role_ == QLatin1String("assistant") && state_ == QLatin1String("live"))
             pen.setColor(pulseColor_.isValid() ? pulseColor_ : QColor(86, 134, 254));
-        else if (role_ == QLatin1String("user") || role_ == QLatin1String("assistant"))
-            pen.setStyle(Qt::NoPen);
         else if (role_ == QLatin1String("error")) pen.setColor(QColor(255, 84, 112, 110));
-        else if (role_ == QLatin1String("hint")) { pen.setColor(QColor(78, 80, 88)); pen.setStyle(Qt::DashLine); }
-        else pen.setColor(QColor(255, 255, 255, 22));
+        else if (role_ == QLatin1String("hint")) { pen.setColor(QColor(0x28, 0x28, 0x29)); pen.setStyle(Qt::DashLine); }
+        else pen.setColor(QColor(0x28, 0x28, 0x29));   // обводки #282829
         p.strokePath(path, pen);
 
         // tool: цветная полоса слева

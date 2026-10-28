@@ -63,9 +63,9 @@
 //  тема: графитовый фон, бордовый акцент, умеренные скругления
 // ============================================================================
 static const char* kTheme = R"(
-QMainWindow, QDialog { background:#101013; }
+QMainWindow, QDialog { background:#151517; }
 QWidget { color:#ebeef2; font-size:13px; font-family:'Segoe UI','Inter',sans-serif; background:transparent; }
-*[themeRoot="true"] { background:#101013; }
+*[themeRoot="true"] { background:#151517; }
 
 /* оверлей кнопок окна (min/max/close) справа сверху */
 QPushButton#winOvBtn { background:transparent; border:none; border-radius:6px; }
@@ -79,7 +79,7 @@ QPushButton#iconBtn { background:transparent; border:none; border-radius:6px; }
 QPushButton#iconBtn:hover { background:rgba(255,255,255,20); }
 QPushButton#iconBtn:pressed { background:rgba(255,255,255,32); }
 
-QFrame#sidePanel { background:#101013; border:none; border-right:1px solid rgba(255,255,255,12); }
+QFrame#sidePanel { background:#1B1B1C; border:none; border-right:1px solid #282829; }
 
 QPushButton#ghostBtn {
   background:transparent; border:1px solid rgba(255,255,255,20); border-radius:8px; padding:8px 12px; color:#9a9ca6;
@@ -87,24 +87,24 @@ QPushButton#ghostBtn {
 QPushButton#ghostBtn:hover { background:rgba(255,255,255,14); color:#ebeef2; border-color:rgba(255,255,255,34); }
 
 QPushButton#newSession {
-  background:#1c1c1f; border:none; border-radius:10px; padding:10px 12px;
+  background:#2C2C2E; border:none; border-radius:14px; padding:11px 12px;
   color:#ffffff; font-weight:600; font-size:13px;
 }
-QPushButton#newSession:hover { background:#242427; }
-QPushButton#newSession:pressed { background:#18181b; }
+QPushButton#newSession:hover { background:#343438; }
+QPushButton#newSession:pressed { background:#262628; }
 
-QFrame#userCard { background:#161618; border:1px solid rgba(255,255,255,12); border-radius:12px; }
-QFrame#userCard:hover { background:#1b1b1e; }
+QFrame#userCard { background:#202022; border:1px solid #282829; border-radius:12px; }
+QFrame#userCard:hover { background:#242426; }
 QLabel#userName { color:#ebeef2; font-size:12px; font-weight:600; }
 
-QFrame#collapsedPill { background:#1b1b1e; border:1px solid rgba(255,255,255,14); border-radius:14px; }
+QFrame#collapsedPill { background:#1B1B1C; border:1px solid #282829; border-radius:15px; }
 
 QListWidget#sessions { background:transparent; border:none; outline:none; }
-QListWidget#sessions::item { padding:6px 10px; border-radius:8px; margin:1px 2px; color:#b8bac2; font-size:12px; }
+QListWidget#sessions::item { padding:10px 12px; border-radius:10px; margin:2px 2px; color:#b8bac2; font-size:13px; }
 QListWidget#sessions::item:hover { color:#ebeef2; }  /* фон даёт анимированная пилюля */
-QListWidget#sessions::item:selected { background:rgba(255,255,255,16); color:#ffffff; }
+QListWidget#sessions::item:selected { background:#2C2C2E; color:#ffffff; }
 
-QFrame#codeBox { background:#131315; border:1px solid rgba(255,255,255,14); border-radius:8px; }
+QFrame#codeBox { background:#181819; border:1px solid #282829; border-radius:10px; }
 QPlainTextEdit#codeArea {
   background:transparent; border:none; padding:2px 10px 8px 10px;
   font-family:'Cascadia Code','Consolas',monospace; font-size:12px; color:#d6d9df;
@@ -118,16 +118,16 @@ QPushButton#actBtn:hover { background:rgba(255,255,255,18); color:#ebeef2; }
 QPushButton#actBtn:pressed { background:rgba(255,255,255,30); }
 
 QPushButton#chipIcn {
-  background:transparent; border:1px solid transparent; border-radius:7px;
-  padding:4px 10px 4px 8px; color:#8d9099; font-size:12px;
+  background:transparent; border:1px solid transparent; border-radius:12px;
+  padding:7px 14px 7px 12px; color:#8d9099; font-size:12px;
 }
-QPushButton#chipIcn:hover { background:rgba(255,255,255,16); color:#c9cad0; }
+QPushButton#chipIcn:hover { background:rgba(255,255,255,18); color:#c9cad0; }
 QPushButton#chipIcn:checked { background:#283142; border-color:#4868b2; color:#b7c8fe; }
 
-QFrame#composerBox { background:#1a1a1d; border:1px solid rgba(255,255,255,15); border-radius:16px; }
+QFrame#composerBox { background:#2C2C2E; border:1px solid #282829; border-radius:24px; }
 QFrame#composerBox[focus="true"] { border:1px solid rgba(77,107,254,150); }
 
-QFrame#emptyBox { background:#1c1c1f; border:1px solid rgba(255,255,255,15); border-radius:20px; }
+QFrame#emptyBox { background:#2C2C2E; border:1px solid #282829; border-radius:28px; }
 
 QPlainTextEdit#composer {
   background:transparent; border:none; padding:10px 12px 2px 12px; font-size:13px;
@@ -148,35 +148,35 @@ QPushButton#sendBtn[busy="true"]:hover { background:#4a4e59; }
 QPlainTextEdit#logView { font-family:'Cascadia Code','Consolas',monospace; font-size:12px; color:#8d8f99; }
 
 QDockWidget { color:#6f727c; font-weight:600; }
-QDockWidget::title { background:#101013; padding:9px 14px; border-top:1px solid rgba(255,255,255,12); }
+QDockWidget::title { background:#151517; padding:9px 14px; border-top:1px solid #282829; }
 
 QScrollBar:vertical { background:transparent; width:10px; margin:4px 2px; }
-QScrollBar::handle:vertical { background:#2c2c30; border-radius:5px; min-height:36px; }
+QScrollBar::handle:vertical { background:#2C2C2E; border-radius:5px; min-height:36px; }
 QScrollBar::handle:vertical:hover { background:#3a3a3f; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }
 QScrollBar:horizontal { background:transparent; height:10px; margin:2px 4px; }
-QScrollBar::handle:horizontal { background:#2c2c30; border-radius:5px; min-width:36px; }
+QScrollBar::handle:horizontal { background:#2C2C2E; border-radius:5px; min-width:36px; }
 QScrollBar::handle:horizontal:hover { background:#3a3a3f; }
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width:0; }
 QScrollArea { border:none; background:transparent; }
 
 QLineEdit, QSpinBox, QComboBox {
-  background:#161618; border:1px solid rgba(255,255,255,16); border-radius:8px; padding:7px 12px; min-height:20px;
+  background:#1B1B1C; border:1px solid #282829; border-radius:10px; padding:7px 12px; min-height:20px;
 }
 QLineEdit:focus, QSpinBox:focus, QComboBox:focus { border-color:#4d6bfe; }
-QComboBox QAbstractItemView { background:#1c1c1f; border:1px solid rgba(255,255,255,16); selection-background-color:rgba(255,255,255,16); }
+QComboBox QAbstractItemView { background:#1B1B1C; border:1px solid #282829; selection-background-color:#2C2C2E; }
 QComboBox::drop-down { border:none; width:24px; }
 QCheckBox { spacing:8px; }
-QCheckBox::indicator { width:16px; height:16px; border-radius:4px; border:1px solid rgba(255,255,255,40); background:#161618; }
+QCheckBox::indicator { width:16px; height:16px; border-radius:4px; border:1px solid #282829; background:#1B1B1C; }
 QCheckBox::indicator:checked { background:#3964fe; border-color:#3964fe; }
-QToolTip { background:#1c1c1f; color:#ebeef2; border:1px solid rgba(255,255,255,20); padding:7px 10px; border-radius:6px; }
+QToolTip { background:#1B1B1C; color:#ebeef2; border:1px solid #282829; padding:7px 10px; border-radius:8px; }
 
-QMenu { background:#1c1c1f; border:1px solid rgba(255,255,255,16); border-radius:8px; padding:4px; }
+QMenu { background:#1B1B1C; border:1px solid #282829; border-radius:10px; padding:4px; }
 QMenu::item { padding:6px 20px 6px 14px; border-radius:5px; color:#c9cad0; }
 QMenu::item:selected { background:rgba(255,255,255,16); color:#ffffff; }
 QMenu::separator { height:1px; background:rgba(255,255,255,14); margin:4px 8px; }
 
-QWidget#toolLine { background:rgba(255,255,255,7); border:1px solid rgba(255,255,255,10); border-radius:10px; }
+QWidget#toolLine { background:#202022; border:1px solid #282829; border-radius:12px; }
 
 )";
 
@@ -323,7 +323,9 @@ MainWindow::MainWindow() {
     ds_ = new DeepSeekClient(this);
     ds_->setCfg(cfg_);
     agent_ = new Agent(ds_, this);
+    cfg_.thinking = cfg_.search = cfg_.imgOn = true;   // DeepThink/Search/Images всегда включены
     agent_->setCfg(cfg_);
+    ds_->setCfg(cfg_);
 
     // шапки нет: окно двигается за фон сайдбара (dragZone), кнопки окна — компактный оверлей
 
@@ -344,7 +346,7 @@ MainWindow::MainWindow() {
     hl->setContentsMargins(6, 2, 2, 2);
     hl->setSpacing(4);
     auto* logoLbl = new QLabel;
-    const QPixmap logoPm = dsLogoPix(17);
+    const QPixmap logoPm = dsLogoPix(22);
     if (!logoPm.isNull()) {
         logoLbl->setPixmap(logoPm);
         logoLbl->setFixedSize(qRound(logoPm.width() / logoPm.devicePixelRatio()),
@@ -484,37 +486,7 @@ MainWindow::MainWindow() {
     auto* crow = new QWidget;
     auto* cr = new QHBoxLayout(crow);
     cr->setContentsMargins(6, 0, 0, 0);
-    cr->setSpacing(2);
-
-    auto mkChip = [](const QString& title, const QString& g) {
-        auto* b = new QPushButton(title);
-        b->setObjectName(QStringLiteral("chipIcn"));
-        b->setCheckable(true);
-        b->setCursor(Qt::PointingHandCursor);
-        b->setProperty("faGlyph", g);
-        return b;
-    };
-    auto paintChip = [](QPushButton* b) {
-        const QColor c = b->isChecked() ? QColor(0xb7, 0xc8, 0xfe) : QColor(0x8d, 0x90, 0x99);
-        b->setIcon(QIcon(fa::pix(b->property("faGlyph").toString(), 11, c)));
-        b->setIconSize(QSize(11, 11));
-    };
-    chipThink_  = mkChip(QStringLiteral("Deep Think"), fa::brain());
-    chipSearch_ = mkChip(QStringLiteral("Search"),     fa::search());
-    chipImg_    = mkChip(QStringLiteral("Images"),     fa::image());
-    chipThink_->setChecked(cfg_.thinking);
-    chipSearch_->setChecked(cfg_.search);
-    chipImg_->setChecked(cfg_.imgOn);
-    for (auto* c : {chipThink_, chipSearch_, chipImg_}) {
-        paintChip(c);
-        connect(c, &QPushButton::toggled, this, [c, paintChip](bool) { paintChip(c); });
-    }
-    connect(chipThink_, &QPushButton::toggled, this, [this](bool on){ cfg_.thinking = on; Cfg::save(cfg_); ds_->setCfg(cfg_); });
-    connect(chipSearch_, &QPushButton::toggled, this, [this](bool on){ cfg_.search = on; Cfg::save(cfg_); ds_->setCfg(cfg_); });
-    connect(chipImg_, &QPushButton::toggled, this, [this](bool on){ cfg_.imgOn = on; Cfg::save(cfg_); agent_->setCfg(cfg_); });
-    cr->addWidget(chipThink_);
-    cr->addWidget(chipSearch_);
-    cr->addWidget(chipImg_);
+    cr->setSpacing(8);
 
     cr->addSpacing(6);
     auto* attachBtn = new QPushButton(QStringLiteral("Attach"));
@@ -978,7 +950,7 @@ void MainWindow::refreshSessionList() {
             s.title.left(42) + (s.title.size() > 42 ? QStringLiteral("…") : QString()));
         it->setData(Qt::UserRole, i);
         it->setToolTip(QStringLiteral("%1\n%2").arg(s.title, s.folder));
-        it->setSizeHint(QSize(0, 24));
+        it->setSizeHint(QSize(0, 46));
         sessionList_->addItem(it);
     }
     sessionList_->blockSignals(false);
@@ -1063,7 +1035,7 @@ void MainWindow::showEmptyState() {
     vl->setSpacing(0);
     vl->addStretch(5);
 
-    const QPixmap wm = whalePix(46);
+    const QPixmap wm = whalePix(58);
     if (!wm.isNull()) {
         auto* icon = new QLabel;
         icon->setPixmap(wm);
@@ -1071,15 +1043,6 @@ void MainWindow::showEmptyState() {
                            qRound(wm.height() / wm.devicePixelRatio()));
         vl->addWidget(icon, 0, Qt::AlignHCenter);
         vl->addSpacing(6);
-    }
-    const QPixmap lg = dsLogoPix(20);
-    if (!lg.isNull()) {
-        auto* logo = new QLabel;
-        logo->setPixmap(lg);
-        logo->setFixedSize(qRound(lg.width() / lg.devicePixelRatio()),
-                           qRound(lg.height() / lg.devicePixelRatio()));
-        vl->addWidget(logo, 0, Qt::AlignHCenter);
-        vl->addSpacing(20);
     }
     auto* big = new QLabel(QStringLiteral("Where would you like to begin?"));
     big->setStyleSheet(QStringLiteral("color:#f2f3f5; font-size:24px; font-weight:600;"));
@@ -1097,7 +1060,7 @@ void MainWindow::showEmptyState() {
     bv->setSpacing(2);
     emptyInp_ = new QPlainTextEdit;
     emptyInp_->setObjectName(QStringLiteral("composer"));
-    emptyInp_->setPlaceholderText(QStringLiteral("Message DeepSeekIDE"));
+    emptyInp_->setPlaceholderText(QStringLiteral("Create a desktop application, refactor this file, ask about the code\u2026"));
     emptyInp_->setMinimumHeight(30);
     emptyInp_->setMaximumHeight(90);
     emptyInp_->setWordWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
@@ -1127,7 +1090,7 @@ void MainWindow::showEmptyState() {
     vl->addWidget(sub);
 
     vl->addStretch(6);
-    chatLay_->insertWidget(chatLay_->count() - 1, wrap, 1); // wrap тянется на весь вьюпорт — контент по центру
+    chatLay_->insertWidget(chatLay_->count() - 1, wrap, 8); // wrap доминирует над финальным stretch — контент по центру
     emptyInp_->setFocus();
 }
 
@@ -1141,8 +1104,34 @@ void MainWindow::onEmptySend() {
 }
 
 void MainWindow::setSidebarCollapsed(bool on) {
-    if (sidePanel_) sidePanel_->setVisible(!on);
-    if (collapsedBar_) collapsedBar_->setVisible(on);
+    if (!sidePanel_) return;
+    const int W = sidePanel_->maximumWidth() > 0 && sidePanel_->maximumWidth() < 1000
+                      ? sidePanel_->maximumWidth() : 248;
+    if (on) {
+        if (collapsedBar_) { collapsedBar_->setVisible(true); fadeIn(collapsedBar_, 180); }
+        sidePanel_->setMinimumWidth(0);            // даём сжаться
+        auto* a = new QPropertyAnimation(sidePanel_, "maximumWidth", this);
+        a->setDuration(200);
+        a->setStartValue(sidePanel_->width());
+        a->setEndValue(0);
+        a->setEasingCurve(QEasingCurve::InOutCubic);
+        QObject::connect(a, &QAbstractAnimation::finished, this,
+                         [this] { sidePanel_->setVisible(false); });
+        a->start(QAbstractAnimation::DeleteWhenStopped);
+    } else {
+        if (collapsedBar_) collapsedBar_->setVisible(false);
+        sidePanel_->setVisible(true);
+        sidePanel_->setMinimumWidth(0);
+        sidePanel_->setMaximumWidth(0);
+        auto* a = new QPropertyAnimation(sidePanel_, "maximumWidth", this);
+        a->setDuration(200);
+        a->setStartValue(0);
+        a->setEndValue(W);
+        a->setEasingCurve(QEasingCurve::InOutCubic);
+        QObject::connect(a, &QAbstractAnimation::finished, this,
+                         [this, W] { sidePanel_->setFixedWidth(W); });
+        a->start(QAbstractAnimation::DeleteWhenStopped);
+    }
 }
 
 int MainWindow::pushHist(const QString& role, const QString& text, const QString& name,
@@ -1545,11 +1534,9 @@ void MainWindow::onOpenSandbox() {
 
 void MainWindow::onSettings() {
     SettingsDialog dlg(cfg_, this);
+    cfg_.thinking = cfg_.search = cfg_.imgOn = true;   // переключателей нет — всегда включены
     ds_->setCfg(cfg_);
     agent_->setCfg(cfg_);
-    chipThink_->setChecked(cfg_.thinking);
-    chipSearch_->setChecked(cfg_.search);
-    chipImg_->setChecked(cfg_.imgOn);
     logLine(QStringLiteral("Settings applied."));
 }
 
