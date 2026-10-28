@@ -36,7 +36,6 @@ set(APP_SOURCES
     src/agent.cpp             src/agent.h
     src/sessionstore.cpp      src/sessionstore.h
     src/sitepreview.cpp       src/sitepreview.h
-    src/assets_blob.cpp       src/assets_blob.h
     src/squirclecard.h
 )
 

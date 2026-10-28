@@ -164,7 +164,6 @@
     <ClCompile Include="src\agent.cpp" />
     <ClCompile Include="src\sessionstore.cpp" />
     <ClCompile Include="src\sitepreview.cpp" />
-    <ClCompile Include="src\assets_blob.cpp" />
     <ClCompile Include="$(IntDir)moc\moc_mainwindow.cpp" />
     <ClCompile Include="$(IntDir)moc\moc_deepseekclient.cpp" />
     <ClCompile Include="$(IntDir)moc\moc_agent.cpp" />
