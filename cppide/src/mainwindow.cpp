@@ -22,6 +22,7 @@
 #include <QTextOption>
 #include <QScrollBar>
 #include <QRegularExpression>
+#include <QAbstractTextDocumentLayout>
 #include <QDir>
 #include <QPixmap>
 #include <QTimer>
@@ -293,6 +294,18 @@ static void autoGrowEdit(QPlainTextEdit* e, int minH, int maxH) {
     e->setVerticalScrollBarPolicy(h > maxH ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);
 }
 
+// надёжный триггер роста: и по textChanged (отложенно, после раскладки),
+// и по documentSizeChanged лейаута документа
+static void wireAutoGrow(QPlainTextEdit* e, int minH, int maxH) {
+    QObject::connect(e, &QPlainTextEdit::textChanged, e, [e, minH, maxH] {
+        QTimer::singleShot(0, e, [e, minH, maxH] { autoGrowEdit(e, minH, maxH); });
+        autoGrowEdit(e, minH, maxH);
+    });
+    if (auto* dl = e->document()->documentLayout())
+        QObject::connect(dl, &QAbstractTextDocumentLayout::documentSizeChanged, e,
+                         [e, minH, maxH](const QSizeF&) { autoGrowEdit(e, minH, maxH); });
+}
+
 // иконка «сообщение с плюсиком» (New chat)
 static QPixmap msgPlusPix(int px, const QColor& c) {
     QPixmap pm(px, px); pm.fill(Qt::transparent);
@@ -469,8 +482,7 @@ MainWindow::MainWindow() {
     input_->setPlaceholderText(QStringLiteral("Describe the task or ask a question…"));
     input_->setFixedHeight(115);            // минимум 115, растёт до 350 по тексту
     input_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    connect(input_, &QPlainTextEdit::textChanged, this,
-            [this] { autoGrowEdit(input_, 115, 350); });
+    wireAutoGrow(input_, 115, 350);
     input_->setWordWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
     input_->installEventFilter(this);
     new QShortcut(QKeySequence(QKeyCombination(Qt::ControlModifier, Qt::Key_Return)), this, SLOT(onSend()));
@@ -1078,8 +1090,7 @@ void MainWindow::showEmptyState() {
     emptyInp_->setPlaceholderText(QStringLiteral("Create a desktop application, refactor this file, ask about the code\u2026"));
     emptyInp_->setFixedHeight(115);
     emptyInp_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    connect(emptyInp_, &QPlainTextEdit::textChanged, this,
-            [this] { if (emptyInp_) autoGrowEdit(emptyInp_, 115, 350); });
+    wireAutoGrow(emptyInp_, 115, 350);
     emptyInp_->setWordWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
     emptyInp_->installEventFilter(this);
     bv->addWidget(emptyInp_);
