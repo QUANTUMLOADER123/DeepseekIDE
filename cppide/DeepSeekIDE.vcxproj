@@ -1,0 +1,215 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{E5375431-C3E2-4B6F-97E2-7E17C5921FAB}</ProjectGuid>
+    <RootNamespace>DeepSeekIDE</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <DisableFastUpToDateCheck>true</DisableFastUpToDateCheck>
+  </PropertyGroup>
+
+  <!-- Qt: QT6_DIR / Qt6_DIR, иначе авто-поиск C:\Qt\6.8.3\msvc2022_64 -->
+  <PropertyGroup>
+    <QtRoot Condition="'$(QT6_DIR)' != ''">$(QT6_DIR)</QtRoot>
+    <QtRoot Condition="'$(QtRoot)' == '' and '$(Qt6_DIR)' != ''">$(Qt6_DIR)</QtRoot>
+    <QtRoot Condition="'$(QtRoot)' == '' and Exists('C:\Qt\6.8.3\msvc2022_64')">C:\Qt\6.8.3\msvc2022_64</QtRoot>
+    <QtRoot Condition="'$(QtRoot)' == '' and Exists('D:\Qt\6.8.3\msvc2022_64')">D:\Qt\6.8.3\msvc2022_64</QtRoot>
+    <QtRoot Condition="'$(QtRoot)' == ''">C:\Qt\6.8.3\msvc2022_64</QtRoot>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <LinkIncremental>true</LinkIncremental>
+    <OutDir>$(ProjectDir)out\Debug\</OutDir>
+    <IntDir>$(ProjectDir)out\Debug\int\</IntDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <LinkIncremental>false</LinkIncremental>
+    <OutDir>$(ProjectDir)out\Release\</OutDir>
+    <IntDir>$(ProjectDir)out\Release\int\</IntDir>
+  </PropertyGroup>
+
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <PreprocessorDefinitions>_DEBUG;WIN32;_WINDOWS;UNICODE;_UNICODE;NOMINMAX;QT_CORE_LIB;QT_GUI_LIB;QT_WIDGETS_LIB;QT_NETWORK_LIB;QT_CORE5COMPAT_LIB;QT_DEBUG;HAVE_CORE5COMPAT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)wasm3;$(QtRoot)\include;$(QtRoot)\include\QtCore;$(QtRoot)\include\QtGui;$(QtRoot)\include\QtWidgets;$(QtRoot)\include\QtNetwork;$(QtRoot)\include\QtCore5Compat;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <Optimization>Disabled</Optimization>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+      <AdditionalOptions>/utf-8 /Zc:__cplusplus %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EntryPointSymbol>mainCRTStartup</EntryPointSymbol>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>Qt6Cored.lib;Qt6Guid.lib;Qt6Widgetsd.lib;Qt6Networkd.lib;Qt6Core5Compatd.lib;dwmapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(QtRoot)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>false</SDLCheck>
+      <PreprocessorDefinitions>NDEBUG;WIN32;_WINDOWS;UNICODE;_UNICODE;NOMINMAX;QT_CORE_LIB;QT_GUI_LIB;QT_WIDGETS_LIB;QT_NETWORK_LIB;QT_CORE5COMPAT_LIB;QT_NO_DEBUG;HAVE_CORE5COMPAT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)wasm3;$(QtRoot)\include;$(QtRoot)\include\QtCore;$(QtRoot)\include\QtGui;$(QtRoot)\include\QtWidgets;$(QtRoot)\include\QtNetwork;$(QtRoot)\include\QtCore5Compat;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <Optimization>MaxSpeed</Optimization>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <AdditionalOptions>/utf-8 /Zc:__cplusplus %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EntryPointSymbol>mainCRTStartup</EntryPointSymbol>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <AdditionalDependencies>Qt6Core.lib;Qt6Gui.lib;Qt6Widgets.lib;Qt6Network.lib;Qt6Core5Compat.lib;dwmapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(QtRoot)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <!-- moc: классы с Q_OBJECT -->
+  <ItemGroup>
+    <CustomBuild Include="src\mainwindow.h">
+      <FileType>Document</FileType>
+      <Command>"$(QtRoot)\bin\moc.exe" "%(FullPath)" -o "$(IntDir)moc\moc_%(Filename).cpp"</Command>
+      <Message>MOC %(Filename)%(Extension)</Message>
+      <Outputs>$(IntDir)moc\moc_%(Filename).cpp</Outputs>
+    </CustomBuild>
+    <CustomBuild Include="src\deepseekclient.h">
+      <FileType>Document</FileType>
+      <Command>"$(QtRoot)\bin\moc.exe" "%(FullPath)" -o "$(IntDir)moc\moc_%(Filename).cpp"</Command>
+      <Message>MOC %(Filename)%(Extension)</Message>
+      <Outputs>$(IntDir)moc\moc_%(Filename).cpp</Outputs>
+    </CustomBuild>
+    <CustomBuild Include="src\agent.h">
+      <FileType>Document</FileType>
+      <Command>"$(QtRoot)\bin\moc.exe" "%(FullPath)" -o "$(IntDir)moc\moc_%(Filename).cpp"</Command>
+      <Message>MOC %(Filename)%(Extension)</Message>
+      <Outputs>$(IntDir)moc\moc_%(Filename).cpp</Outputs>
+    </CustomBuild>
+    <CustomBuild Include="src\settings.h">
+      <FileType>Document</FileType>
+      <Command>"$(QtRoot)\bin\moc.exe" "%(FullPath)" -o "$(IntDir)moc\moc_%(Filename).cpp"</Command>
+      <Message>MOC %(Filename)%(Extension)</Message>
+      <Outputs>$(IntDir)moc\moc_%(Filename).cpp</Outputs>
+    </CustomBuild>
+    <CustomBuild Include="src\squirclecard.h">
+      <FileType>Document</FileType>
+      <Command>"$(QtRoot)\bin\moc.exe" "%(FullPath)" -o "$(IntDir)moc\moc_%(Filename).cpp"</Command>
+      <Message>MOC %(Filename)%(Extension)</Message>
+      <Outputs>$(IntDir)moc\moc_%(Filename).cpp</Outputs>
+    </CustomBuild>
+    <CustomBuild Include="src\sitepreview.h">
+      <FileType>Document</FileType>
+      <Command>"$(QtRoot)\bin\moc.exe" "%(FullPath)" -o "$(IntDir)moc\moc_%(Filename).cpp"</Command>
+      <Message>MOC %(Filename)%(Extension)</Message>
+      <Outputs>$(IntDir)moc\moc_%(Filename).cpp</Outputs>
+    </CustomBuild>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\mainwindow.cpp" />
+    <ClCompile Include="src\settings.cpp" />
+    <ClCompile Include="src\pow.cpp" />
+    <ClCompile Include="src\deepseekclient.cpp" />
+    <ClCompile Include="src\agent.cpp" />
+    <ClCompile Include="src\sessionstore.cpp" />
+    <ClCompile Include="src\sitepreview.cpp" />
+    <ClCompile Include="$(IntDir)moc\moc_mainwindow.cpp" />
+    <ClCompile Include="$(IntDir)moc\moc_deepseekclient.cpp" />
+    <ClCompile Include="$(IntDir)moc\moc_agent.cpp" />
+    <ClCompile Include="$(IntDir)moc\moc_settings.cpp" />
+    <ClCompile Include="$(IntDir)moc\moc_squirclecard.cpp" />
+    <ClCompile Include="$(IntDir)moc\moc_sitepreview.cpp" />
+  </ItemGroup>
+
+  <!-- wasm3 (вендоренный C) — явно, предупреждения ноль -->
+  <ItemGroup>
+    <ClCompile Include="wasm3\m3_bind.c"><WarningLevel>TurnOffAllWarnings</WarningLevel><SDLCheck>false</SDLCheck></ClCompile>
+    <ClCompile Include="wasm3\m3_code.c"><WarningLevel>TurnOffAllWarnings</WarningLevel><SDLCheck>false</SDLCheck></ClCompile>
+    <ClCompile Include="wasm3\m3_compile.c"><WarningLevel>TurnOffAllWarnings</WarningLevel><SDLCheck>false</SDLCheck></ClCompile>
+    <ClCompile Include="wasm3\m3_core.c"><WarningLevel>TurnOffAllWarnings</WarningLevel><SDLCheck>false</SDLCheck></ClCompile>
+    <ClCompile Include="wasm3\m3_emit.c"><WarningLevel>TurnOffAllWarnings</WarningLevel><SDLCheck>false</SDLCheck></ClCompile>
+    <ClCompile Include="wasm3\m3_env.c"><WarningLevel>TurnOffAllWarnings</WarningLevel><SDLCheck>false</SDLCheck></ClCompile>
+    <ClCompile Include="wasm3\m3_exec.c"><WarningLevel>TurnOffAllWarnings</WarningLevel><SDLCheck>false</SDLCheck></ClCompile>
+    <ClCompile Include="wasm3\m3_function.c"><WarningLevel>TurnOffAllWarnings</WarningLevel><SDLCheck>false</SDLCheck></ClCompile>
+    <ClCompile Include="wasm3\m3_info.c"><WarningLevel>TurnOffAllWarnings</WarningLevel><SDLCheck>false</SDLCheck></ClCompile>
+    <ClCompile Include="wasm3\m3_module.c"><WarningLevel>TurnOffAllWarnings</WarningLevel><SDLCheck>false</SDLCheck></ClCompile>
+    <ClCompile Include="wasm3\m3_parse.c"><WarningLevel>TurnOffAllWarnings</WarningLevel><SDLCheck>false</SDLCheck></ClCompile>
+  </ItemGroup>
+
+  <!-- Хедеры с Q_OBJECT перечислены выше в CustomBuild и в ClInclude не дублируются,
+       иначе VS выдаёт "Элемент ... уже существует в фильтре" -->
+  <ItemGroup>
+    <ClInclude Include="src\fa.h" />
+    <ClInclude Include="src\pow.h" />
+    <ClInclude Include="src\sessionstore.h" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="assets\logo.png" />
+    <None Include="assets\deepseek_logo.png" />
+    <None Include="assets\avatar.png" />
+    <None Include="assets\whale.png" />
+    <None Include="assets\museosanscyrl-500.otf" />
+  </ItemGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+
+  <Target Name="DeployQt" AfterTargets="Build">
+    <MakeDir Directories="$(OutDir)assets" />
+    <Exec Command="xcopy &quot;$(ProjectDir)assets\*&quot; &quot;$(OutDir)assets\&quot; /D /Y /I" />
+    <Exec Command="&quot;$(QtRoot)\bin\windeployqt.exe&quot; --no-translations --no-system-d3d-compiler --no-opengl-sw &quot;$(TargetPath)&quot;" Condition="Exists('$(QtRoot)\bin\windeployqt.exe')" />
+  </Target>
+
+  <ImportGroup Label="ExtensionTargets" />
+</Project>
