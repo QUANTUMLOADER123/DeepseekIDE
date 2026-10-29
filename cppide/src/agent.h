@@ -25,6 +25,7 @@ public:
 
 public slots:
     void sendUserMessage(const QString& text);
+    void continueAnswer();                 // вручную продолжить ответ, оборванный лимитом модели
     void compactSession();   // просит модель сжать диалог (Сделали | Следующее действие)
     void generateTitle(const QString& convoSnippet); // фоновый мини-запрос: короткое имя чата
 
@@ -35,6 +36,7 @@ signals:
     void assistantBubbleStart();
     void assistantDelta(const QString& text);      // уже очищенный видимый текст
     void assistantBubbleDone(const QString& text); // итог (полностью очищен)
+    void assistantCanContinue();                    // модель завершила ответ по лимиту длины
     void toolRow(const QString& name, const QString& sub, bool ok, const QString& detail);
     void imageShown(const QByteArray& bytes, const QString& mime, const QString& alt);
     void sitePreview(const QString& url, const QString& html); // мини-браузер
@@ -81,6 +83,8 @@ private:
     QString root_;
 
     bool    busy_ = false;
+    bool    responseTruncated_ = false;
+    bool    canContinue_ = false;
     bool    firstPrompt_ = true;
     int     autoCount_ = 0;
     int     autoTmo_ = 0;            // секунд без прогресса (пульс-таймер)

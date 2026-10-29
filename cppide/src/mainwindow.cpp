@@ -673,6 +673,7 @@ MainWindow::MainWindow() {
     connect(agent_, &Agent::assistantBubbleStart, this, &MainWindow::beginAssistant);
     connect(agent_, &Agent::assistantDelta, this, &MainWindow::appendAssistantDelta);
     connect(agent_, &Agent::assistantBubbleDone, this, &MainWindow::endAssistant);
+    connect(agent_, &Agent::assistantCanContinue, this, &MainWindow::onAssistantCanContinue);
     connect(agent_, &Agent::toolRow, this, &MainWindow::addToolRow);
     connect(agent_, &Agent::imageShown, this, &MainWindow::addImage);
     connect(agent_, &Agent::errorBanner, this, &MainWindow::addError);
@@ -1198,6 +1199,7 @@ void MainWindow::clearChatUi() {
     pulseTimer_.stop();
     liveCard_ = nullptr; liveBubble_ = nullptr; spinner_ = nullptr; liveRaw_.clear();
     groupText_.clear(); replayCard_ = nullptr;
+    continueBtn_ = nullptr; continuePending_ = false;
     for (int i = chatLay_->count() - 2; i >= 0; --i) {
         QLayoutItem* it = chatLay_->itemAt(i);
         if (!it) continue;
@@ -1411,6 +1413,8 @@ void MainWindow::onSend() {
         refreshAttachUi();
     }
     lastUserText_ = t;
+    continuePending_ = false;
+    if (continueBtn_) { continueBtn_->deleteLater(); continueBtn_ = nullptr; }
     agent_->sendUserMessage(t);
 }
 
@@ -1429,6 +1433,10 @@ void MainWindow::onPickFolder() {
     folderPill_->setToolTip(d);
     persistNow();
     logLine(QStringLiteral("Session folder: %1").arg(d));
+}
+
+void MainWindow::onAssistantCanContinue() {
+    continuePending_ = true;
 }
 
 void MainWindow::onBusy(bool on) {
@@ -1519,6 +1527,21 @@ void MainWindow::finalizeAgentCard() {
     if (!groupText_.isEmpty()) {
         const int idx = pushHist(QStringLiteral("assistant"), groupText_);
         addAssistantActions(l, idx, groupText_);
+        if (continuePending_) {
+            continuePending_ = false;
+            auto* b = new QPushButton(QStringLiteral("Continue"), card);
+            b->setObjectName(QStringLiteral("ghostBtn"));
+            b->setCursor(Qt::PointingHandCursor);
+            b->setIcon(QIcon(fa::pix(fa::refresh(), 12, QColor(0xc9, 0xca, 0xd0))));
+            b->setFixedHeight(30);
+            l->addWidget(b, 0, Qt::AlignLeft);
+            continueBtn_ = b;
+            connect(b, &QPushButton::clicked, this, [this, b]() {
+                if (continueBtn_ == b) continueBtn_ = nullptr;
+                b->deleteLater();
+                agent_->continueAnswer();
+            });
+        }
         if (curSess_ >= 0 && sessions_[curSess_].title == QStringLiteral("New Chat") && !titleQueued_) {
             titleQueued_ = true;
             titleSeed_ = lastUserText_ + QStringLiteral("\n---\n") + groupText_.left(1500);

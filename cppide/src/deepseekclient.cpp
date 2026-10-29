@@ -184,7 +184,7 @@ void DeepSeekClient::startCompletion(const QString& prompt, const QString& powB6
     };
     auto* r = nam_.post(req, QJsonDocument(payload).toJson(QJsonDocument::Compact));
     reply_ = r;
-    sseBuf_.clear(); frags_.clear(); legacy_.clear(); lastPath_.clear(); streamErr_.clear(); respMsgId_.clear(); emittedChat_ = emittedThink_ = 0;
+    sseBuf_.clear(); frags_.clear(); legacy_.clear(); lastPath_.clear(); streamErr_.clear(); respMsgId_.clear(); finishReason_.clear(); emittedChat_ = emittedThink_ = 0;
     connect(r, &QNetworkReply::readyRead, this, &DeepSeekClient::onReadyRead);
     connect(r, &QNetworkReply::finished, this, [this, r]() {
         reply_ = nullptr;
@@ -290,7 +290,8 @@ void DeepSeekClient::processSsePayload(const QByteArray& pay) {
     } else if (lastPath_ == QLatin1String("response/content") && v.isString()) {
         legacy_ += v.toString();
     } else if (lastPath_ == QLatin1String("response/finish_reason") && v.isString()) {
-        emit log(QStringLiteral("DS: finish_reason=%1").arg(v.toString()));
+        finishReason_ = v.toString();
+        emit log(QStringLiteral("DS: finish_reason=%1").arg(finishReason_));
     }
 
     // эмиссия — накопительная дельта (monotonic, как onText/emitted в client.js)

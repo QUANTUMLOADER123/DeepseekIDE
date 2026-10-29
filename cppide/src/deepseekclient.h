@@ -28,6 +28,11 @@ public:
     void setSession(const QString& sid, const QString& parentId) { sessionId_ = sid; parentMessageId_ = parentId; }
     QString sessionId() const { return sessionId_; }
     QString parentMessageId() const { return parentMessageId_; }
+    bool responseWasTruncated() const {
+        const QString r = finishReason_.toLower();
+        return r == QLatin1String("length") || r == QLatin1String("max_tokens")
+            || r == QLatin1String("max_output_tokens") || r == QLatin1String("token_limit");
+    }
     bool busy() const { return reply_ != nullptr; }
     void abort();
 
@@ -65,7 +70,7 @@ private:
     struct Frag { QString type, content; };
     QByteArray  sseBuf_;
     QList<Frag> frags_;
-    QString     legacy_, lastPath_, streamErr_, respMsgId_;
+    QString     legacy_, lastPath_, streamErr_, respMsgId_, finishReason_;
     int         emittedChat_ = 0, emittedThink_ = 0;
 
     QTimer* watchdog_ = nullptr;   // зависание SSE: 45 с без чанков => abort

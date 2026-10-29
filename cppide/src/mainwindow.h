@@ -56,6 +56,7 @@ private slots:
     void showSitePreview(const QString& url, const QString& html);
     void logLine(const QString& line);
     void onBusy(bool on);
+    void onAssistantCanContinue();
     void pulseTick();
 
 private:
@@ -126,6 +127,8 @@ private:
     int        typingTick_ = 0;
     QWidget*   spinner_   = nullptr;   // крутилка «пишет» (сырой ptr, живёт в liveCard_)
     QLabel*    chatTitle_ = nullptr;   // название текущего чата слева сверху
+    QPushButton* continueBtn_ = nullptr;
+    bool       continuePending_ = false;
     bool       followScroll_ = true;   // автодогон вниз: колесо вверх — выкл, низ — вкл
     QWidget*   hoverPill_ = nullptr;   // ползущая подсветка наведения в списке сессий
     class QPropertyAnimation* pillAnim_ = nullptr;

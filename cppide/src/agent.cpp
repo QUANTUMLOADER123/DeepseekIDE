@@ -53,14 +53,14 @@ Agent::Agent(DeepSeekClient* ds, QObject* parent) : QObject(parent), ds_(ds) {
 void Agent::setCfg(const AppCfg& c) { cfg_ = c; }
 void Agent::setProjectRoot(const QString& dir) { root_ = QDir::cleanPath(dir); emit log(QStringLiteral("AGT: корень проекта = %1").arg(root_)); }
 void Agent::newChat() {
-    firstPrompt_ = true; autoCount_ = 0; carry_.clear();
+    firstPrompt_ = true; autoCount_ = 0; carry_.clear(); canContinue_ = false; responseTruncated_ = false;
     sentFiles_.clear(); sentSearch_.clear(); sentWeb_.clear(); sentShells_.clear(); sentImgs_.clear(); appliedOps_.clear();
     ds_->newChat();
     emit log(QStringLiteral("AGT: новый чат"));
 }
 
 void Agent::restoreSession(bool contractSent) {
-    firstPrompt_ = !contractSent; autoCount_ = 0; carry_.clear();
+    firstPrompt_ = !contractSent; autoCount_ = 0; carry_.clear(); canContinue_ = false; responseTruncated_ = false;
     answerRaw_.clear(); answerVis_.clear();
     sentFiles_.clear(); sentSearch_.clear(); sentWeb_.clear(); sentShells_.clear(); sentImgs_.clear(); appliedOps_.clear();
     emit log(QStringLiteral("AGT: сессия восстановлена (контракт %1)").arg(contractSent ? QStringLiteral("уже слали") : QStringLiteral("пойдёт с первым сообщением")));
@@ -219,6 +219,7 @@ static QString buildSystemPrompt(const AppCfg& cfg) {
 void Agent::sendUserMessage(const QString& text) {
     if (busy_ || ds_->busy()) { emit errorBanner(QStringLiteral("Wait — the agent is busy…")); return; }
     autoCount_ = 0;
+    canContinue_ = false;
     emit appendUserBubble(text);
     QString out = text;
     if (firstPrompt_) {
@@ -239,6 +240,7 @@ void Agent::sendUserMessage(const QString& text) {
 // ============================================================================
 void Agent::onChatFinished(const QString& full, const QString& thinking) {
     Q_UNUSED(thinking);
+    responseTruncated_ = ds_->responseWasTruncated();
     const QString text = full.isEmpty() ? answerRaw_ : full;
     answerRaw_.clear(); carry_.clear();
     if (text.isEmpty()) emit assistantBubbleDone(QString());
@@ -366,6 +368,7 @@ void Agent::processAnswer(const QString& full) {
 
     // --- авто-continue
     if (needContinue && !svc.trimmed().isEmpty()) {
+        responseTruncated_ = false; // вначале завершим цикл инструментов, затем оценим его финальный ответ
         int lim = cfg_.autoLimit == 0 ? 1 << 30 : (cfg_.autoLimit > 0 ? cfg_.autoLimit : 12);
         if (autoCount_ >= lim) {
             emit toolRow(QStringLiteral("Agent"), QString(), false,
@@ -381,7 +384,22 @@ void Agent::processAnswer(const QString& full) {
         ds_->ask(svc);
         return;
     }
+    canContinue_ = responseTruncated_ && !full.trimmed().isEmpty();
+    responseTruncated_ = false;
+    if (canContinue_) emit assistantCanContinue();
     busy_ = false; emit busyChanged(false);
+}
+
+void Agent::continueAnswer() {
+    if (!canContinue_ || busy_ || ds_->busy()) return;
+    canContinue_ = false;
+    autoCount_ = 0;
+    busy_ = true; emit busyChanged(true);
+    answerRaw_.clear(); answerVis_.clear(); carry_.clear();
+    emit assistantBubbleStart();
+    lastOut_ = QStringLiteral("Continue the previous response from exactly where it stopped. Do not repeat earlier text. Finish the incomplete thought and complete the answer.");
+    autoTmo_ = 0;
+    ds_->ask(lastOut_);
 }
 
 // ============================================================================
