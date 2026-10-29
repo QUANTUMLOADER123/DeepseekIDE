@@ -14,6 +14,7 @@ struct Session {
     QString parentMessageId;// контекстная цепочка
     QString created, updated;
     int     ctxChars = 0;   // грубая оценка контекста (символы), для 200k-лимита и compact
+    bool    pinned = false;   // закреплённая сессия — блоком выше остальных
     QJsonArray history;     // карточки чата [{role,text,name,sub,ok,detail,pprev}]
 
     static Session create(const QString& folder);

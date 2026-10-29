@@ -8,6 +8,7 @@
 #include "settings.h"
 #include "sessionstore.h"
 
+class QResizeEvent;
 class QListWidget;
 class QScrollArea;
 class QVBoxLayout;
@@ -28,6 +29,7 @@ protected:
     void closeEvent(class QCloseEvent* e) override;
     bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result) override; // ресайз без рамки
     bool eventFilter(QObject* obj, QEvent* ev) override;                                    // drag титлбара, фокус композера
+    void resizeEvent(QResizeEvent* e) override;                                            // рефит карточек под ширину
 
 private slots:
     void onSend();
@@ -69,6 +71,8 @@ private:
                   const QString& sub = QString(), bool ok = true, const QString& detail = QString());
     void replayHistory();
     void refreshSessionList();
+    void sessionMenuAt(int idx, const QPoint& pos);   // попап «…» на строке сессии
+    void refitCards();                                // кламп ширины карточек при ресайзе окна
     int  sessionRowOf(int idx) const;
     void persistNow();
     void setSessionTitleFromText(const QString& t);
@@ -121,6 +125,8 @@ private:
     bool       compacting_ = false;
     int        typingTick_ = 0;
     QWidget*   spinner_   = nullptr;   // крутилка «пишет» (сырой ptr, живёт в liveCard_)
+    QLabel*    chatTitle_ = nullptr;   // название текущего чата слева сверху
+    bool       followScroll_ = true;   // автодогон вниз: колесо вверх — выкл, низ — вкл
     QWidget*   hoverPill_ = nullptr;   // ползущая подсветка наведения в списке сессий
     class QPropertyAnimation* pillAnim_ = nullptr;
     bool       titleQueued_ = false;   // ждём свободного ds для generateTitle

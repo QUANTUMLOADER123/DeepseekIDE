@@ -56,6 +56,8 @@ inline QPixmap pix(const QString& g, int px = 14, const QColor& c = QColor(0xe6,
     QPixmap pm(px, px);
     pm.fill(Qt::transparent);
     QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setRenderHint(QPainter::SmoothPixmapTransform);
     p.setRenderHint(QPainter::TextAntialiasing);
     QFont f(family());
     f.setPixelSize(px);

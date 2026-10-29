@@ -14,6 +14,7 @@ public:
 
     void setState(const QString& st) { state_ = st; update(); }
     QString state() const { return state_; }
+    QString role() const { return role_; }
     void setPulseColor(const QColor& c) { pulseColor_ = c; update(); } // рисуется при state=="live"
 
     // универсальный скруглённый путь (иконки, лого, превью)
@@ -27,6 +28,8 @@ protected:
     void paintEvent(QPaintEvent*) override {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing, true);
+        p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        p.setRenderHint(QPainter::TextAntialiasing, true);
         const QRectF r = rect().adjusted(1.0, 1.0, -1.0, -1.0);
         const double rad = 14.0;
         QPainterPath path = roundPath(r, rad);

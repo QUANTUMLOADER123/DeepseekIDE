@@ -200,6 +200,7 @@
     <None Include="assets\deepseek_logo.png" />
     <None Include="assets\avatar.png" />
     <None Include="assets\whale.png" />
+    <None Include="assets\museosanscyrl-500.otf" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

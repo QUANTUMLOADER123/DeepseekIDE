@@ -29,6 +29,7 @@ QJsonObject Session::toJson() const {
         {QStringLiteral("created"), created},
         {QStringLiteral("updated"), updated},
         {QStringLiteral("ctx"), ctxChars},
+        {QStringLiteral("pinned"), pinned},
         {QStringLiteral("history"), history},
     };
 }
@@ -44,6 +45,7 @@ Session Session::fromJson(const QJsonObject& o) {
     s.created = o[QStringLiteral("created")].toString();
     s.updated = o[QStringLiteral("updated")].toString();
     s.ctxChars = o[QStringLiteral("ctx")].toInt(0);
+    s.pinned = o[QStringLiteral("pinned")].toBool(false);
     s.history = o[QStringLiteral("history")].toArray();
     return s;
 }
@@ -61,7 +63,10 @@ QList<Session> SessionStore::load() const {
     const auto doc = QJsonDocument::fromJson(f.readAll());
     for (const QJsonValue& v : doc.array()) out.append(Session::fromJson(v.toObject()));
     // новые сверху
-    std::sort(out.begin(), out.end(), [](const Session& a, const Session& b){ return a.updated > b.updated; });
+    std::sort(out.begin(), out.end(), [](const Session& a, const Session& b){
+        if (a.pinned != b.pinned) return a.pinned;   // закрепы сверху
+        return a.updated > b.updated;
+    });
     return out;
 }
 

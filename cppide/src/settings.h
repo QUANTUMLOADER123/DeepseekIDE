@@ -16,6 +16,7 @@ struct AppCfg {
     QString imgModel = "magic"; // magic | flux (subnp.com free)
     int     autoLimit = 12;     // потолок авто-continue (0 = без лимита)
     QString rules;              // начальный промпт пользователя (rules)
+    bool    jailbreak = false; // ослабить ограничения модели
 };
 
 namespace Cfg {

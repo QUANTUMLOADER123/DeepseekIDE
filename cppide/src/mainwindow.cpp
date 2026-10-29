@@ -45,6 +45,11 @@
 #include <QDialog>
 #include <QMouseEvent>
 #include <QKeyEvent>
+#include <QWheelEvent>
+#include <QInputDialog>
+#include <QToolButton>
+#include <QAction>
+#include <algorithm>
 #include <QCoreApplication>
 #include <QClipboard>
 #include <QGuiApplication>
@@ -123,6 +128,13 @@ QPushButton#chipIcn {
   padding:7px 14px 7px 12px; color:#8d9099; font-size:12px;
 }
 QPushButton#chipIcn:hover { background:rgba(255,255,255,18); color:#c9cad0; }
+QPushButton#chipIcn:disabled { color:#575962; }
+QPushButton#chipPlus { background:transparent; border:1px solid #282829; border-radius:10px; }
+QPushButton#chipPlus:hover { background:#2C2C2E; }
+QPushButton#chipPlus:pressed { background:#232326; }
+QToolButton { background:transparent; border:none; border-radius:6px; }
+QToolButton:hover { background:rgba(255,255,255,22); }
+QLabel#chatTitle { color:#ffffff; font-size:13px; font-weight:600; }
 QPushButton#chipIcn:checked { background:#283142; border-color:#4868b2; color:#b7c8fe; }
 
 QFrame#composerBox { background:#2C2C2E; border:1px solid #282829; border-radius:24px; }
@@ -288,10 +300,13 @@ static QPixmap avatarPix(int size) {
 static void autoGrowEdit(QPlainTextEdit* e, int minH, int maxH) {
     if (!e) return;
     const int doc = int(e->document()->documentLayout()->documentSize().height()) + 1;
+    const QWidget* win = e->window();
+    const int dynMax = win ? qMax(120, int(win->height() * 0.36)) : maxH;
+    const int lim = qMin(maxH, dynMax);   // текст никогда не выше ~трети окна
     const int h = doc + e->contentsMargins().top() + e->contentsMargins().bottom()
                   + e->frameWidth() * 2 + 14;
-    e->setFixedHeight(qBound(minH, h, maxH));
-    e->setVerticalScrollBarPolicy(h > maxH ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);
+    e->setFixedHeight(qBound(minH, h, lim));
+    e->setVerticalScrollBarPolicy(h > lim ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);
 }
 
 // надёжный триггер роста: и по textChanged (отложенно, после раскладки),
@@ -309,7 +324,7 @@ static void wireAutoGrow(QPlainTextEdit* e, int minH, int maxH) {
 // иконка «сообщение с плюсиком» (New chat)
 static QPixmap msgPlusPix(int px, const QColor& c) {
     QPixmap pm(px, px); pm.fill(Qt::transparent);
-    QPainter p(&pm); p.setRenderHint(QPainter::TextAntialiasing);
+    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing); p.setRenderHint(QPainter::TextAntialiasing);
     QFont f(fa::family());
     f.setPixelSize(px - 2); p.setFont(f); p.setPen(c);
     p.drawText(QRectF(-1, 0, px - 2, px), Qt::AlignCenter, fa::comment());
@@ -366,7 +381,7 @@ MainWindow::MainWindow() {
     head->setProperty("dragZone", true);
     head->installEventFilter(this);
     auto* hl = new QHBoxLayout(head);
-    hl->setContentsMargins(6, 2, 2, 2);
+    hl->setContentsMargins(8, 4, 0, 4);
     hl->setSpacing(4);
     auto* logoLbl = new QLabel;
     const QPixmap logoPm = dsLogoPix(31);
@@ -389,7 +404,7 @@ MainWindow::MainWindow() {
     collapseBtn->setIconSize(QSize(13, 13));
     collapseBtn->setFixedSize(26, 26);
     connect(collapseBtn, &QPushButton::clicked, this, [this] { setSidebarCollapsed(true); });
-    hl->addWidget(collapseBtn, 0, Qt::AlignVCenter);
+    hl->addWidget(collapseBtn, 0, Qt::AlignVCenter | Qt::AlignRight);
     sl->addWidget(head);
     sl->addSpacing(8);
     auto* div = new QFrame;
@@ -456,11 +471,27 @@ MainWindow::MainWindow() {
     cl->setContentsMargins(0, 0, 0, 0);
     cl->setSpacing(0);
 
+    // название текущей сессии — слева сверху
+    auto* trow = new QWidget;
+    auto* th = new QHBoxLayout(trow);
+    th->setContentsMargins(30, 12, 0, 0);
+    chatTitle_ = new QLabel;
+    chatTitle_->setObjectName(QStringLiteral("chatTitle"));
+    th->addWidget(chatTitle_);
+    th->addStretch(1);
+    cl->addWidget(trow);
+
     chatScroll_ = new QScrollArea;
     chatScroll_->setWidgetResizable(true);
+    chatScroll_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);  // никогда не показываем H-скролл
+    chatScroll_->viewport()->installEventFilter(this);                  // колесо вверх = автодогон off
+    connect(chatScroll_->verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int v) {
+        auto* sbv = chatScroll_->verticalScrollBar();
+        if (v >= sbv->maximum() - 24) followScroll_ = true;             // доскроллил вниз — вкл обратно
+    });
     auto* chatHost = new QWidget;
     chatLay_ = new QVBoxLayout(chatHost);
-    chatLay_->setContentsMargins(0, 20, 0, 20);
+    chatLay_->setContentsMargins(0, 34, 0, 20);
     chatLay_->setSpacing(12);
     chatLay_->addStretch(1);
     chatScroll_->setWidget(chatHost);
@@ -480,9 +511,9 @@ MainWindow::MainWindow() {
 
     input_ = new QPlainTextEdit; input_->setObjectName(QStringLiteral("composer"));
     input_->setPlaceholderText(QStringLiteral("Describe the task or ask a question…"));
-    input_->setFixedHeight(115);            // минимум 115, растёт до 350 по тексту
+    input_->setFixedHeight(40);             // минимум ~40, растёт по тексту (динамический потолок)
     input_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    wireAutoGrow(input_, 115, 350);
+    wireAutoGrow(input_, 40, 350);
     input_->setWordWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
     input_->installEventFilter(this);
     new QShortcut(QKeySequence(QKeyCombination(Qt::ControlModifier, Qt::Key_Return)), this, SLOT(onSend()));
@@ -516,11 +547,12 @@ MainWindow::MainWindow() {
     cr->setSpacing(8);
 
     cr->addSpacing(6);
-    auto* attachBtn = new QPushButton(QStringLiteral("Attach"));
-    attachBtn->setObjectName(QStringLiteral("chipIcn"));
+    auto* attachBtn = new QPushButton;
+    attachBtn->setObjectName(QStringLiteral("chipPlus"));
     attachBtn->setCursor(Qt::PointingHandCursor);
-    attachBtn->setIcon(QIcon(fa::pix(fa::paperclip(), 11, QColor(0x7d, 0x7f, 0x89))));
-    attachBtn->setIconSize(QSize(11, 11));
+    attachBtn->setIcon(QIcon(fa::pix(fa::plus(), 12, QColor(0x8d, 0x8f, 0x99))));
+    attachBtn->setIconSize(QSize(12, 12));
+    attachBtn->setFixedSize(30, 30);
     attachBtn->setToolTip(QStringLiteral("Attach files (agent gets the paths and can read them)"));
     connect(attachBtn, &QPushButton::clicked, this, &MainWindow::onAttach);
     cr->addWidget(attachBtn);
@@ -653,6 +685,7 @@ MainWindow::MainWindow() {
         if (s.title != QStringLiteral("New Chat")) return;
         s.title = tt;
         setWindowTitle(QStringLiteral("%1 — DeepSeekIDE").arg(s.title.left(56)));
+    if (chatTitle_) chatTitle_->setText(s.title);
         refreshSessionList();
         persistNow();
     });
@@ -751,6 +784,17 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* ev) {
         } else if (ev->type() == QEvent::Leave) {
             hoverPill_->hide();
         }
+    } else if (obj && obj->property("sessIdx").isValid()) {   // строки сессий (row widgets)
+        const int idx = obj->property("sessIdx").toInt();
+        if (ev->type() == QEvent::Enter || ev->type() == QEvent::Leave) {
+            if (auto* tb = static_cast<QWidget*>(obj)->findChild<QToolButton*>())
+                tb->setVisible(ev->type() == QEvent::Enter);
+        } else if (ev->type() == QEvent::MouseButtonRelease
+                   && static_cast<QMouseEvent*>(ev)->button() == Qt::LeftButton) {
+            const int r = sessionRowOf(idx);
+            if (r >= 0) sessionList_->setCurrentRow(r);
+            return true;
+        }
     } else if (obj == input_) {
         if (ev->type() == QEvent::KeyPress) {
             auto* ke = static_cast<QKeyEvent*>(ev);
@@ -771,6 +815,9 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* ev) {
             composerBox_->style()->polish(composerBox_);
         }
     }
+    if (obj == chatScroll_->viewport() && ev->type() == QEvent::Wheel
+        && static_cast<QWheelEvent*>(ev)->angleDelta().y() > 0)
+        followScroll_ = false;   // юзер сам листает вверх
     if (emptyInp_ && obj == emptyInp_.data() && ev->type() == QEvent::KeyPress) {
         auto* ke = static_cast<QKeyEvent*>(ev);
         if ((ke->key() == Qt::Key_Return || ke->key() == Qt::Key_Enter)
@@ -786,6 +833,27 @@ void MainWindow::toggleMax() {
     if (isMaximized()) showNormal(); else showMaximized();
     winMaxBtn_->setIcon(QIcon(fa::pix(isMaximized() ? fa::winRestore() : fa::winMax(), 11,
                                       QColor(0x9a, 0x9c, 0xa6))));
+}
+
+void MainWindow::resizeEvent(QResizeEvent* e) {
+    QMainWindow::resizeEvent(e);
+    refitCards();   // карточки фикс-ширины — клампим под новый вьюпорт
+}
+
+void MainWindow::refitCards() {
+    if (!chatScroll_ || !chatLay_) return;
+    const int vw = chatScroll_->viewport() ? chatScroll_->viewport()->width() : 0;
+    if (vw < 200) return;
+    for (int i = 0; i < chatLay_->count(); ++i) {
+        QLayoutItem* it = chatLay_->itemAt(i);
+        QWidget* wrap = it ? it->widget() : nullptr;
+        if (!wrap) continue;
+        SquircleCard* card = wrap->findChild<SquircleCard*>();
+        if (!card) continue;
+        const bool user = card->role() == QLatin1String("user");
+        const int limit = qMax(240, qMin(vw - 160, user ? 560 : 860));
+        if (card->width() > limit) card->setFixedWidth(limit);
+    }
 }
 
 bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr* result) {
@@ -894,6 +962,7 @@ void MainWindow::fadeIn(QWidget* w, int ms) {
 }
 
 void MainWindow::smoothScrollBottom() {
+    if (!followScroll_) return;   // юзер листает выше — не дёргаем
     QScrollBar* sb = chatScroll_->verticalScrollBar();
     auto* anim = new QPropertyAnimation(sb, "value", sb);
     anim->setDuration(200);
@@ -955,34 +1024,116 @@ void MainWindow::refreshSessionList() {
     sessionList_->clear();
     const QDate today = QDate::currentDate();
     static const char* GNAME[3] = { "Today", "Yesterday", "Older" };
-    bool hdr[3] = { false, false, false };
     QFont hf; hf.setBold(true); hf.setPointSize(qMax(7, hf.pointSize() - 3));
+    bool pinnedHdr = false;
+    bool hdr[3] = { false, false, false };
+
+    auto addHeader = [&](const QString& t) {
+        auto* h = new QListWidgetItem(t);
+        h->setFlags(Qt::NoItemFlags);
+        h->setData(Qt::UserRole, -1);
+        h->setForeground(QColor(0x57, 0x59, 0x62));
+        h->setFont(hf);
+        h->setSizeHint(QSize(0, 18));
+        sessionList_->addItem(h);
+    };
+    auto addRow = [&](int i) {
+        const Session& s = sessions_[i];
+        auto* it = new QListWidgetItem;                    // рендерит row-виджет (bg прозрачный)
+        it->setData(Qt::UserRole, i);
+        it->setToolTip(QStringLiteral("%1\n%2").arg(s.title, s.folder));
+        it->setSizeHint(QSize(0, 40));
+        sessionList_->addItem(it);
+
+        auto* w = new QWidget;
+        w->setStyleSheet(QStringLiteral("background:transparent;"));
+        w->setCursor(Qt::PointingHandCursor);              // при наведении — «кликабельный» курсор
+        w->setMouseTracking(true);
+        w->setProperty("sessIdx", i);
+        w->setToolTip(QStringLiteral("%1\n%2").arg(s.title, s.folder));
+        w->installEventFilter(this);
+        auto* rh = new QHBoxLayout(w);
+        rh->setContentsMargins(10, 0, 4, 0);
+        rh->setSpacing(4);
+        auto* lbl = new QLabel(s.title.left(44) + (s.title.size() > 44 ? QStringLiteral("\u2026") : QString()));
+        lbl->setStyleSheet(QStringLiteral("color:#ffffff; background:transparent; font-size:13px;"));
+        lbl->setToolTip(s.title);
+        rh->addWidget(lbl, 1);
+        auto* dots = new QToolButton;                      // «…» справа внутри строки (по ховеру)
+        dots->setAutoRaise(true);
+        dots->setCursor(Qt::PointingHandCursor);
+        dots->setFixedSize(22, 22);
+        dots->setIcon(QIcon(fa::pix(fa::glyph(0xf142), 12, QColor(0x9a, 0x9c, 0xa6)))); // ellipsis-vertical
+        dots->setIconSize(QSize(12, 12));
+        dots->setVisible(false);
+        connect(dots, &QToolButton::clicked, this, [this, i, dots]() {
+            sessionMenuAt(i, dots->mapToGlobal(QPoint(dots->width() - 4, dots->height() + 2)));
+        });
+        rh->addWidget(dots, 0, Qt::AlignVCenter);
+        sessionList_->setItemWidget(it, w);
+    };
+
+    for (int i = 0; i < sessions_.size(); ++i) {           // закреплённые сверху
+        if (!sessions_[i].pinned) continue;
+        if (!pinnedHdr) { pinnedHdr = true; addHeader(QStringLiteral("Pinned")); }
+        addRow(i);
+    }
     for (int i = 0; i < sessions_.size(); ++i) {
+        if (sessions_[i].pinned) continue;
         const Session& s = sessions_[i];
         QDate d = QDateTime::fromString(s.updated.isEmpty() ? s.created : s.updated, Qt::ISODate).date();
         if (!d.isValid()) d = today;
         const qint64 days = d.daysTo(today);
         const int g = days <= 0 ? 0 : (days == 1 ? 1 : 2);
-        if (!hdr[g]) {
-            hdr[g] = true;
-            auto* h = new QListWidgetItem(QString::fromLatin1(GNAME[g]));
-            h->setFlags(Qt::NoItemFlags);
-            h->setData(Qt::UserRole, -1);
-            h->setForeground(QColor(0x57, 0x59, 0x62));
-            h->setFont(hf);
-            h->setSizeHint(QSize(0, 18));
-            sessionList_->addItem(h);
-        }
-        auto* it = new QListWidgetItem(
-            s.title.left(42) + (s.title.size() > 42 ? QStringLiteral("…") : QString()));
-        it->setData(Qt::UserRole, i);
-        it->setToolTip(QStringLiteral("%1\n%2").arg(s.title, s.folder));
-        it->setSizeHint(QSize(0, 40));
-        sessionList_->addItem(it);
+        if (!hdr[g]) { hdr[g] = true; addHeader(QString::fromLatin1(GNAME[g])); }
+        addRow(i);
     }
+    if (hoverPill_) hoverPill_->lower();                   // пилюля — под прозрачными row-виджетами
     sessionList_->blockSignals(false);
     const int row = sessionRowOf(curSess_);
     if (row >= 0) sessionList_->setCurrentRow(row);
+}
+
+// попап строки сессии: переименовать / закрепить / удалить
+void MainWindow::sessionMenuAt(int idx, const QPoint& pos) {
+    if (idx < 0 || idx >= sessions_.size()) return;
+    const QString curId = curSess_ >= 0 ? sessions_[curSess_].id : QString();
+    QMenu m(this);
+    QAction* aRen = m.addAction(QStringLiteral("Rename chat"));
+    QAction* aPin = m.addAction(sessions_[idx].pinned ? QStringLiteral("Unpin") : QStringLiteral("Pin"));
+    m.addSeparator();
+    QAction* aDel = m.addAction(QStringLiteral("Delete chat"));
+    QAction* pick = m.exec(pos);
+    if (!pick) return;
+    if (pick == aRen) {
+        bool ok = false;
+        const QString t = QInputDialog::getText(this, QStringLiteral("Rename chat"), QStringLiteral("Title:"),
+                                                QLineEdit::Normal, sessions_[idx].title, &ok);
+        if (ok && !t.trimmed().isEmpty()) sessions_[idx].title = t.trimmed().left(64);
+    } else if (pick == aPin) {
+        sessions_[idx].pinned = !sessions_[idx].pinned;
+    } else if (pick == aDel) {
+        if (QMessageBox::question(this, QStringLiteral("Delete chat"),
+                QStringLiteral("Delete \"%1\"?").arg(sessions_[idx].title.left(48))) != QMessageBox::Yes)
+            return;
+        sessions_.removeAt(idx);
+        persistNow();
+        refreshSessionList();
+        if (sessions_.isEmpty()) onNewSession();
+        else activateSession(qBound(0, idx, sessions_.size() - 1));
+        return;
+    }
+    std::sort(sessions_.begin(), sessions_.end(), [](const Session& a, const Session& b) {
+        if (a.pinned != b.pinned) return a.pinned;         // закрепы всегда сверху
+        return a.updated > b.updated;
+    });
+    curSess_ = -1;
+    if (!curId.isEmpty())
+        for (int i = 0; i < sessions_.size(); ++i)
+            if (sessions_[i].id == curId) { curSess_ = i; break; }
+    persistNow();
+    refreshSessionList();
+    if (chatTitle_ && curSess_ >= 0) chatTitle_->setText(sessions_[curSess_].title);
 }
 
 void MainWindow::activateSession(int i) {
@@ -992,9 +1143,11 @@ void MainWindow::activateSession(int i) {
     if (row >= 0) sessionList_->setCurrentRow(row);
     const Session& s = sessions_[i];
     setWindowTitle(QStringLiteral("%1 — DeepSeekIDE").arg(s.title.left(56)));
+    if (chatTitle_) chatTitle_->setText(s.title);
     folderPill_->setText(QStringLiteral(" ") + (s.folder.isEmpty()
         ? QStringLiteral("no folder") : QFileInfo(s.folder).fileName()));
     folderPill_->setToolTip(s.folder);
+    folderPill_->setEnabled(s.folder.isEmpty());   // папка уже выбрана — не меняется
 
     clearChatUi();
     replaying_ = true;
@@ -1036,6 +1189,7 @@ void MainWindow::setSessionTitleFromText(const QString& t) {
     s.title = t.simplified().left(48);
     if (s.title.isEmpty()) s.title = QStringLiteral("Chat");
     setWindowTitle(QStringLiteral("%1 — DeepSeekIDE").arg(s.title.left(56)));
+    if (chatTitle_) chatTitle_->setText(s.title);
     refreshSessionList();
     persistNow();
 }
@@ -1088,9 +1242,9 @@ void MainWindow::showEmptyState() {
     emptyInp_ = new QPlainTextEdit;
     emptyInp_->setObjectName(QStringLiteral("composer"));
     emptyInp_->setPlaceholderText(QStringLiteral("Create a desktop application, refactor this file, ask about the code\u2026"));
-    emptyInp_->setFixedHeight(115);
+    emptyInp_->setFixedHeight(44);
     emptyInp_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    wireAutoGrow(emptyInp_, 115, 350);
+    wireAutoGrow(emptyInp_, 44, 350);
     emptyInp_->setWordWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
     emptyInp_->installEventFilter(this);
     bv->addWidget(emptyInp_);
@@ -1262,6 +1416,10 @@ void MainWindow::onSend() {
 
 void MainWindow::onPickFolder() {
     if (curSess_ < 0) return;
+    if (!sessions_[curSess_].folder.isEmpty()) {   // папка у сессии фиксированная
+        logLine(QStringLiteral("Folder is locked for this chat. Create a new chat for another folder."));
+        return;
+    }
     QString d = QFileDialog::getExistingDirectory(this, QStringLiteral("Project folder"),
         sessions_[curSess_].folder.isEmpty() ? cfg_.projectDir : sessions_[curSess_].folder);
     if (d.isEmpty()) return;
@@ -1781,6 +1939,7 @@ void MainWindow::autoTitleFromAnswer(const QString& t) {
     if (flat.size() < 3) return; // «typing…», маркер-огрызок и т.п.
     s.title = flat;
     setWindowTitle(QStringLiteral("%1 — DeepSeekIDE").arg(s.title.left(56)));
+    if (chatTitle_) chatTitle_->setText(s.title);
     refreshSessionList();
     persistNow();
 }

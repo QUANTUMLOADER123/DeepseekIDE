@@ -30,6 +30,7 @@ AppCfg load() {
     c.imgOn      = s.value("img_on", false).toBool();
     c.imgModel   = s.value("img_model", "magic").toString();
     c.autoLimit  = s.value("auto_limit", 12).toInt();
+    c.jailbreak  = s.value("jailbreak", false).toBool();
     c.rules      = s.value("rules").toString();
     return c;
 }
@@ -47,6 +48,7 @@ void save(const AppCfg& c) {
     s.setValue("img_on", c.imgOn);
     s.setValue("img_model", c.imgModel);
     s.setValue("auto_limit", c.autoLimit);
+    s.setValue("jailbreak", c.jailbreak);
     s.setValue("rules", c.rules);
 }
 
@@ -99,7 +101,11 @@ SettingsDialog::SettingsDialog(AppCfg& c, QWidget* parent) : QDialog(parent), c_
     lay->addRow(tr("Auto steps in a row:"), lim);
 
     auto* rules = new QPlainTextEdit(c_.rules); rules->setMaximumHeight(120);
-    lay->addRow(tr("Custom rules:"), rules);
+    lay->addRow(tr("Initial prompt (rules):"), rules);
+
+    auto* jb = new QCheckBox(tr("Jailbreak — weaken model content restrictions"));
+    jb->setChecked(c_.jailbreak);
+    lay->addRow(jb);
 
     auto* bb = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
     lay->addRow(bb);
@@ -117,6 +123,7 @@ SettingsDialog::SettingsDialog(AppCfg& c, QWidget* parent) : QDialog(parent), c_
         c_.imgModel = imgModel->currentText();
         c_.autoLimit = lim->value();
         c_.rules = rules->toPlainText();
+        c_.jailbreak = jb->isChecked();
         Cfg::save(c_);
     }
 }
