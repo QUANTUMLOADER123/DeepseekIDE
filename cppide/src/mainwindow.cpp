@@ -815,7 +815,7 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* ev) {
             composerBox_->style()->polish(composerBox_);
         }
     }
-    if (obj == chatScroll_->viewport() && ev->type() == QEvent::Wheel
+    if (chatScroll_ && obj == chatScroll_->viewport() && ev->type() == QEvent::Wheel
         && static_cast<QWheelEvent*>(ev)->angleDelta().y() > 0)
         followScroll_ = false;   // юзер сам листает вверх
     if (emptyInp_ && obj == emptyInp_.data() && ev->type() == QEvent::KeyPress) {
